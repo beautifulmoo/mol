@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -322,4 +323,59 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 	}()
 
 	return out, nil
+}
+
+// DoDiscoveryUnicast sends a DISCOVERY_REQUEST to the given IP (unicast) and returns that host's DiscoveryResponse, or error on timeout/no response.
+// The IP should be the host's address; the request is sent to ip:DiscoveryUDPPort.
+func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return nil, fmt.Errorf("host ip required")
+	}
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(ip, strconv.Itoa(d.cfg.DiscoveryUDPPort)))
+	if err != nil {
+		return nil, err
+	}
+	requestID := newRequestID()
+	req := DiscoveryRequest{
+		Type:      "DISCOVERY_REQUEST",
+		Service:   d.cfg.ServiceName,
+		RequestID: requestID,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan *DiscoveryResponse, 1)
+	d.mu.Lock()
+	d.pending[requestID] = ch
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.pending, requestID)
+		d.mu.Unlock()
+		close(ch)
+	}()
+	if _, err = d.conn.WriteToUDP(data, addr); err != nil {
+		return nil, err
+	}
+	log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (unicast)", requestID, addr)
+	timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
+	if timeout > 5*time.Second {
+		timeout = 5 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r, ok := <-ch:
+		if !ok {
+			return nil, fmt.Errorf("no response from %s", ip)
+		}
+		if r.HostIP != ip {
+			return nil, fmt.Errorf("response from wrong host: %s", r.HostIP)
+		}
+		return r, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("timeout waiting for response from %s", ip)
+	}
 }

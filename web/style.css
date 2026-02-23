@@ -151,6 +151,8 @@ h3 {
 }
 .service-btn.service-start { border-color: #22c55e; background: #22c55e; color: #fff; }
 .service-btn.service-start:hover { background: #16a34a; }
+.service-btn.host-control-start { border-color: #3b82f6; background: #3b82f6; color: #fff; }
+.service-btn.host-control-start:hover { background: #2563eb; }
 .service-btn.service-stop { border-color: #ef4444; background: #ef4444; color: #fff; }
 .service-btn.service-stop:hover { background: #dc2626; }
 .service-btn:disabled {
@@ -158,6 +160,7 @@ h3 {
   cursor: not-allowed;
 }
 .service-btn.service-start:disabled:hover { background: #22c55e; }
+.service-btn.host-control-start:disabled:hover { background: #3b82f6; }
 .service-btn.service-stop:disabled:hover { background: #ef4444; }
 .discovery-btn {
   padding: 0.5rem 1rem;
@@ -262,6 +265,15 @@ h3 {
 }
 .update-actions .service-btn {
   flex: 0 0 auto;
+}
+#upload-btn:not(:disabled) {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+#upload-btn:not(:disabled):hover {
+  background: #2563eb;
+  border-color: #2563eb;
 }
 .update-form .discovery-status {
   margin-top: 0.5rem;

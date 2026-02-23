@@ -13,6 +13,7 @@
     if (host.host_ip) {
       div.setAttribute('data-host-ip', host.host_ip);
     }
+    div.setAttribute('data-host-version', host.version || '');
     var statusBlock =
       '<dt>systemctl status</dt><dd class="service-status-dd">' +
       '<div class="service-status-block">' +
@@ -22,13 +23,16 @@
       '</div>' +
       '<pre class="service-status-output"></pre>' +
       '</div></dd>';
-    var controlBlock = isSelf ? '' : (
-      '<div class="service-control">' +
-      '<button type="button" class="service-btn service-start">시작</button>' +
-      '<button type="button" class="service-btn service-stop">중지</button>' +
-      '<button type="button" class="service-btn apply-update-host" disabled title="먼저 업데이트 영역에서 버전을 업로드하세요">업데이트 적용</button>' +
-      '</div>'
-    );
+    var controlBlock = isSelf
+      ? ('<div class="service-control">' +
+          '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
+          '</div>')
+      : ('<div class="service-control">' +
+          '<button type="button" class="service-btn host-control-start">시작</button>' +
+          '<button type="button" class="service-btn service-stop">중지</button>' +
+          '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>' +
+          '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
+          '</div>');
     div.innerHTML =
       '<div class="host-icon">' + serverIconSvg + '</div>' +
       '<dl class="host-details">' +
@@ -58,7 +62,7 @@
     if (pre) pre.textContent = output || '';
     var isKnownState = summaryText === '[정상 서비스 상태]' || summaryText === '[서비스 중지 상태]';
     if (isKnownState) {
-      var startBtn = cardEl.querySelector('.service-start');
+      var startBtn = cardEl.querySelector('.service-start, .host-control-start');
       var stopBtn = cardEl.querySelector('.service-stop');
       var active = parseActiveFromOutput(output);
       if (startBtn) startBtn.disabled = active;
@@ -85,9 +89,36 @@
   }
 
   function bindServiceControlButtons(cardEl) {
-    if (!cardEl || cardEl.classList.contains('self-card')) return;
+    if (!cardEl) return;
     var ip = cardEl.getAttribute('data-host-ip') || '';
     var summary = cardEl.querySelector('.service-status-summary');
+    var isSelf = cardEl.classList.contains('self-card');
+    var refreshBtn = cardEl.querySelector('.status-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function () {
+        if (isSelf) {
+          loadSelf();
+          return;
+        }
+        if (summary) summary.textContent = '갱신 중…';
+        fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
+          .then(function (res) { return res.json(); })
+          .then(function (body) {
+            if (body.status === 'success' && body.data) {
+              updateHostCardDetails(cardEl, body.data);
+              updateAllHostApplyButtons();
+            } else {
+              if (summary) summary.textContent = body.data || '호스트 정보를 불러올 수 없습니다.';
+            }
+            fetchServiceStatus(cardEl, ip);
+          })
+          .catch(function () {
+            if (summary) summary.textContent = '호스트 정보 요청 실패.';
+            fetchServiceStatus(cardEl, ip);
+          });
+      });
+    }
+    if (isSelf) return;
     function doControl(action) {
       if (summary) summary.textContent = '갱신 중…';
       fetch(API_BASE + '/service-control', {
@@ -107,7 +138,7 @@
           updateStatusUI(cardEl, null, '요청 실패');
         });
     }
-    var startBtn = cardEl.querySelector('.service-start');
+    var startBtn = cardEl.querySelector('.service-start, .host-control-start');
     var stopBtn = cardEl.querySelector('.service-stop');
     if (startBtn) startBtn.addEventListener('click', function () { doControl('start'); });
     if (stopBtn) stopBtn.addEventListener('click', function () { doControl('stop'); });
@@ -115,12 +146,20 @@
     var applyHostBtn = cardEl.querySelector('.apply-update-host');
     if (applyHostBtn) {
       applyHostBtn.addEventListener('click', function () {
-        if (!canApplyToRemote()) {
-          if (summary) summary.textContent = 'mol과 config.yaml을 선택하세요.';
+        var card = applyHostBtn.closest && applyHostBtn.closest('.host-card');
+        var hostVersion = card ? (card.getAttribute('data-host-version') || '') : '';
+        if (!canApplyToThisRemoteHost(hostVersion)) {
+          if (summary) summary.textContent = '이 호스트에 적용할 스테이징 버전이 없거나 이미 동일 버전입니다.';
           return;
         }
         applyHostBtn.disabled = true;
         if (summary) summary.textContent = '업데이트 적용 중…';
+
+        function recheckApplyButton() {
+          var c = applyHostBtn.closest && applyHostBtn.closest('.host-card');
+          var hv = c ? (c.getAttribute('data-host-version') || '') : '';
+          applyHostBtn.disabled = !canApplyToThisRemoteHost(hv);
+        }
 
         function doApplyToHost(version) {
           fetch(API_BASE + '/apply-update', {
@@ -133,6 +172,7 @@
               if (body.status === 'success') {
                 if (summary) summary.textContent = body.data || '적용 완료';
                 fetchServiceStatus(cardEl, ip);
+                runDiscovery();
               } else {
                 updateStatusUI(cardEl, null, body.data || '적용 실패');
               }
@@ -140,21 +180,20 @@
             .catch(function () {
               updateStatusUI(cardEl, null, '요청 실패');
             })
-            .finally(function () {
-              applyHostBtn.disabled = !canApplyToRemote();
-            });
+            .finally(recheckApplyButton);
         }
 
-        if (lastUploadedVersion) {
-          doApplyToHost(lastUploadedVersion);
+        var applicableVersion = getApplicableVersion();
+        if (applicableVersion) {
+          doApplyToHost(applicableVersion);
           return;
         }
-        // mol+config만 선택된 경우: 로컬에 저장하지 않고 원격으로만 전송 (multipart apply-update)
+        // mol+config 선택된 경우: 로컬에 저장하지 않고 원격으로만 전송 (multipart apply-update)
         var molInput = el('upload-mol');
         var configEditor = el('upload-config-editor');
         if (!molInput || !molInput.files[0] || !configEditor || !configEditor.value.trim()) {
           if (summary) summary.textContent = 'mol과 config.yaml을 선택하세요.';
-          applyHostBtn.disabled = false;
+          recheckApplyButton();
           return;
         }
         var formData = new FormData();
@@ -170,6 +209,7 @@
             if (body.status === 'success') {
               if (summary) summary.textContent = body.data || '적용 완료';
               fetchServiceStatus(cardEl, ip);
+              runDiscovery();
             } else {
               updateStatusUI(cardEl, null, body.data || '적용 실패');
             }
@@ -177,50 +217,73 @@
           .catch(function () {
             updateStatusUI(cardEl, null, '요청 실패');
           })
-          .finally(function () {
-            applyHostBtn.disabled = !canApplyToRemote();
-          });
+          .finally(recheckApplyButton);
       });
     }
   }
 
+  function getApplicableVersion() {
+    if (lastUpdateStatus.staging_versions && lastUpdateStatus.staging_versions.length > 0) {
+      return lastUpdateStatus.staging_versions[0];
+    }
+    return lastUploadedVersion || '';
+  }
+
+  function canApplyToThisRemoteHost(hostVersion) {
+    if (hasUploadableSelection()) return true;
+    var applicable = getApplicableVersion();
+    if (!applicable) return false;
+    return applicable !== (hostVersion || '');
+  }
+
+  function getApplyButtonTitle(hostVersion, canApply, applicableVersion) {
+    if (canApply && applicableVersion) {
+      return applicableVersion + ' 버전으로 업데이트 가능합니다';
+    }
+    if (!applicableVersion) {
+      return '먼저 업데이트 영역에서 버전을 업로드하세요';
+    }
+    return '최신 버전입니다';
+  }
+
   function updateAllHostApplyButtons() {
-    var enabled = canApplyToRemote();
+    var applicableVersion = getApplicableVersion();
     var btns = document.querySelectorAll('.apply-update-host');
     for (var i = 0; i < btns.length; i++) {
-      btns[i].disabled = !enabled;
+      var btn = btns[i];
+      var card = btn.closest && btn.closest('.host-card');
+      var hostVersion = card ? (card.getAttribute('data-host-version') || '') : '';
+      var canApply = canApplyToThisRemoteHost(hostVersion);
+      btn.disabled = !canApply;
+      btn.title = getApplyButtonTitle(hostVersion, canApply, applicableVersion);
     }
-    var removeBtn = el('remove-upload-btn');
-    if (removeBtn) removeBtn.disabled = !lastUploadedVersion;
   }
 
   function doRemoveUpload() {
-    if (!lastUploadedVersion) return;
+    var version = lastUpdateStatus.remove_version;
+    if (!version) return;
     var status = el('upload-status');
     var removeBtn = el('remove-upload-btn');
     if (removeBtn) removeBtn.disabled = true;
-    status.textContent = '서버에서 버전 삭제 중…';
+    status.textContent = '스테이징에서 버전 삭제 중…';
     fetch(API_BASE + '/upload/remove', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: lastUploadedVersion })
+      body: JSON.stringify({ version: version })
     })
       .then(function (res) { return res.json(); })
       .then(function (body) {
         if (body.status === 'success') {
-          lastUploadedVersion = '';
-          status.textContent = body.data || '업로드된 버전이 서버에서 삭제되었습니다.';
-          updateAllHostApplyButtons();
-          var applyBtn = el('apply-update-btn');
-          if (applyBtn) applyBtn.disabled = true;
+          status.textContent = body.data || '스테이징에서 삭제되었습니다.';
+          fetchUpdateStatus();
         } else {
           status.textContent = body.data || '삭제 실패.';
-          if (removeBtn) removeBtn.disabled = false;
+          fetchUpdateStatus();
         }
       })
       .catch(function () {
         status.textContent = '요청 실패.';
-        if (removeBtn) removeBtn.disabled = false;
+        fetchUpdateStatus();
       });
   }
 
@@ -261,6 +324,20 @@
       return host.memory_used_mb + ' / ' + host.memory_total_mb + ' MB' + (pct ? ' (' + pct + ')' : '');
     }
     return '-';
+  }
+
+  function updateHostCardDetails(cardEl, host) {
+    if (!cardEl || !host) return;
+    cardEl.setAttribute('data-host-version', host.version || '');
+    var dds = cardEl.querySelectorAll('.host-details > dd');
+    if (dds.length >= 6) {
+      dds[0].textContent = host.version || '-';
+      dds[1].textContent = host.host_ip || '-';
+      dds[2].textContent = host.hostname || '-';
+      dds[3].textContent = host.service_port != null ? host.service_port : '-';
+      dds[4].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
+      dds[5].textContent = formatMemory(host);
+    }
   }
 
   function loadSelf() {
@@ -308,6 +385,7 @@
       evtSource.close();
       btn.disabled = false;
       status.textContent = count ? '호스트 ' + count + '개 발견.' : 'Discovery 완료 (결과 없음).';
+      updateAllHostApplyButtons();
     });
     evtSource.onerror = function () {
       evtSource.close();
@@ -317,12 +395,35 @@
       } else {
         status.textContent = '호스트 ' + count + '개 발견.';
       }
+      updateAllHostApplyButtons();
     };
   }
 
   var lastUploadedVersion = '';
+  var lastUpdateStatus = { can_apply: false, apply_version: '', staging_versions: [], remove_version: '' };
 
   var FILE_LABEL_NONE = '선택된 파일 없음';
+
+  function fetchUpdateStatus() {
+    fetch(API_BASE + '/update-status')
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status !== 'success' || !body.data) return;
+        var d = body.data;
+        lastUpdateStatus = {
+          can_apply: !!d.can_apply,
+          apply_version: d.apply_version || '',
+          staging_versions: d.staging_versions || [],
+          remove_version: d.remove_version || ''
+        };
+        var applyBtn = el('apply-update-btn');
+        var removeBtn = el('remove-upload-btn');
+        if (applyBtn) applyBtn.disabled = !lastUpdateStatus.can_apply;
+        if (removeBtn) removeBtn.disabled = !(lastUpdateStatus.staging_versions && lastUpdateStatus.staging_versions.length > 0);
+        updateAllHostApplyButtons();
+      })
+      .catch(function () {});
+  }
 
   function updateFileLabel(inputId, labelId) {
     var input = el(inputId);
@@ -404,7 +505,6 @@
     formData.append('mol', molInput.files[0]);
     formData.append('config', new Blob([configEditor.value], { type: 'text/yaml' }), 'config.yaml');
     status.textContent = '업로드 중…';
-    applyBtn.disabled = true;
     fetch(API_BASE + '/upload', {
       method: 'POST',
       body: formData
@@ -413,8 +513,8 @@
       .then(function (body) {
         if (body.status === 'success' && body.data && body.data.version) {
           lastUploadedVersion = body.data.version;
-          status.textContent = '버전 ' + body.data.version + ' 업로드됨. 같은 버전으로 로컬/원격 추가 적용 가능.';
-          applyBtn.disabled = false;
+          status.textContent = '버전 ' + body.data.version + ' 스테이징에 업로드됨. 같은 버전으로 원격 적용 가능.';
+          fetchUpdateStatus();
           updateAllHostApplyButtons();
         } else {
           status.textContent = body.data || '업로드 실패.';
@@ -426,18 +526,22 @@
   }
 
   function doApplyUpdate() {
-    if (!lastUploadedVersion) return;
+    var version = lastUpdateStatus.apply_version;
+    if (!version || !lastUpdateStatus.can_apply) return;
     var status = el('apply-update-status');
+    var applyBtn = el('apply-update-btn');
+    if (applyBtn) applyBtn.disabled = true;
     status.textContent = '업데이트 적용 요청 중…';
     fetch(API_BASE + '/apply-update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: lastUploadedVersion })
+      body: JSON.stringify({ version: version })
     })
       .then(function (res) { return res.json(); })
       .then(function (body) {
         if (body.status === 'success') {
           fetchUpdateLog();
+          fetchUpdateStatus();
           var sec = 10;
           status.textContent = '업데이트 적용이 요청되었습니다. 서버가 재시작됩니다. ' + sec + '초 후 자동 새로고침…';
           var t = setInterval(function () {
@@ -452,10 +556,12 @@
           }, 1000);
         } else {
           status.textContent = body.data || '적용 실패.';
+          fetchUpdateStatus();
         }
       })
       .catch(function () {
         status.textContent = '요청 실패. 서버가 재시작 중일 수 있습니다. 잠시 후 페이지를 새로고침해 보세요.';
+        fetchUpdateStatus();
       });
   }
 
@@ -493,9 +599,8 @@
   });
   el('upload-config-editor').addEventListener('input', updateUploadButtonState);
 
-  updateFileLabel('upload-mol', 'upload-mol-label');
-  updateFileLabel('upload-config', 'upload-config-label');
-  updateUploadButtonState();
+  resetUploadForm();
+  fetchUpdateStatus();
   updateAllHostApplyButtons();
   loadSelf();
   fetchUpdateLog();

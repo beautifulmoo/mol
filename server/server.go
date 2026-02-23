@@ -112,12 +112,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleRoot)
 	// API
 	mux.HandleFunc(s.apiPrefix+"/self", s.handleSelf)
+	mux.HandleFunc(s.apiPrefix+"/host-info", s.handleHostInfo)
 	mux.HandleFunc(s.apiPrefix+"/discovery", s.handleDiscovery)
 	mux.HandleFunc(s.apiPrefix+"/discovery/stream", s.handleDiscoveryStream)
 	mux.HandleFunc(s.apiPrefix+"/service-status", s.handleServiceStatus)
 	mux.HandleFunc(s.apiPrefix+"/service-control", s.handleServiceControl)
 	mux.HandleFunc(s.apiPrefix+"/upload", s.handleUpload)
 	mux.HandleFunc(s.apiPrefix+"/upload/remove", s.handleRemoveUpload)
+	mux.HandleFunc(s.apiPrefix+"/update-status", s.handleUpdateStatus)
 	mux.HandleFunc(s.apiPrefix+"/apply-update", s.handleApplyUpdate)
 	mux.HandleFunc(s.apiPrefix+"/update-log", s.handleUpdateLog)
 	// Web (static)
@@ -151,6 +153,24 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 		MemoryUsagePercent:  info.MemoryUsagePercent,
 	}
 	s.send(w, "success", data, http.StatusOK)
+}
+
+func (s *Server) handleHostInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip == "" || ip == "self" {
+		s.handleSelf(w, r)
+		return
+	}
+	resp, err := s.discovery.DoDiscoveryUnicast(ip)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	s.send(w, "success", resp, http.StatusOK)
 }
 
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +316,12 @@ func (s *Server) stagingDir(base, version string) string {
 	return filepath.Join(base, "staging", version)
 }
 
+// clearStaging removes the entire deploy_base/staging/ directory so that upload replaces all staging content with the new version only.
+func (s *Server) clearStaging(base string) {
+	stagingParent := filepath.Join(base, "staging")
+	_ = os.RemoveAll(stagingParent)
+}
+
 // versionsDir returns deploy_base/versions/<version> (the running path).
 func (s *Server) versionsDir(base, version string) string {
 	return filepath.Join(base, "versions", version)
@@ -425,6 +451,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if base == "" {
 		base = "/opt/mol"
 	}
+	s.clearStaging(base)
 	stagingDir, err := s.writeToStaging(base, version, molFile, configData)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
@@ -575,6 +602,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 			return
 		}
+		s.clearStaging(base)
 		stagingDir, err := s.writeToStaging(base, version, molFile, configData)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusInternalServerError)
@@ -633,7 +661,6 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "로그 파일 생성 실패: "+err.Error(), http.StatusOK)
 			return
 		}
-		stagingToRemove := s.stagingDir(base, version)
 		go func() {
 			defer logFile.Close()
 			cmd := exec.Command("sudo",
@@ -645,15 +672,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			cmd.Stderr = logFile
 			if err := cmd.Run(); err != nil {
 				log.Printf("apply-update: systemd-run %s %s: %v", updateScript, version, err)
-				return
 			}
-			if fromStaging {
-				if err := os.RemoveAll(stagingToRemove); err != nil {
-					log.Printf("apply-update: staging cleanup %s: %v", stagingToRemove, err)
-				} else {
-					log.Printf("apply-update: staging removed %s", stagingToRemove)
-				}
-			}
+			// 스테이징은 자동 삭제하지 않음. 원격 업데이트에 재사용할 수 있도록 남겨 두고, 사용자가 「업로드된 버전 삭제」로 수동 삭제.
 		}()
 		log.Printf("apply-update: systemd-run --unit=mol-update %s %s (log: %s)", updateScript, version, logPath)
 		s.send(w, "success", "업데이트를 적용 중입니다. 잠시 후 서버가 재시작됩니다. 아래 로그를 새로고침하세요.", http.StatusOK)
@@ -707,6 +727,57 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, base, versio
 	}
 	log.Printf("apply-update: remote %s version %s applied", ip, version)
 	s.send(w, "success", "원격 "+ip+" 에 버전 "+version+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
+}
+
+func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	base := s.deployBase
+	if base == "" {
+		base = "/opt/mol"
+	}
+	currentVersion := ""
+	currentLink := filepath.Join(base, "current")
+	if target, err := os.Readlink(currentLink); err == nil {
+		// target is e.g. "versions/0.0.6" or absolute path ending with versions/0.0.6
+		currentVersion = filepath.Base(target)
+	}
+	stagingParent := filepath.Join(base, "staging")
+	stagingVersions := []string{}
+	if entries, err := os.ReadDir(stagingParent); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			v := e.Name()
+			molPath := filepath.Join(stagingParent, v, "mol")
+			if _, err := os.Stat(molPath); err == nil {
+				stagingVersions = append(stagingVersions, v)
+			}
+		}
+	}
+	var applyVersion, removeVersion string
+	canApply := false
+	for _, v := range stagingVersions {
+		if v != currentVersion {
+			canApply = true
+			if applyVersion == "" {
+				applyVersion = v
+			}
+		}
+		if removeVersion == "" {
+			removeVersion = v
+		}
+	}
+	s.send(w, "success", map[string]interface{}{
+		"current_version":  currentVersion,
+		"staging_versions": stagingVersions,
+		"can_apply":        canApply,
+		"apply_version":    applyVersion,
+		"remove_version":   removeVersion,
+	}, http.StatusOK)
 }
 
 func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {

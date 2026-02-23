@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mol</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>mol</h1>
+  </header>
+  <main>
+    <div class="top-row">
+      <section class="self-section">
+        <h2>내 정보</h2>
+        <div id="self-info" class="host-card self-card">
+          <div class="host-loading">불러오는 중…</div>
+        </div>
+      </section>
+      <section class="update-section">
+        <h2>업데이트</h2>
+        <p class="update-desc">mol 실행 파일과 config.yaml을 업로드하면 config에서 버전을 읽어 <code>/opt/mol/versions/{버전}</code>에 저장됩니다. 「업데이트 적용」을 누르면 <code>systemd-run --unit=mol-update</code> 로 <code>update.sh {버전}</code>이 실행되어 서비스가 재시작됩니다.</p>
+        <div class="update-form">
+          <div class="update-fields">
+            <div class="update-file-row">
+              <label for="upload-mol">mol 실행 파일</label>
+              <span id="upload-mol-label" class="file-label">선택된 파일 없음</span>
+              <input type="file" id="upload-mol" accept="application/octet-stream" aria-describedby="upload-mol-label">
+            </div>
+            <div class="update-file-row">
+              <label for="upload-config">config.yaml</label>
+              <span id="upload-config-label" class="file-label">선택된 파일 없음</span>
+              <input type="file" id="upload-config" accept=".yaml,.yml,text/yaml,text/plain" aria-describedby="upload-config-label">
+            </div>
+            <div class="update-config-editor-wrap">
+              <label for="upload-config-editor" class="editor-label">config.yaml 내용 수정 (버전 등)</label>
+              <textarea id="upload-config-editor" class="config-editor" placeholder="config.yaml 파일을 선택하면 내용이 여기에 표시됩니다. 수정 후 업로드하면 수정된 내용이 반영됩니다." spellcheck="false"></textarea>
+            </div>
+          </div>
+          <div class="update-actions">
+            <button type="button" id="upload-btn" class="service-btn" disabled>업로드</button>
+            <button type="button" id="apply-update-btn" class="service-btn service-start" disabled>업데이트 적용</button>
+            <button type="button" id="reset-selection-btn" class="service-btn" title="mol·config 파일 선택과 편집 내용만 초기화합니다">파일 선택 초기화</button>
+            <button type="button" id="remove-upload-btn" class="service-btn" disabled title="서버에만 올라가 있고 아직 호스트에 적용하지 않은 버전을 삭제합니다">업로드된 버전 삭제</button>
+          </div>
+          <p id="upload-status" class="discovery-status"></p>
+          <p id="apply-update-status" class="discovery-status"></p>
+        </div>
+        <div class="update-log">
+          <h3>업데이트 실행 로그 (systemd-run 출력)</h3>
+          <button type="button" id="update-log-refresh-btn" class="service-btn">로그 새로고침</button>
+          <pre id="update-log-output" class="update-log-output">(새로고침으로 로그 불러오기)</pre>
+        </div>
+      </section>
+    </div>
+    <section class="discovery-section">
+      <h2>Discovery</h2>
+      <button type="button" id="discovery-btn" class="discovery-btn">Discovery</button>
+      <p id="discovery-status" class="discovery-status"></p>
+      <h3>발견된 호스트</h3>
+      <div id="discovered-hosts" class="host-list"></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

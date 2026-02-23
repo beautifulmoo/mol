@@ -47,7 +47,7 @@ go build -o mol -ldflags "-X main.Version=1.0.0" .
 **사용 방법**
 
 - **update.sh**: 웹 UI에서 “업데이트 적용” 시 mol 이 `sudo systemd-run ... {deploy_base}/update.sh {버전}` 형태로 실행한다. 인자로 **버전 하나**를 받으며, 실행 시점에 `{deploy_base}/versions/{버전}/mol` 이 있어야 한다.  
-  업로드는 먼저 **스테이징** `{deploy_base}/staging/{버전}/` 에 저장된다(실행 중인 경로를 덮어쓰지 않아 text file busy 를 피함). 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행하고, 성공하면 해당 버전 스테이징을 삭제한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
+  업로드는 **스테이징** `{deploy_base}/staging/{버전}/` 에만 저장된다(실행 중인 경로를 덮어쓰지 않아 text file busy 를 피함). 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않고 남겨 두어 같은 버전으로 원격 업데이트를 할 수 있게 하며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
   - 예: `sudo /opt/mol/rollback.sh`
   - `{deploy_base}/previous` 심볼릭 링크가 있어야 하며(최소 한 번 업데이트가 된 뒤에만 유효), 없으면 “no previous version”으로 종료된다.

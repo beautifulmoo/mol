@@ -21,8 +21,6 @@ type Config struct {
 	Version                    string `yaml:"version"`
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"systemctl_service_name"` // e.g. "mol.service"
-	SSHUser              string `yaml:"ssh_user"`               // e.g. "kt" for ssh kt@<ip>
-	SSHIdentityFile      string `yaml:"ssh_identity_file"`      // optional: path to private key (required if service runs as non-kt user)
 	DeployBase           string `yaml:"deploy_base"`             // e.g. "/opt/mol" for versions/ and update.sh
 }
 
@@ -38,8 +36,7 @@ func Default() Config {
 		DiscoveryTimeoutSeconds:   10,
 		DiscoveryDeduplicate:      true,
 		Version:                   "",
-		SystemctlServiceName:     "mol.service",
-		SSHUser:                   "kt",
+		SystemctlServiceName:      "mol.service",
 		DeployBase:                "/opt/mol",
 	}
 }

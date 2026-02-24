@@ -139,14 +139,13 @@
 
 - **서비스 상태**: `GET {serverUrl}/api/v1/service-status?ip=`  
   - `ip` 비어 있거나 `"self"`: 로컬에서 `systemctl status <systemctl_service_name>` 실행, 결과를 `{ "status": "success", "data": { "output": "..." } }` 로 반환.  
-  - `ip` 지정: `ssh <ssh_user>@<ip> "sudo systemctl status <systemctl_service_name>"` 실행(설정 `ssh_identity_file` 사용 가능).  
+  - `ip` 지정: 요청을 받은 서버가 **원격 mol의 서비스 포트(8888)** 로 `GET .../service-status` 를 호출한다. 원격 mol은 자기 서버에서 `systemctl status` 를 실행한 뒤 그 결과를 응답으로 반환하고, 요청자는 그 응답을 그대로 클라이언트에 전달한다.  
   - 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
 - **서비스 제어**: `POST {serverUrl}/api/v1/service-control`  
   - Body: `{ "ip": "" | "self" | "<host_ip>", "action": "start" | "stop" }`.  
   - `ip` 비어 있거나 `"self"`: 로컬 `sudo systemctl start/stop <systemctl_service_name>`.  
-  - 그 외: 원격 `ssh <ssh_user>@<ip> "sudo systemctl start/stop <systemctl_service_name>"`.  
-  - 성공 시 `{ "status": "success", "data": null }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.  
-  - 원격 SSH 시 `ssh_identity_file` 설정을 사용한다(서비스가 비-kt 사용자로 실행될 때 필요).
+  - 그 외: 요청을 받은 서버가 **원격 mol의 서비스 포트(8888)** 로 `POST .../service-control` (Body: `{ "ip": "self", "action": "start"|"stop" }`)를 호출한다. 원격 mol은 자기 서버에서 `systemctl start` 또는 `stop` 을 실행한 뒤 응답을 반환하고, 요청자는 그 응답을 그대로 클라이언트에 전달한다.  
+  - 성공 시 `{ "status": "success", "data": null }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
 
 ### 5.5 업데이트 API
 
@@ -258,12 +257,10 @@
 | `discovery_deduplicate` | 동일 호스트 중복 제거 여부 | `true` |
 | `version` | (선택) 버전 override. 비어 있으면 빌드 시 ldflags 값 사용 | `"1.2.3"` 또는 빈 문자열 |
 | `systemctl_service_name` | (선택) 서비스 상태·제어 대상 유닛 이름 | `"mol.service"` |
-| `ssh_user` | (선택) 발견된 호스트 SSH 사용자 | `"kt"` |
-| `ssh_identity_file` | (선택) 원격 SSH용 비밀키 경로. 서비스가 비-kt 사용자로 실행될 때 지정 | `"/home/kt/.ssh/id_rsa"` 등 |
 | `deploy_base` | (선택) 업데이트 배포 베이스. `staging/`, `versions/`, `update.sh`, `rollback.sh`, `update_last.log` 의 기준 경로 | `"/opt/mol"` |
 
 - IP 대역(예: broadcast 주소)은 실제 환경에 따라 다를 수 있으므로 `discovery_broadcast_address` 등으로 설정에서 지정한다.
-- 원격 서비스 상태·제어는 `ssh <ssh_user>@<ip> "sudo systemctl ..."` 로 수행하며, `ssh_identity_file` 이 있으면 `-i` 로 사용한다.
+- 원격 서비스 상태·제어는 요청을 받은 서버가 **원격 mol의 API**(서비스 포트 8888)를 호출하고, 원격 mol이 자체적으로 `systemctl status` / `start` / `stop` 을 실행한 뒤 응답을 반환하는 방식으로 수행한다.
 
 ---
 
@@ -283,8 +280,8 @@
 - **자기 정보 API**: GET /api/v1/self — 브로드캐스트 대역 outbound IP를 "내 정보" IP로 사용.
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
 - **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간), GET /api/v1/discovery (일괄 반환). Discovery 결과는 `data` 배열로 반환하며, 없을 때는 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast). 타임아웃은 최대 5초.
-- **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status`, 원격은 `ssh <ssh_user>@<ip> "sudo systemctl status ..."`. `ssh_identity_file` 지원.
-- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `sudo systemctl start/stop`, 원격은 SSH로 동일 명령 실행.
+- **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status`. 원격은 요청자가 원격 mol의 서비스 포트로 GET service-status를 호출하고, 원격 mol이 자체 systemctl status 실행 후 응답을 반환.
+- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `sudo systemctl start/stop`. 원격은 요청자가 원격 mol의 서비스 포트로 POST service-control(ip: "self", action)을 호출하고, 원격 mol이 자체 systemctl start/stop 실행 후 응답을 반환.
 - **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **sudo systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
 - 정적 파일 서빙 (`/web` prefix).
 
@@ -308,9 +305,9 @@
 - [ ] systemctl status: 접기/펼치기(기본 접힘), 접힌 상태에서 [정상 서비스 상태] / [서비스 중지 상태]
 - [ ] 내 정보 카드: 시작/중지 버튼 없음
 - [ ] 발견된 호스트 카드: 시작(파란색)·중지(빨간색) 버튼; Active면 시작 disabled, dead면 중지 disabled
-- [ ] 서비스 상태 API: GET /api/v1/service-status?ip= (로컬/원격, ssh_identity_file)
-- [ ] 서비스 제어 API: POST /api/v1/service-control (ip, action: start|stop)
-- [ ] 설정: systemctl_service_name, ssh_user, ssh_identity_file, deploy_base (선택)
+- [ ] 서비스 상태 API: GET /api/v1/service-status?ip= — 로컬은 systemctl, 원격은 원격 mol API 호출 후 응답 전달
+- [ ] 서비스 제어 API: POST /api/v1/service-control (ip, action: start|stop) — 로컬은 systemctl, 원격은 원격 mol API 호출
+- [ ] 설정: systemctl_service_name, deploy_base (선택)
 - [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만; upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); **sudo** systemd-run; update_last.log, update-log API
 - [ ] 프론트: 업데이트 영역 — 업로드(mol+config·편집), 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 동일 호스트 응답 시 카드 갱신; 원격 적용 후 Discovery 재수행 없이 해당 카드만 지연 후 host-info·service-status 갱신

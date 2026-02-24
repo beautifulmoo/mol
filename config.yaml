@@ -11,6 +11,4 @@ discovery_timeout_seconds: 10
 discovery_deduplicate: true
 version: "0.1.0"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
 # systemctl_service_name: "mol.service"   # for service-status API (self + discovered hosts)
-# ssh_user: "kt"   # for SSH to discovered hosts: ssh kt@<ip> "sudo systemctl status ..."
-# ssh_identity_file: "/home/kt/.ssh/id_rsa"   # required if mol runs as root (systemd): path to private key
 # deploy_base: "/opt/mol"   # base for versions/ and update.sh (web 업데이트)

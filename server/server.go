@@ -46,8 +46,6 @@ type Server struct {
 	servicePort          int
 	serviceName          string
 	systemctlServiceName string
-	sshUser              string
-	sshIdentityFile      string
 	deployBase           string
 }
 
@@ -62,8 +60,6 @@ type Config struct {
 	ServicePort          int
 	ServiceName          string
 	SystemctlServiceName string
-	SSHUser              string
-	SSHIdentityFile      string
 	DeployBase           string
 }
 
@@ -79,8 +75,6 @@ func New(cfg Config) *Server {
 		servicePort:          cfg.ServicePort,
 		serviceName:          cfg.ServiceName,
 		systemctlServiceName: cfg.SystemctlServiceName,
-		sshUser:              cfg.SSHUser,
-		sshIdentityFile:     cfg.SSHIdentityFile,
 		deployBase:           strings.TrimSuffix(cfg.DeployBase, "/"),
 	}
 }
@@ -245,17 +239,28 @@ func (s *Server) handleServiceStatus(w http.ResponseWriter, r *http.Request) {
 	if svcName == "" {
 		svcName = "mol.service"
 	}
-	sshUser := s.sshUser
-	if sshUser == "" {
-		sshUser = "kt"
+	if ip != "" && ip != "self" {
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		url := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/service-status"
+		resp, err := remoteHTTPClient.Get(url)
+		if err != nil {
+			s.send(w, "fail", "원격 상태 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var out APIResponse
+		if json.Unmarshal(body, &out) != nil {
+			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
+		return
 	}
-	var output string
-	var err error
-	if ip == "" || ip == "self" {
-		output, err = svcstatus.GetLocal(svcName)
-	} else {
-		output, err = svcstatus.GetRemote(ip, svcName, sshUser, s.sshIdentityFile)
-	}
+	output, err := svcstatus.GetLocal(svcName)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
@@ -289,23 +294,33 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	if svcName == "" {
 		svcName = "mol.service"
 	}
-	sshUser := s.sshUser
-	if sshUser == "" {
-		sshUser = "kt"
+	if ip != "" && ip != "self" {
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		url := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/service-control"
+		payload, _ := json.Marshal(map[string]string{"ip": "self", "action": action})
+		resp, err := remoteHTTPClient.Post(url, "application/json", bytes.NewReader(payload))
+		if err != nil {
+			s.send(w, "fail", "원격 제어 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var out APIResponse
+		if json.Unmarshal(body, &out) != nil {
+			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
+		return
 	}
 	var err error
-	if ip == "" || ip == "self" {
-		if action == "start" {
-			err = svcstatus.StartLocal(svcName)
-		} else {
-			err = svcstatus.StopLocal(svcName)
-		}
+	if action == "start" {
+		err = svcstatus.StartLocal(svcName)
 	} else {
-		if action == "start" {
-			err = svcstatus.StartRemote(ip, svcName, sshUser, s.sshIdentityFile)
-		} else {
-			err = svcstatus.StopRemote(ip, svcName, sshUser, s.sshIdentityFile)
-		}
+		err = svcstatus.StopLocal(svcName)
 	}
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)

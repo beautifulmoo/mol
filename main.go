@@ -110,9 +110,7 @@ func main() {
 		ServicePort:          cfg.HTTPPort,
 		ServiceName:          cfg.ServiceName,
 		SystemctlServiceName: cfg.SystemctlServiceName,
-		SSHUser:              cfg.SSHUser,
-		SSHIdentityFile:     cfg.SSHIdentityFile,
-		DeployBase:          cfg.DeployBase,
+		DeployBase:           cfg.DeployBase,
 	})
 
 	listenAddr := ":" + strconv.Itoa(cfg.HTTPPort)

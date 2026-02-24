@@ -54,6 +54,7 @@ h3 {
   color: #a1a1aa;
 }
 .host-card {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 1rem;
@@ -61,6 +62,25 @@ h3 {
   background: #25262b;
   border-radius: 8px;
   border: 1px solid #3f3f46;
+}
+.host-card .updating-indicator {
+  display: none;
+  position: absolute;
+  left: 1rem;
+  top: calc(1rem + 48px);
+  width: 22px;
+  height: 22px;
+  border: 2px solid #3f3f46;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: card-spin 0.75s linear infinite;
+  pointer-events: none;
+}
+.host-card.is-updating .updating-indicator {
+  display: block;
+}
+@keyframes card-spin {
+  to { transform: rotate(360deg); }
 }
 .host-card .host-icon {
   flex-shrink: 0;
@@ -265,6 +285,13 @@ h3 {
 }
 .update-actions .service-btn {
   flex: 0 0 auto;
+}
+.staging-version-display {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 0.85rem;
+  color: #a1a1aa;
+  margin-left: 0.25rem;
 }
 #upload-btn:not(:disabled) {
   background: #3b82f6;

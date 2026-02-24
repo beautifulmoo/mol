@@ -1,16 +1,21 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"mol/config"
 	"mol/discovery"
@@ -505,50 +510,95 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", "버전 "+version+" 이 스테이징에서 삭제되었습니다.", http.StatusOK)
 }
 
-func (s *Server) runRemoteCmd(ip, cmd string) error {
-	user := s.sshUser
-	if user == "" {
-		user = "kt"
-	}
-	args := []string{"-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes"}
-	if s.sshIdentityFile != "" {
-		args = append(args, "-i", s.sshIdentityFile)
-	}
-	args = append(args, user+"@"+ip, cmd)
-	c := exec.Command("ssh", args...)
-	out, err := c.CombinedOutput()
+// remoteHTTPClient is used to call another mol instance's upload/apply APIs (no SSH/SCP).
+var remoteHTTPClient = &http.Client{Timeout: 120 * time.Second}
+
+// postUploadToTarget sends mol and config from local paths to target mol's upload API (staging).
+func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, molPath, configPath string) error {
+	molFile, err := os.Open(molPath)
 	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if text != "" {
-			return fmt.Errorf("%s", text)
-		}
+		return fmt.Errorf("mol 파일 열기: %w", err)
+	}
+	defer molFile.Close()
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("config 읽기: %w", err)
+	}
+	return s.postUploadToTargetWithReader(ctx, baseURL, apiPrefix, molFile, configData)
+}
+
+// postUploadToTargetWithReader sends mol (from reader) and configData to target mol's upload API (staging).
+func (s *Server) postUploadToTargetWithReader(ctx context.Context, baseURL, apiPrefix string, molReader io.Reader, configData []byte) error {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	molPart, err := w.CreateFormFile("mol", "mol")
+	if err != nil {
 		return err
+	}
+	if _, err := io.Copy(molPart, molReader); err != nil {
+		return err
+	}
+	configPart, err := w.CreateFormFile("config", "config.yaml")
+	if err != nil {
+		return err
+	}
+	if _, err := configPart.Write(configData); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	uploadURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/upload"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := remoteHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("원격 업로드 요청: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Status string `json:"status"`
+		Data   interface{} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &out)
+	if out.Status != "success" {
+		msg := "원격 업로드 실패"
+		if s, ok := out.Data.(string); ok && s != "" {
+			msg = s
+		}
+		return fmt.Errorf("%s", msg)
 	}
 	return nil
 }
 
-func (s *Server) runScp(ip, localPath, remotePath string) error {
-	user := s.sshUser
-	if user == "" {
-		user = "kt"
-	}
-	dest := user + "@" + ip + ":" + remotePath
-	args := []string{"-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes"}
-	if s.sshIdentityFile != "" {
-		args = append(args, "-i", s.sshIdentityFile)
-	}
-	args = append(args, localPath, dest)
-	c := exec.Command("scp", args...)
-	out, err := c.CombinedOutput()
+// postApplyUpdateToTarget tells target mol to apply the given version from its staging (ip=self).
+func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version string) (status string, data interface{}, err error) {
+	applyURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/apply-update"
+	payload, err := json.Marshal(map[string]string{"version": version, "ip": "self"})
 	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if text != "" {
-			return fmt.Errorf("%s", text)
-		}
-		return err
+		return "", nil, err
 	}
-	_ = out
-	return nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, applyURL, bytes.NewReader(payload))
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := remoteHTTPClient.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("원격 적용 요청: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Status string      `json:"status"`
+		Data   interface{} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &out)
+	return out.Status, out.Data, nil
 }
 
 func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
@@ -561,7 +611,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		base = "/opt/mol"
 	}
 
-	// 원격 전용: multipart(mol+config+ip) → 스테이징에 저장 후 원격 배포 (임시 디렉터리 없음)
+	// 원격 전용: multipart(mol+config+ip) → 원격 mol 업로드 API로 전송 후 원격 apply-update API 호출 (로컬 스테이징·SCP 미사용)
 	if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 		if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
@@ -602,13 +652,32 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 			return
 		}
-		s.clearStaging(base)
-		stagingDir, err := s.writeToStaging(base, version, molFile, configData)
-		if err != nil {
-			s.send(w, "fail", err.Error(), http.StatusInternalServerError)
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		baseURL := "http://" + ip + ":" + strconv.Itoa(port)
+		ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
+		defer cancel()
+		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, molFile, configData); err != nil {
+			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
-		s.doRemoteUpdate(w, ip, version, base, stagingDir)
+		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version)
+		if err != nil {
+			s.send(w, "fail", err.Error(), http.StatusOK)
+			return
+		}
+		if status != "success" {
+			msg := "원격 적용 실패"
+			if msgStr, ok := data.(string); ok && msgStr != "" {
+				msg = msgStr
+			}
+			s.send(w, "fail", msg, http.StatusOK)
+			return
+		}
+		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API)", ip, version)
+		s.send(w, "success", "원격 "+ip+" 에 버전 "+version+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
 		return
 	}
 
@@ -683,49 +752,36 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	s.doRemoteUpdate(w, ip, version, base, versionDir)
 }
 
-// doRemoteUpdate deploys files from versionDir (local path) to remote host ip: base/versions/version/ and restarts service.
+// doRemoteUpdate sends files to the remote mol's upload API (staging), then calls the remote's apply-update API (no SSH/SCP).
 func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, base, versionDir string) {
-	svc := s.systemctlServiceName
-	if svc == "" {
-		svc = "mol.service"
+	port := s.servicePort
+	if port <= 0 {
+		port = 8888
 	}
-	remoteUser := s.sshUser
-	if remoteUser == "" {
-		remoteUser = "kt"
-	}
-	remoteVerDir := base + "/versions/" + version
-	// 1. Stop service, create version dir as root, then chown -R to service user so scp and runtime can use it
-	stopMkdirChown := fmt.Sprintf("sudo systemctl stop %s && sudo mkdir -p %s && sudo chown -R %s:%s %s", svc, remoteVerDir, remoteUser, remoteUser, remoteVerDir)
-	if err := s.runRemoteCmd(ip, stopMkdirChown); err != nil {
-		s.send(w, "fail", "원격 서비스 중지/디렉터리 생성 실패: "+err.Error(), http.StatusOK)
-		return
-	}
-	// 2. Scp mol and config.yaml (files will be owned by remoteUser)
+	baseURL := "http://" + ip + ":" + strconv.Itoa(port)
+	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
+	defer cancel()
+
 	molPath := filepath.Join(versionDir, "mol")
 	configPath := filepath.Join(versionDir, "config.yaml")
-	if err := s.runScp(ip, molPath, remoteVerDir+"/mol"); err != nil {
-		s.send(w, "fail", "mol 복사 실패: "+err.Error(), http.StatusOK)
+	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, molPath, configPath); err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	if err := s.runScp(ip, configPath, remoteVerDir+"/config.yaml"); err != nil {
-		s.send(w, "fail", "config.yaml 복사 실패: "+err.Error(), http.StatusOK)
+	status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	// 3. Chmod +x on remote mol (run as remoteUser; they own the file)
-	chmod := fmt.Sprintf("chmod +x %s/mol", remoteVerDir)
-	if err := s.runRemoteCmd(ip, chmod); err != nil {
-		s.send(w, "fail", "원격 chmod 실패: "+err.Error(), http.StatusOK)
+	if status != "success" {
+		msg := "원격 적용 실패"
+		if msgStr, ok := data.(string); ok && msgStr != "" {
+			msg = msgStr
+		}
+		s.send(w, "fail", msg, http.StatusOK)
 		return
 	}
-	// 4. Update symlinks (sudo), chown symlinks to service user, then start
-	script := fmt.Sprintf("BASE=%s; V=%s; SVC=%s; USER=%s; cd $BASE && ([ -L current ] && ln -sfn $(readlink current) previous); ln -sfn versions/$V current && chown -h $USER:$USER $BASE/current $BASE/previous 2>/dev/null; systemctl start $SVC", base, version, svc, remoteUser)
-	escaped := strings.ReplaceAll(script, "'", "'\"'\"'")
-	runSymlinks := "sudo bash -c '" + escaped + "'"
-	if err := s.runRemoteCmd(ip, runSymlinks); err != nil {
-		s.send(w, "fail", "원격 심볼릭 링크/서비스 시작 실패: "+err.Error(), http.StatusOK)
-		return
-	}
-	log.Printf("apply-update: remote %s version %s applied", ip, version)
+	log.Printf("apply-update: remote %s version %s applied (upload API)", ip, version)
 	s.send(w, "success", "원격 "+ip+" 에 버전 "+version+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
 }
 

@@ -34,6 +34,7 @@
           '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
           '</div>');
     div.innerHTML =
+      '<div class="updating-indicator" role="status" aria-label="업데이트 적용 중"></div>' +
       '<div class="host-icon">' + serverIconSvg + '</div>' +
       '<dl class="host-details">' +
       '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + '</dd>' +
@@ -162,6 +163,7 @@
         }
 
         function doApplyToHost(version) {
+          showCardUpdating(cardEl, true);
           fetch(API_BASE + '/apply-update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -170,15 +172,32 @@
             .then(function (res) { return res.json(); })
             .then(function (body) {
               if (body.status === 'success') {
-                if (summary) summary.textContent = body.data || '적용 완료';
+                if (summary) summary.textContent = body.data || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
                 fetchServiceStatus(cardEl, ip);
-                runDiscovery();
+                setTimeout(function () {
+                  fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
+                    .then(function (res) { return res.json(); })
+                    .then(function (body) {
+                      if (body.status === 'success' && body.data) {
+                        updateHostCardDetails(cardEl, body.data);
+                        updateAllHostApplyButtons();
+                      }
+                      fetchServiceStatus(cardEl, ip);
+                      showCardUpdating(cardEl, false);
+                    })
+                    .catch(function () {
+                      fetchServiceStatus(cardEl, ip);
+                      showCardUpdating(cardEl, false);
+                    });
+                }, 5000);
               } else {
                 updateStatusUI(cardEl, null, body.data || '적용 실패');
+                showCardUpdating(cardEl, false);
               }
             })
             .catch(function () {
               updateStatusUI(cardEl, null, '요청 실패');
+              showCardUpdating(cardEl, false);
             })
             .finally(recheckApplyButton);
         }
@@ -200,6 +219,7 @@
         formData.append('ip', ip);
         formData.append('mol', molInput.files[0]);
         formData.append('config', new Blob([configEditor.value], { type: 'text/yaml' }), 'config.yaml');
+        showCardUpdating(cardEl, true);
         fetch(API_BASE + '/apply-update', {
           method: 'POST',
           body: formData
@@ -207,15 +227,32 @@
           .then(function (res) { return res.json(); })
           .then(function (body) {
             if (body.status === 'success') {
-              if (summary) summary.textContent = body.data || '적용 완료';
+              if (summary) summary.textContent = body.data || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
               fetchServiceStatus(cardEl, ip);
-              runDiscovery();
+              setTimeout(function () {
+                fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
+                  .then(function (res) { return res.json(); })
+                  .then(function (body) {
+                    if (body.status === 'success' && body.data) {
+                      updateHostCardDetails(cardEl, body.data);
+                      updateAllHostApplyButtons();
+                    }
+                    fetchServiceStatus(cardEl, ip);
+                    showCardUpdating(cardEl, false);
+                  })
+                  .catch(function () {
+                    fetchServiceStatus(cardEl, ip);
+                    showCardUpdating(cardEl, false);
+                  });
+              }, 5000);
             } else {
               updateStatusUI(cardEl, null, body.data || '적용 실패');
+              showCardUpdating(cardEl, false);
             }
           })
           .catch(function () {
             updateStatusUI(cardEl, null, '요청 실패');
+            showCardUpdating(cardEl, false);
           })
           .finally(recheckApplyButton);
       });
@@ -361,24 +398,46 @@
       });
   }
 
+  function showCardUpdating(card, show) {
+    if (!card) return;
+    card.classList.toggle('is-updating', !!show);
+  }
+
+  function findHostCardByIp(container, ip) {
+    if (!container || !ip) return null;
+    var cards = container.querySelectorAll('.host-card[data-host-ip]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-host-ip') === ip) return cards[i];
+    }
+    return null;
+  }
+
   function runDiscovery() {
     const btn = el('discovery-btn');
     const status = el('discovery-status');
     const list = el('discovered-hosts');
+    if (!list) return;
     btn.disabled = true;
-    status.textContent = 'Discovery 진행 중… (응답 오는 대로 표시)';
-    list.innerHTML = '';
-    var count = 0;
+    status.textContent = 'Discovery 진행 중… (기존 호스트는 그대로 제어 가능)';
+    var count = list.querySelectorAll('.host-card:not(.self-card)').length;
     var evtSource = new EventSource(API_BASE + '/discovery/stream');
     evtSource.onmessage = function (e) {
       try {
         var host = JSON.parse(e.data);
-        var card = renderHostCard(host, false);
-        list.appendChild(card);
-        bindServiceControlButtons(card);
-        fetchServiceStatus(card, host.host_ip || '');
-        count += 1;
-        status.textContent = '호스트 ' + count + '개 발견 (계속 수신 중…)';
+        var ip = host.host_ip || '';
+        var existing = findHostCardByIp(list, ip);
+        if (existing) {
+          updateHostCardDetails(existing, host);
+          fetchServiceStatus(existing, ip);
+          updateAllHostApplyButtons();
+        } else {
+          var card = renderHostCard(host, false);
+          list.appendChild(card);
+          bindServiceControlButtons(card);
+          fetchServiceStatus(card, ip);
+        }
+        count = list.querySelectorAll('.host-card:not(.self-card)').length;
+        status.textContent = 'Discovery 진행 중… (호스트 ' + count + '개, 응답 오는 대로 갱신)';
       } catch (err) {}
     };
     evtSource.addEventListener('done', function () {
@@ -418,8 +477,14 @@
         };
         var applyBtn = el('apply-update-btn');
         var removeBtn = el('remove-upload-btn');
+        var stagingDisplay = el('staging-version-display');
         if (applyBtn) applyBtn.disabled = !lastUpdateStatus.can_apply;
         if (removeBtn) removeBtn.disabled = !(lastUpdateStatus.staging_versions && lastUpdateStatus.staging_versions.length > 0);
+        if (stagingDisplay) {
+          stagingDisplay.textContent = lastUpdateStatus.staging_versions && lastUpdateStatus.staging_versions.length > 0
+            ? '스테이징: ' + lastUpdateStatus.staging_versions.join(', ')
+            : '';
+        }
         updateAllHostApplyButtons();
       })
       .catch(function () {});
@@ -530,8 +595,10 @@
     if (!version || !lastUpdateStatus.can_apply) return;
     var status = el('apply-update-status');
     var applyBtn = el('apply-update-btn');
+    var selfCard = el('self-info') && el('self-info').querySelector('.host-card');
     if (applyBtn) applyBtn.disabled = true;
     status.textContent = '업데이트 적용 요청 중…';
+    showCardUpdating(selfCard, true);
     fetch(API_BASE + '/apply-update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -556,11 +623,13 @@
           }, 1000);
         } else {
           status.textContent = body.data || '적용 실패.';
+          showCardUpdating(selfCard, false);
           fetchUpdateStatus();
         }
       })
       .catch(function () {
         status.textContent = '요청 실패. 서버가 재시작 중일 수 있습니다. 잠시 후 페이지를 새로고침해 보세요.';
+        showCardUpdating(selfCard, false);
         fetchUpdateStatus();
       });
   }

@@ -159,7 +159,7 @@
 - **업로드**: `POST {serverUrl}/api/v1/upload`  
   - **multipart/form-data**: `mol`(실행 파일), `config`(config.yaml). 버전은 config에서 파싱.  
   - 버전은 영문·숫자·`.`·`-`만 허용.  
-  - 업로드된 파일은 **스테이징** `{deploy_base}/staging/{version}/` 에 저장된다(mol, config.yaml).  
+  - 요청을 받은 mol 인스턴스는 **자기 자신의 스테이징** `{deploy_base}/staging/{version}/` 에만 저장한다(mol, config.yaml). 로컬 웹에서 업로드하면 로컬 mol의 스테이징에 저장되고, 원격 배포 시에는 **원격 mol**에 같은 upload API를 호출하여 그 mol의 스테이징에 저장한다.  
   - 성공 시 `{ "status": "success", "data": { "version": "..." } }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
 - **업로드 삭제**: `POST {serverUrl}/api/v1/upload/remove`  
   - Body: `{ "version": "<버전>" }`.  
@@ -171,9 +171,9 @@
   - 실행 전 **mol-update 유닛 정리**: `systemctl reset-failed mol-update.service`, `systemctl stop mol-update.service` (실패해도 무시).  
   - **`sudo systemd-run`** 로 실행: `sudo systemd-run --unit=mol-update --property=RemainAfterExit=yes {deploy_base}/update.sh {version}`. 로그는 `{deploy_base}/update_last.log`.  
   - systemd-run 은 **반드시 `sudo`** 로 호출. 응답은 즉시 반환, 실제 업데이트는 백그라운드.
-- **적용 (원격)**: `POST {serverUrl}/api/v1/apply-update`  
-  - **JSON** Body: `{ "version": "<버전>", "ip": "<원격 IP>" }`. 버전 소스는 스테이징 우선, 없으면 versions. 해당 경로에서 scp로 원격 `{deploy_base}/versions/{version}/` 에 복사 후 원격에서 심볼릭 링크 갱신·서비스 재시작.  
-  - **multipart** (원격 전용): `ip`, `mol`, `config`. 스테이징에 저장한 뒤 위와 동일하게 원격 배포. 로컬 versions/ 에는 쓰지 않는다.
+- **적용 (원격)**: 원격 mol로의 배포는 **원격 mol의 업로드 API**를 사용한다. 요청을 받은 서버(로컬 mol)는 대상 원격 mol의 **서비스 포트(8888)** 로 HTTP로 (1) `POST /api/v1/upload` (multipart: `mol`, `config`)를 보내 해당 mol의 **스테이징**에 올린 뒤, (2) `POST /api/v1/apply-update` (Body: `{ "version": "<버전>", "ip": "self" }`)를 보내 그 mol이 자기 스테이징을 적용·재시작하도록 한다.  
+  - **JSON** Body: `{ "version": "<버전>", "ip": "<원격 IP>" }`. 로컬의 스테이징 또는 versions에서 해당 버전의 mol·config를 읽어, 위와 같이 원격의 upload API로 전송한 후 원격의 apply-update API를 호출한다.  
+  - **multipart** (원격 전용): `ip`, `mol`, `config`. 수신한 파일을 로컬 스테이징에 저장하지 않고, 원격 mol의 upload API로 그대로 전송한 뒤 원격의 apply-update API를 호출한다.
 - **업데이트 로그**: `GET {serverUrl}/api/v1/update-log`  
   - `{deploy_base}/update_last.log` 파일 내용을 읽어 `{ "status": "success", "data": { "output": "<로그 텍스트>" } }` 로 반환.  
   - 파일이 없거나 읽기 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
@@ -187,11 +187,12 @@
 - **초기 화면**
   - **내 정보**: 현재 mol 인스턴스의 버전, IP, 호스트명, CPU, MEMORY 등을 표시 (자기 정보 API 사용).
 - **Discovery 버튼**
-  - 클릭 시 **EventSource** 로 `GET /api/v1/discovery/stream` 에 연결하여 **실시간 Discovery**를 수행한다. SSE로 호스트가 한 건씩 도착할 때마다 호스트 카드를 즉시 목록에 추가하고, `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 타임아웃 만료를 기다리지 않고 응답이 오는 대로 표시한다.
+  - 클릭 시 **EventSource** 로 `GET /api/v1/discovery/stream` 에 연결하여 **실시간 Discovery**를 수행한다. **기존 발견된 호스트 목록은 비우지 않고** 유지하며, 진행 중에도 해당 카드들의 제어(시작/중지·업데이트 적용·상태 새로고침)가 가능하다. SSE로 호스트가 도착할 때 **이미 같은 IP의 카드가 있으면** 그 카드의 내용(버전, CPU, 메모리 등)만 갱신하고, 없으면 새 카드를 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다.
 - **발견된 호스트 표시**
   - 각 호스트를 **서버 모양 아이콘**과 함께 표시한다.
   - 표시 내용: 해당 호스트의 mol 버전, IP, 호스트 정보(CPU, MEMORY) 등 — DISCOVERY_RESPONSE(및 그 확장) 기반으로 표시한다.
   - 내 정보와 동일한 형태(카드/테이블 등)로 보여주어 일관된 UX를 유지한다.
+- **원격 적용 후**: 원격 mol 업데이트가 성공하면 **Discovery를 다시 수행하지 않고**, 해당 호스트 카드만 **일정 시간(예: 5초) 후** `GET /api/v1/host-info?ip=...`와 `GET /api/v1/service-status?ip=...`로 상태·호스트 정보를 갱신한다.
 
 ### 6.1 systemctl status 표시 (내 정보·발견된 호스트 공통)
 
@@ -219,11 +220,13 @@
 - **적용 (원격)**  
   - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 스테이징(또는 세션 내 업로드된 버전)에 버전이 있고, 그 버전이 **해당 호스트의 현재 버전과 다를 때**만 해당 호스트의 「업데이트 적용」이 활성화된다. 카드에는 해당 호스트의 버전을 `data-host-version`으로 저장하여 비교에 사용한다.  
   - **버튼 스타일**: 활성화 시 **초록색** 계열(로컬 적용 버튼과 동일)로 표시하여 적용 가능 상태를 직관적으로 구분한다.  
-  - **클릭 동작**: 적용할 버전은 **스테이징에 올라간 버전**(또는 세션 내 업로드 버전)을 사용한다. 파일 선택이 없어도 스테이징에 버전이 있으면 JSON `{ version, ip }` 로 `POST /api/v1/apply-update`를 호출한다. mol·config만 선택된 경우에는 multipart `ip`, `mol`, `config` 로 스테이징 저장 후 원격 배포.  
+  - **클릭 동작**: 적용할 버전은 **스테이징에 올라간 버전**(또는 세션 내 업로드 버전)을 사용한다. 파일 선택이 없어도 스테이징에 버전이 있으면 JSON `{ version, ip }` 로 로컬 서버에 보내며, 서버는 원격 mol의 upload API·apply-update API를 호출하여 배포한다. mol·config만 선택된 경우에는 multipart `ip`, `mol`, `config` 로 전송하면 서버가 원격 mol의 upload API로 전달한 뒤 apply-update를 호출한다.  
   - **툴팁**:  
     - 비활성·스테이징에 파일 없음: "먼저 업데이트 영역에서 버전을 업로드하세요"  
     - 비활성·스테이징 버전과 현재 버전 동일: "최신 버전입니다"  
     - 활성: "x.x.x 버전으로 업데이트 가능합니다" (x.x.x는 스테이징 버전)
+- **스테이징 버전 표시**: 「업로드된 버전 삭제」 버튼 옆에 현재 스테이징에 올라간 버전(예: "스테이징: 1.2.3")을 표시한다. 스테이징이 비어 있으면 표시하지 않는다.
+- **업데이트 인디케이터**: 로컬·리모트 카드 모두, 업데이트 적용이 진행 중일 때(완료로 판단될 때까지) 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. 로컬은 요청 실패 시에만 숨기고, 성공 시에는 페이지 자동 새로고침으로 사라진다. 리모트는 성공 시 일정 시간 후 상태·호스트 정보 갱신이 끝나면 숨기고, 실패 시 즉시 숨긴다.
 - **파일 선택 초기화**: mol·config 선택 및 편집 내용만 초기화. 스테이징/versions 에 올라간 버전은 유지.
 - **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제.
 - **로그**: `GET /api/v1/update-log` 로 최근 업데이트 로그를 가져와 표시. 새로고침으로 최신 로그 확인 가능.
@@ -282,7 +285,7 @@
 - **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간), GET /api/v1/discovery (일괄 반환). Discovery 결과는 `data` 배열로 반환하며, 없을 때는 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast). 타임아웃은 최대 5초.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status`, 원격은 `ssh <ssh_user>@<ip> "sudo systemctl status ..."`. `ssh_identity_file` 지원.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `sudo systemctl start/stop`, 원격은 SSH로 동일 명령 실행.
-- **업데이트 API**: 업로드는 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **sudo systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. 원격 적용: JSON(version, ip) 또는 multipart(ip, mol, config, multipart 시 스테이징에 저장 후 원격 배포). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
+- **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **sudo systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
 - 정적 파일 서빙 (`/web` prefix).
 
 ---
@@ -308,9 +311,10 @@
 - [ ] 서비스 상태 API: GET /api/v1/service-status?ip= (로컬/원격, ssh_identity_file)
 - [ ] 서비스 제어 API: POST /api/v1/service-control (ip, action: start|stop)
 - [ ] 설정: systemctl_service_name, ssh_user, ssh_identity_file, deploy_base (선택)
-- [ ] 업데이트: deploy_base, **staging/**(업로드 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload → 스테이징만; upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); 원격 적용=JSON(version,ip) 또는 multipart(ip,mol,config); **sudo** systemd-run; update_last.log, update-log API
-- [ ] 프론트: 업데이트 영역 — 업로드(mol+config·편집), 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, 로그 표시/새로고침
-- [ ] 원격 적용: 호스트별 버전 비교(data-host-version), 스테이징 버전과 다를 때만 적용 버튼 활성(초록), 툴팁(스테이징 없음/최신 버전/x.x.x 버전으로 업데이트 가능), 클릭 시 스테이징 버전으로 JSON 적용
+- [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만; upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); **sudo** systemd-run; update_last.log, update-log API
+- [ ] 프론트: 업데이트 영역 — 업로드(mol+config·편집), 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
+- [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 동일 호스트 응답 시 카드 갱신; 원격 적용 후 Discovery 재수행 없이 해당 카드만 지연 후 host-info·service-status 갱신
+- [ ] 원격 적용: 호스트별 버전 비교(data-host-version), 스테이징 버전과 다를 때만 적용 버튼 활성(초록), 툴팁(스테이징 없음/최신 버전/x.x.x 버전으로 업데이트 가능), 클릭 시 서버가 원격 upload·apply-update API 호출
 - [ ] 호스트 정보 API: GET /api/v1/host-info?ip= (self=로컬, 지정=유니캐스트 Discovery)
 - [ ] Discovery 유니캐스트: DoDiscoveryUnicast(ip), 타임아웃 최대 5초
 - [ ] 상태 새로고침: 내 정보·발견된 호스트 카드에 「상태 새로고침」; 내 정보=GET /self 후 카드·status 갱신, 원격=GET /host-info?ip= 후 카드·status·적용 버튼 갱신

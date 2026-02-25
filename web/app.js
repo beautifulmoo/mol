@@ -33,12 +33,19 @@
           '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>' +
           '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
           '</div>');
+    var ipsDisplay = (host.host_ips && host.host_ips.length) ? host.host_ips.join(', ') : (host.host_ip || '-');
+    var ipsAttr = (host.host_ips && host.host_ips.length) ? host.host_ips.join(',') : (host.host_ip || '');
+    var primaryIp = host.host_ip || (host.host_ips && host.host_ips[0]) || '';
+    div.setAttribute('data-cpu-uuid', host.cpu_uuid || '');
+    div.setAttribute('data-host-ip', primaryIp);
+    div.setAttribute('data-host-ips', ipsAttr);
     div.innerHTML =
       '<div class="updating-indicator" role="status" aria-label="업데이트 적용 중"></div>' +
       '<div class="host-icon">' + serverIconSvg + '</div>' +
       '<dl class="host-details">' +
+      '<dt>CPU UUID</dt><dd>' + escapeHtml(host.cpu_uuid || '-') + '</dd>' +
       '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + '</dd>' +
-      '<dt>IP</dt><dd>' + escapeHtml(host.host_ip || '-') + '</dd>' +
+      '<dt>IP</dt><dd>' + escapeHtml(ipsDisplay) + '</dd>' +
       '<dt>호스트명</dt><dd>' + escapeHtml(host.hostname || '-') + '</dd>' +
       '<dt>서비스 포트</dt><dd>' + (host.service_port != null ? host.service_port : '-') + '</dd>' +
       '<dt>CPU</dt><dd>' + escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '') + '</dd>' +
@@ -366,14 +373,30 @@
   function updateHostCardDetails(cardEl, host) {
     if (!cardEl || !host) return;
     cardEl.setAttribute('data-host-version', host.version || '');
+    var existingIps = (cardEl.getAttribute('data-host-ips') || '').trim();
+    var ipDisplay;
+    var ipsAttr;
+    var primaryIp;
+    if (existingIps.indexOf(',') !== -1) {
+      ipsAttr = existingIps;
+      ipDisplay = existingIps.split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(', ');
+      primaryIp = cardEl.getAttribute('data-host-ip') || host.host_ip || '';
+    } else {
+      ipDisplay = (host.host_ips && host.host_ips.length) ? host.host_ips.join(', ') : (host.host_ip || '-');
+      ipsAttr = (host.host_ips && host.host_ips.length) ? host.host_ips.join(',') : (host.host_ip || '');
+      primaryIp = host.host_ip || (host.host_ips && host.host_ips[0]) || '';
+    }
+    cardEl.setAttribute('data-host-ip', primaryIp);
+    cardEl.setAttribute('data-host-ips', ipsAttr);
     var dds = cardEl.querySelectorAll('.host-details > dd');
-    if (dds.length >= 6) {
-      dds[0].textContent = host.version || '-';
-      dds[1].textContent = host.host_ip || '-';
-      dds[2].textContent = host.hostname || '-';
-      dds[3].textContent = host.service_port != null ? host.service_port : '-';
-      dds[4].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
-      dds[5].textContent = formatMemory(host);
+    if (dds.length >= 7) {
+      dds[0].textContent = host.cpu_uuid || '-';
+      dds[1].textContent = host.version || '-';
+      dds[2].textContent = ipDisplay;
+      dds[3].textContent = host.hostname || '-';
+      dds[4].textContent = host.service_port != null ? host.service_port : '-';
+      dds[5].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
+      dds[6].textContent = formatMemory(host);
     }
   }
 
@@ -412,6 +435,24 @@
     return null;
   }
 
+  function findHostCardByCpuUuid(container, cpuUuid) {
+    if (!container || !cpuUuid) return null;
+    var cards = container.querySelectorAll('.host-card[data-cpu-uuid]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-cpu-uuid') === cpuUuid) return cards[i];
+    }
+    return null;
+  }
+
+  function mergeHostIpsIntoCard(cardEl, newIp) {
+    if (!cardEl || !newIp) return;
+    var ips = (cardEl.getAttribute('data-host-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    if (ips.indexOf(newIp) === -1) ips.push(newIp);
+    cardEl.setAttribute('data-host-ips', ips.join(','));
+    var dds = cardEl.querySelectorAll('.host-details > dd');
+    if (dds.length >= 7) dds[2].textContent = ips.join(', ');
+  }
+
   function runDiscovery() {
     const btn = el('discovery-btn');
     const status = el('discovery-status');
@@ -425,16 +466,31 @@
       try {
         var host = JSON.parse(e.data);
         var ip = host.host_ip || '';
-        var existing = findHostCardByIp(list, ip);
-        if (existing) {
-          updateHostCardDetails(existing, host);
-          fetchServiceStatus(existing, ip);
-          updateAllHostApplyButtons();
-        } else {
-          var card = renderHostCard(host, false);
-          list.appendChild(card);
-          bindServiceControlButtons(card);
-          fetchServiceStatus(card, ip);
+        var cpuUuid = (host.cpu_uuid || '').trim();
+        var existing = null;
+        if (cpuUuid) {
+          existing = findHostCardByCpuUuid(list, cpuUuid);
+          if (existing) {
+            mergeHostIpsIntoCard(existing, ip);
+            updateHostCardDetails(existing, host);
+            var primaryIp = existing.getAttribute('data-host-ip') || ip;
+            fetchServiceStatus(existing, primaryIp);
+            updateAllHostApplyButtons();
+          }
+        }
+        if (!existing) {
+          existing = findHostCardByIp(list, ip);
+          if (existing) {
+            if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
+            updateHostCardDetails(existing, host);
+            fetchServiceStatus(existing, ip);
+            updateAllHostApplyButtons();
+          } else {
+            var card = renderHostCard(host, false);
+            list.appendChild(card);
+            bindServiceControlButtons(card);
+            fetchServiceStatus(card, ip);
+          }
         }
         count = list.querySelectorAll('.host-card:not(.self-card)').length;
         status.textContent = 'Discovery 진행 중… (호스트 ' + count + '개, 응답 오는 대로 갱신)';

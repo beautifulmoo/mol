@@ -12,17 +12,18 @@ import (
 )
 
 // HostInfoGetter returns host info for building DISCOVERY_RESPONSE.
-type HostInfoGetter func() (hostname, hostIP, cpuInfo string, cpuUsage float64, memTotalMB, memUsedMB uint64, memUsagePct float64)
+type HostInfoGetter func() (hostname, hostIP, cpuInfo string, cpuUsage float64, memTotalMB, memUsedMB uint64, memUsagePct float64, cpuUUID string)
 
 // Config holds discovery-related config.
+// DiscoveryBroadcastAddresses must have at least one element.
 type Config struct {
-	ServiceName               string
-	DiscoveryBroadcastAddress string
-	DiscoveryUDPPort          int
-	DiscoveryTimeoutSeconds   int
-	DiscoveryDeduplicate      bool
-	Version                   string
-	ServicePort               int
+	ServiceName                string
+	DiscoveryBroadcastAddresses []string // one or more broadcast addresses to send DISCOVERY_REQUEST to
+	DiscoveryUDPPort           int
+	DiscoveryTimeoutSeconds    int
+	DiscoveryDeduplicate       bool
+	Version                    string
+	ServicePort                int
 }
 
 // Discovery handles UDP discovery (listen + respond, and run discovery).
@@ -77,7 +78,7 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 		return
 	}
 	log.Printf("discovery: received DISCOVERY_REQUEST from %s", from)
-	hostname, hostIP, cpuInfo, cpuUsage, memTotalMB, memUsedMB, memUsagePct := d.getter()
+	hostname, hostIP, cpuInfo, cpuUsage, memTotalMB, memUsedMB, memUsagePct, cpuUUID := d.getter()
 	// Use outbound IP toward requester so the response has the IP the requester can use to reach us (avoids wrong self-filter when multiple hosts share an IP or getter returns a different interface).
 	if out := d.outboundIP(from.IP); out != "" {
 		hostIP = out
@@ -92,6 +93,7 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 		RequestID:          req.RequestID,
 		CPUInfo:            cpuInfo,
 		CPUUsagePercent:    cpuUsage,
+		CPUUUID:            cpuUUID,
 		MemoryTotalMB:      memTotalMB,
 		MemoryUsedMB:       memUsedMB,
 		MemoryUsagePercent: memUsagePct,
@@ -156,7 +158,7 @@ func (d *Discovery) handleResponse(raw []byte, from *net.UDPAddr) {
 	}
 }
 
-// DoDiscovery sends a DISCOVERY_REQUEST and collects responses until timeout. Deduplicates by host_ip:service_port if configured.
+// DoDiscovery sends a DISCOVERY_REQUEST to each configured broadcast address and collects responses until timeout. Deduplicates by host_ip:service_port if configured.
 func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 	requestID := newRequestID()
 	req := DiscoveryRequest{
@@ -168,9 +170,16 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	addr, err := net.ResolveUDPAddr("udp", d.cfg.DiscoveryBroadcastAddress+":"+strconv.Itoa(d.cfg.DiscoveryUDPPort))
-	if err != nil {
-		return nil, err
+	if len(d.cfg.DiscoveryBroadcastAddresses) == 0 {
+		return nil, fmt.Errorf("discovery: no broadcast addresses configured")
+	}
+	addrs := make([]*net.UDPAddr, 0, len(d.cfg.DiscoveryBroadcastAddresses))
+	for _, a := range d.cfg.DiscoveryBroadcastAddresses {
+		addr, err := net.ResolveUDPAddr("udp", a+":"+strconv.Itoa(d.cfg.DiscoveryUDPPort))
+		if err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
 	}
 	// Register pending before sending so we don't miss fast responses (e.g. self-response or same-LAN reply).
 	ch := make(chan *DiscoveryResponse, 32)
@@ -183,24 +192,32 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 		d.mu.Unlock()
 		close(ch)
 	}()
-	if _, err = d.conn.WriteToUDP(data, addr); err != nil {
-		return nil, err
+	for _, addr := range addrs {
+		if _, err = d.conn.WriteToUDP(data, addr); err != nil {
+			return nil, err
+		}
+		log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s", requestID, addr)
 	}
-	log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s", requestID, addr)
 	timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	// Use outbound IP toward broadcast so we reliably identify our self-response (same IP we put in our response when we reply to our own broadcast).
-	selfHostIP := d.outboundIP(addr.IP)
-	if selfHostIP == "" {
-		_, selfHostIP, _, _, _, _, _ = d.getter()
-	}
+	// Exclude self by CPU UUID so we correctly exclude local host even when it responds with different IPs (e.g. multiple interfaces).
+	_, _, _, _, _, _, _, selfCPUUUID := d.getter()
 	seen := make(map[string]struct{})
 	var list []DiscoveryResponse
 	processResponse := func(r *DiscoveryResponse) {
-		// Exclude self: match by the IP we use on this network (same host:port as our self-response).
-		if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
+		if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
 			return
+		}
+		// Fallback when CPU UUID is not available: exclude by IP + service port.
+		if selfCPUUUID == "" {
+			selfHostIP := d.outboundIP(addrs[0].IP)
+			if selfHostIP == "" {
+				_, selfHostIP, _, _, _, _, _, _ = d.getter()
+			}
+			if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
+				return
+			}
 		}
 		key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
 		if d.cfg.DiscoveryDeduplicate {
@@ -236,7 +253,7 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 	}
 }
 
-// DoDiscoveryStream sends a DISCOVERY_REQUEST and yields each response on the returned channel as it arrives (after self-filter and dedup). The channel is closed when the timeout expires. Caller must consume the channel until closed.
+// DoDiscoveryStream sends a DISCOVERY_REQUEST to each configured broadcast address and yields each response on the returned channel as it arrives (after self-filter and dedup). The channel is closed when the timeout expires. Caller must consume the channel until closed.
 func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 	requestID := newRequestID()
 	req := DiscoveryRequest{
@@ -248,9 +265,16 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	addr, err := net.ResolveUDPAddr("udp", d.cfg.DiscoveryBroadcastAddress+":"+strconv.Itoa(d.cfg.DiscoveryUDPPort))
-	if err != nil {
-		return nil, err
+	if len(d.cfg.DiscoveryBroadcastAddresses) == 0 {
+		return nil, fmt.Errorf("discovery: no broadcast addresses configured")
+	}
+	addrs := make([]*net.UDPAddr, 0, len(d.cfg.DiscoveryBroadcastAddresses))
+	for _, a := range d.cfg.DiscoveryBroadcastAddresses {
+		addr, err := net.ResolveUDPAddr("udp", a+":"+strconv.Itoa(d.cfg.DiscoveryUDPPort))
+		if err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
 	}
 	ch := make(chan *DiscoveryResponse, 32)
 	d.mu.Lock()
@@ -266,24 +290,32 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 			d.mu.Unlock()
 		}()
 
-		if _, err = d.conn.WriteToUDP(data, addr); err != nil {
-			return
+		for _, addr := range addrs {
+			if _, err = d.conn.WriteToUDP(data, addr); err != nil {
+				return
+			}
+			log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (stream)", requestID, addr)
 		}
-		log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (stream)", requestID, addr)
 
 		timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
 		timer := time.NewTimer(timeout)
 		defer timer.Stop()
 
-		selfHostIP := d.outboundIP(addr.IP)
-		if selfHostIP == "" {
-			_, selfHostIP, _, _, _, _, _ = d.getter()
-		}
+		_, _, _, _, _, _, _, selfCPUUUID := d.getter()
 		seen := make(map[string]struct{})
 
 		processAndMaybeSend := func(r *DiscoveryResponse) bool {
-			if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
+			if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
 				return false
+			}
+			if selfCPUUUID == "" {
+				selfHostIP := d.outboundIP(addrs[0].IP)
+				if selfHostIP == "" {
+					_, selfHostIP, _, _, _, _, _, _ = d.getter()
+				}
+				if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
+					return false
+				}
 			}
 			key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
 			if d.cfg.DiscoveryDeduplicate {

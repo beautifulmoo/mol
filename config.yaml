@@ -2,13 +2,18 @@
 # Override with MOL_CONFIG env or -config flag if needed.
 
 service_name: "mol"
-discovery_broadcast_address: "172.29.236.255"
+# Single broadcast (optional if discovery_broadcast_addresses is set):
+# discovery_broadcast_address: "172.29.236.255"
+# Multiple subnets: send DISCOVERY_REQUEST to each (both 172.29.236.x and 172.29.244.x):
+discovery_broadcast_addresses:
+  - "172.29.236.255"
+  - "172.29.244.255"
 discovery_udp_port: 9999
 http_port: 8888
 web_prefix: "/web"
 api_prefix: "/api/v1"
 discovery_timeout_seconds: 10
 discovery_deduplicate: true
-version: "0.1.0"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
+version: "0.2.0"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
 # systemctl_service_name: "mol.service"   # for service-status API (self + discovered hosts)
 # deploy_base: "/opt/mol"   # base for versions/ and update.sh (web 업데이트)

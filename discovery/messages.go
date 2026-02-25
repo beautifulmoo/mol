@@ -9,15 +9,17 @@ type DiscoveryRequest struct {
 
 // DiscoveryResponse is sent unicast to requester IP:discovery_port.
 type DiscoveryResponse struct {
-	Type                string  `json:"type"` // "DISCOVERY_RESPONSE"
-	Service             string  `json:"service"`
-	HostIP              string  `json:"host_ip"`
-	Hostname            string  `json:"hostname"`
+	Type                string   `json:"type"` // "DISCOVERY_RESPONSE"
+	Service             string   `json:"service"`
+	HostIP              string   `json:"host_ip"`
+	HostIPs             []string `json:"host_ips,omitempty"` // optional; for self, all IPs this host responds with (e.g. per broadcast)
+	Hostname            string   `json:"hostname"`
 	ServicePort         int     `json:"service_port"`
 	Version             string  `json:"version"`
 	RequestID           string  `json:"request_id"`
 	CPUInfo             string  `json:"cpu_info"`
 	CPUUsagePercent     float64 `json:"cpu_usage_percent"`
+	CPUUUID             string  `json:"cpu_uuid"`
 	MemoryTotalMB       uint64  `json:"memory_total_mb"`
 	MemoryUsedMB        uint64  `json:"memory_used_mb"`
 	MemoryUsagePercent  float64 `json:"memory_usage_percent"`

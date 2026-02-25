@@ -59,19 +59,27 @@ func main() {
 		})
 	}
 
-	getter := func() (hostname, hostIP, cpuInfo string, cpuUsage float64, memTotalMB, memUsedMB uint64, memUsagePct float64) {
+	getter := func() (hostname, hostIP, cpuInfo string, cpuUsage float64, memTotalMB, memUsedMB uint64, memUsagePct float64, cpuUUID string) {
 		info, err := hostinfo.Get()
 		if err != nil {
-			return "", "", "", 0, 0, 0, 0
+			return "", "", "", 0, 0, 0, 0, ""
 		}
 		return info.Hostname, info.HostIP, info.CPUInfo, info.CPUUsagePercent,
-			info.MemoryTotalMB, info.MemoryUsedMB, info.MemoryUsagePercent
+			info.MemoryTotalMB, info.MemoryUsedMB, info.MemoryUsagePercent, info.CPUUUID
 	}
 
+	broadcastAddrs := cfg.DiscoveryBroadcastAddresses
+	if len(broadcastAddrs) == 0 {
+		if cfg.DiscoveryBroadcastAddress != "" {
+			broadcastAddrs = []string{cfg.DiscoveryBroadcastAddress}
+		} else {
+			broadcastAddrs = []string{"255.255.255.255"}
+		}
+	}
 	discCfg := discovery.Config{
-		ServiceName:               cfg.ServiceName,
-		DiscoveryBroadcastAddress: cfg.DiscoveryBroadcastAddress,
-		DiscoveryUDPPort:          cfg.DiscoveryUDPPort,
+		ServiceName:                 cfg.ServiceName,
+		DiscoveryBroadcastAddresses:  broadcastAddrs,
+		DiscoveryUDPPort:             cfg.DiscoveryUDPPort,
 		DiscoveryTimeoutSeconds:   cfg.DiscoveryTimeoutSeconds,
 		DiscoveryDeduplicate:      cfg.DiscoveryDeduplicate,
 		Version:                   version,
@@ -93,9 +101,30 @@ func main() {
 		if err != nil {
 			return info, err
 		}
-		if ip := net.ParseIP(cfg.DiscoveryBroadcastAddress); ip != nil {
-			if addr := discovery.OutboundIP(ip, cfg.DiscoveryUDPPort); addr != "" {
-				info.HostIP = addr
+		var addrsForOutbound []string
+		if len(cfg.DiscoveryBroadcastAddresses) > 0 {
+			addrsForOutbound = cfg.DiscoveryBroadcastAddresses
+		} else if cfg.DiscoveryBroadcastAddress != "" {
+			addrsForOutbound = []string{cfg.DiscoveryBroadcastAddress}
+		}
+		seen := make(map[string]struct{})
+		for _, a := range addrsForOutbound {
+			if ip := net.ParseIP(a); ip != nil {
+				if addr := discovery.OutboundIP(ip, cfg.DiscoveryUDPPort); addr != "" {
+					if _, ok := seen[addr]; !ok {
+						seen[addr] = struct{}{}
+						info.HostIPs = append(info.HostIPs, addr)
+					}
+				}
+			}
+		}
+		if len(info.HostIPs) > 0 {
+			info.HostIP = info.HostIPs[0]
+		} else if len(addrsForOutbound) > 0 {
+			if ip := net.ParseIP(addrsForOutbound[0]); ip != nil {
+				if addr := discovery.OutboundIP(ip, cfg.DiscoveryUDPPort); addr != "" {
+					info.HostIP = addr
+				}
 			}
 		}
 		return info, nil

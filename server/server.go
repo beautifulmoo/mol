@@ -141,12 +141,14 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 		Type:                "DISCOVERY_RESPONSE",
 		Service:             s.serviceName,
 		HostIP:              info.HostIP,
+		HostIPs:             info.HostIPs,
 		Hostname:            info.Hostname,
 		ServicePort:         s.servicePort,
 		Version:             s.version,
 		RequestID:           "",
 		CPUInfo:             info.CPUInfo,
 		CPUUsagePercent:     info.CPUUsagePercent,
+		CPUUUID:             info.CPUUUID,
 		MemoryTotalMB:       info.MemoryTotalMB,
 		MemoryUsedMB:        info.MemoryUsedMB,
 		MemoryUsagePercent:  info.MemoryUsagePercent,
@@ -737,8 +739,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "update.sh를 찾을 수 없습니다: "+updateScript, http.StatusOK)
 			return
 		}
-		exec.Command("sudo", "systemctl", "reset-failed", "mol-update.service").Run()
-		exec.Command("sudo", "systemctl", "stop", "mol-update.service").Run()
+		exec.Command("systemctl", "reset-failed", "mol-update.service").Run()
+		exec.Command("systemctl", "stop", "mol-update.service").Run()
 		logPath := filepath.Join(base, "update_last.log")
 		logFile, err := os.Create(logPath)
 		if err != nil {
@@ -747,8 +749,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		go func() {
 			defer logFile.Close()
-			cmd := exec.Command("sudo",
-				"systemd-run",
+			cmd := exec.Command("systemd-run",
 				"--unit=mol-update",
 				"--property=RemainAfterExit=yes",
 				updateScript, version)

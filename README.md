@@ -46,10 +46,10 @@ go build -o mol -ldflags "-X main.Version=1.0.0" .
 
 **사용 방법**
 
-- **update.sh**: 웹 UI에서 “업데이트 적용” 시 mol 이 `sudo systemd-run ... {deploy_base}/update.sh {버전}` 형태로 실행한다. 인자로 **버전 하나**를 받으며, 실행 시점에 `{deploy_base}/versions/{버전}/mol` 이 있어야 한다.  
+- **update.sh**: 웹 UI에서 “업데이트 적용” 시 mol 이 `systemd-run ... {deploy_base}/update.sh {버전}` (mol.service는 root 실행, sudo 없음) 형태로 실행한다. 인자로 **버전 하나**를 받으며, 실행 시점에 `{deploy_base}/versions/{버전}/mol` 이 있어야 한다.  
   업로드는 **스테이징** `{deploy_base}/staging/{버전}/` 에만 저장된다(실행 중인 경로를 덮어쓰지 않아 text file busy 를 피함). 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않고 남겨 두어 같은 버전으로 원격 업데이트를 할 수 있게 하며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
-  - 예: `sudo /opt/mol/rollback.sh`
+  - 예: `/opt/mol/rollback.sh` (root 또는 동일 권한으로 실행)
   - `{deploy_base}/previous` 심볼릭 링크가 있어야 하며(최소 한 번 업데이트가 된 뒤에만 유효), 없으면 “no previous version”으로 종료된다.
 
 ## 실행
@@ -81,9 +81,7 @@ MOL_CONFIG=/path/to/config.yaml ./mol
 - `ssh_user`: (선택) 발견된 호스트 SSH 사용자, 기본 `kt`
 
 ### 웹에서 systemctl status 표시내 정보·발견된 호스트 카드에 `systemctl status mol.service` 결과를 표시한다.  
-원격 호스트는 `ssh <ssh_user>@<host_ip> "sudo systemctl status <systemctl_service_name>"` 로 조회한다.  
-원격에서 비밀번호 없이 동작하려면: SSH는 공개키 인증, sudo는 sudoers에서 NOPASSWD가 필요하다.  
-(예: `kt ALL=(ALL) NOPASSWD: ALL` 이 있으면 별도 항목 없이 동작한다.)
+원격 호스트는 `ssh <ssh_user>@<host_ip> "systemctl status <systemctl_service_name>"` 로 조회한다. mol.service는 root로 실행되므로 sudo를 사용하지 않으며, 원격에서 비밀번호 없이 동작하려면 SSH 공개키 인증만 설정하면 된다.
 
 **Permission denied (publickey) 가 나올 때**  
 mol을 systemd 서비스로 돌리면 **실행 사용자**가 터미널의 kt와 다를 수 있다(예: root).  

@@ -10,9 +10,10 @@ import (
 
 // Config holds application configuration (YAML).
 type Config struct {
-	ServiceName                string `yaml:"service_name"`
-	DiscoveryBroadcastAddress  string `yaml:"discovery_broadcast_address"`
-	DiscoveryUDPPort           int    `yaml:"discovery_udp_port"`
+	ServiceName                 string   `yaml:"service_name"`
+	DiscoveryBroadcastAddress   string   `yaml:"discovery_broadcast_address"`   // single; used if discovery_broadcast_addresses is empty
+	DiscoveryBroadcastAddresses []string `yaml:"discovery_broadcast_addresses"`  // optional list; overrides single when non-empty
+	DiscoveryUDPPort            int      `yaml:"discovery_udp_port"`
 	HTTPPort                   int    `yaml:"http_port"`
 	WebPrefix                  string `yaml:"web_prefix"`
 	APIPrefix                  string `yaml:"api_prefix"`

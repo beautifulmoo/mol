@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -12,10 +13,12 @@ import (
 
 // Info holds host information (CPU, memory, hostname, IP).
 type Info struct {
-	Hostname             string  `json:"hostname"`
-	HostIP               string  `json:"host_ip"`
-	CPUInfo              string  `json:"cpu_info"`
+	Hostname             string   `json:"hostname"`
+	HostIP               string   `json:"host_ip"`
+	HostIPs              []string `json:"host_ips,omitempty"` // optional; for self, all IPs this host responds with in discovery
+	CPUInfo              string   `json:"cpu_info"`
 	CPUUsagePercent      float64 `json:"cpu_usage_percent"`
+	CPUUUID              string  `json:"cpu_uuid"`
 	MemoryTotalMB        uint64  `json:"memory_total_mb"`
 	MemoryUsedMB         uint64  `json:"memory_used_mb"`
 	MemoryUsagePercent   float64 `json:"memory_usage_percent"`
@@ -30,6 +33,7 @@ func Get() (Info, error) {
 	if runtime.GOOS == "linux" {
 		h.CPUInfo, _ = cpuInfoLinux()
 		h.CPUUsagePercent, _ = cpuUsagePercentLinux()
+		h.CPUUUID, _ = cpuUUIDLinux()
 		h.MemoryTotalMB, h.MemoryUsedMB, h.MemoryUsagePercent, _ = memoryLinux()
 	}
 	return h, nil
@@ -69,6 +73,31 @@ func cpuInfoLinux() (string, error) {
 		model = "unknown"
 	}
 	return model, nil
+}
+
+// cpuUUIDLinux returns CPU or system UUID from /proc/cpuinfo (Serial) or dmidecode system-uuid.
+func cpuUUIDLinux() (string, error) {
+	f, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Text()
+		if strings.HasPrefix(line, "Serial") {
+			if i := strings.Index(line, ":"); i >= 0 {
+				return strings.TrimSpace(line[i+1:]), nil
+			}
+		}
+	}
+	// Fallback: system UUID from dmidecode (often works without root on many systems)
+	cmd := exec.Command("dmidecode", "-s", "system-uuid")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", nil
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func cpuUsagePercentLinux() (float64, error) {

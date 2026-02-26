@@ -29,42 +29,65 @@ type Config struct {
 // Discovery handles UDP discovery (listen + respond, and run discovery).
 type Discovery struct {
 	cfg    Config
-	conn   *net.UDPConn
+	conns  []*net.UDPConn // conns[0] = main (:9999), rest = per-localIP (:9999) with SO_REUSEPORT so we can send from each and receive responses on :9999
 	getter HostInfoGetter
 
 	mu       sync.Mutex
 	pending  map[string]chan *DiscoveryResponse
 }
 
-// New creates a Discovery. Caller must call conn.ListenUDP or similar and pass the conn.
-func New(cfg Config, conn *net.UDPConn, getter HostInfoGetter) *Discovery {
+// New creates a Discovery. Caller passes one or more UDP conns (all bound to discovery port, SO_REUSEPORT). conns[0] is the main listener; additional conns allow sending broadcast from each local IP so responses come back to :9999.
+func New(cfg Config, conns []*net.UDPConn, getter HostInfoGetter) *Discovery {
+	if len(conns) == 0 {
+		panic("discovery: at least one conn required")
+	}
 	return &Discovery{
 		cfg:     cfg,
-		conn:    conn,
+		conns:   conns,
 		getter:  getter,
 		pending: make(map[string]chan *DiscoveryResponse),
 	}
 }
 
-// Run starts the read loop: handle DISCOVERY_REQUEST (respond) and DISCOVERY_RESPONSE (forward to pending).
+// Run starts the read loop: read from all conns, handle DISCOVERY_REQUEST (respond) and DISCOVERY_RESPONSE (forward to pending).
 func (d *Discovery) Run() {
-	buf := make([]byte, 4096)
-	for {
-		n, from, err := d.conn.ReadFromUDP(buf)
-		if err != nil {
+	type recv struct {
+		data     []byte
+		from     *net.UDPAddr
+		recvOn   string // which conn received (LocalAddr), for debugging SO_REUSEPORT delivery
+		err      error
+	}
+	ch := make(chan recv, 32)
+	for _, c := range d.conns {
+		conn := c
+		localAddr := conn.LocalAddr().String()
+		go func() {
+			buf := make([]byte, 4096)
+			for {
+				n, from, err := conn.ReadFromUDP(buf)
+				if err != nil {
+					ch <- recv{err: err}
+					return
+				}
+				ch <- recv{data: append([]byte(nil), buf[:n]...), from: from, recvOn: localAddr}
+			}
+		}()
+	}
+	for r := range ch {
+		if r.err != nil {
 			return
 		}
 		var msg struct {
 			Type string `json:"type"`
 		}
-		if err := json.Unmarshal(buf[:n], &msg); err != nil {
+		if err := json.Unmarshal(r.data, &msg); err != nil {
 			continue
 		}
 		switch msg.Type {
 		case "DISCOVERY_REQUEST":
-			d.handleRequest(buf[:n], from)
+			d.handleRequest(r.data, r.from)
 		case "DISCOVERY_RESPONSE":
-			d.handleResponse(buf[:n], from)
+			d.handleResponse(r.data, r.from, r.recvOn)
 		}
 	}
 }
@@ -83,6 +106,7 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 	if out := d.outboundIP(from.IP); out != "" {
 		hostIP = out
 	}
+	// Send only host_ip (this response's outbound IP toward requester). Requester aggregates IPs from multiple responses (same host, different interfaces).
 	resp := DiscoveryResponse{
 		Type:               "DISCOVERY_RESPONSE",
 		Service:            d.cfg.ServiceName,
@@ -137,24 +161,92 @@ func (d *Discovery) outboundIP(remote net.IP) string {
 	return OutboundIP(remote, d.cfg.DiscoveryUDPPort)
 }
 
-func (d *Discovery) handleResponse(raw []byte, from *net.UDPAddr) {
+// localIPsInSubnet returns local IPv4 addresses that belong to the same subnet as the given broadcast IP.
+// It checks both /24 and /23 so that:
+//   - /24: e.g. broadcast 172.29.236.255 → local 172.29.236.x (other system may be 172.29.236.0/24)
+//   - /23: e.g. broadcast 172.29.237.255 → local 172.29.236.x and 172.29.237.x (same /23)
+// A local IP is included if it matches the broadcast in /24 or in /23, so both network sizes work.
+func localIPsInSubnet(broadcast net.IP) []net.IP {
+	broadcast = broadcast.To4()
+	if broadcast == nil {
+		return nil
+	}
+	mask24 := net.CIDRMask(24, 32)
+	mask23 := net.CIDRMask(23, 32)
+	var out []net.IP
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
+				continue
+			}
+			ip := ipnet.IP.To4()
+			if ip == nil {
+				continue
+			}
+			// Same /24 or same /23 as broadcast → works for both /24 and /23 networks
+			if ip.Mask(mask24).Equal(broadcast.Mask(mask24)) || ip.Mask(mask23).Equal(broadcast.Mask(mask23)) {
+				out = append(out, append(net.IP(nil), ip...))
+			}
+		}
+	}
+	return out
+}
+
+// sendDiscoveryRequest sends data to addr. If localIPs is non-empty, sends from each conn that is bound to one of those IPs (source port stays 9999 so responses are received). Otherwise sends once from d.conns[0].
+func (d *Discovery) sendDiscoveryRequest(data []byte, addr *net.UDPAddr, localIPs []net.IP) error {
+	if len(localIPs) == 0 {
+		_, err := d.conns[0].WriteToUDP(data, addr)
+		return err
+	}
+	seen := make(map[string]bool)
+	for _, lip := range localIPs {
+		key := lip.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, conn := range d.conns {
+			la, ok := conn.LocalAddr().(*net.UDPAddr)
+			if !ok || la == nil || !la.IP.Equal(lip) {
+				continue
+			}
+			if _, err := conn.WriteToUDP(data, addr); err != nil {
+				log.Printf("discovery: send from %s to %s: %v", lip, addr, err)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func (d *Discovery) handleResponse(raw []byte, from *net.UDPAddr, recvOn string) {
 	var resp DiscoveryResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		log.Printf("discovery: failed to parse DISCOVERY_RESPONSE from %s: %v", from, err)
 		return
 	}
+	resp.RespondedFromIP = from.IP.String()
 	d.mu.Lock()
 	ch := d.pending[resp.RequestID]
 	d.mu.Unlock()
 	if ch != nil {
 		select {
 		case ch <- &resp:
-			log.Printf("discovery: received DISCOVERY_RESPONSE from %s requestID=%s hostname=%s (delivered)", from, resp.RequestID, resp.Hostname)
+			log.Printf("discovery: received DISCOVERY_RESPONSE from %s host_ip=%s recv_on=%s (delivered)", from, resp.HostIP, recvOn)
 		default:
-			log.Printf("discovery: received DISCOVERY_RESPONSE from %s requestID=%s (pending channel full, dropped)", from, resp.RequestID)
+			log.Printf("discovery: received DISCOVERY_RESPONSE from %s requestID=%s recv_on=%s (pending channel full, dropped)", from, resp.RequestID, recvOn)
 		}
 	} else {
-		log.Printf("discovery: received DISCOVERY_RESPONSE from %s requestID=%s (no pending waiter, stale or unknown)", from, resp.RequestID)
+		log.Printf("discovery: received DISCOVERY_RESPONSE from %s requestID=%s recv_on=%s (no pending waiter, stale or unknown)", from, resp.RequestID, recvOn)
 	}
 }
 
@@ -193,10 +285,15 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 		close(ch)
 	}()
 	for _, addr := range addrs {
-		if _, err = d.conn.WriteToUDP(data, addr); err != nil {
+		localIPs := localIPsInSubnet(addr.IP)
+		if err = d.sendDiscoveryRequest(data, addr, localIPs); err != nil {
 			return nil, err
 		}
-		log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s", requestID, addr)
+		if len(localIPs) > 0 {
+			log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (from %d local IPs)", requestID, addr, len(localIPs))
+		} else {
+			log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s", requestID, addr)
+		}
 	}
 	timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
 	timer := time.NewTimer(timeout)
@@ -220,6 +317,9 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 			}
 		}
 		key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
+		if r.RespondedFromIP != "" {
+			key = key + "@" + r.RespondedFromIP
+		}
 		if d.cfg.DiscoveryDeduplicate {
 			if _, ok := seen[key]; ok {
 				return
@@ -291,10 +391,15 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 		}()
 
 		for _, addr := range addrs {
-			if _, err = d.conn.WriteToUDP(data, addr); err != nil {
+			localIPs := localIPsInSubnet(addr.IP)
+			if err = d.sendDiscoveryRequest(data, addr, localIPs); err != nil {
 				return
 			}
-			log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (stream)", requestID, addr)
+			if len(localIPs) > 0 {
+				log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (stream, from %d local IPs)", requestID, addr, len(localIPs))
+			} else {
+				log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (stream)", requestID, addr)
+			}
 		}
 
 		timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
@@ -318,6 +423,9 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 				}
 			}
 			key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
+			if r.RespondedFromIP != "" {
+				key = key + "@" + r.RespondedFromIP
+			}
 			if d.cfg.DiscoveryDeduplicate {
 				if _, ok := seen[key]; ok {
 					return false
@@ -334,6 +442,7 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 					return
 				}
 				if processAndMaybeSend(r) {
+					log.Printf("discovery: stream forwarding host %s (hostname=%s) responded_from=%s", r.HostIP, r.Hostname, r.RespondedFromIP)
 					out <- *r
 				}
 			case <-timer.C:
@@ -388,7 +497,7 @@ func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 		d.mu.Unlock()
 		close(ch)
 	}()
-	if _, err = d.conn.WriteToUDP(data, addr); err != nil {
+	if _, err = d.conns[0].WriteToUDP(data, addr); err != nil {
 		return nil, err
 	}
 	log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (unicast)", requestID, addr)

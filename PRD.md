@@ -36,7 +36,7 @@
 
 ### 3.3 백엔드 동작 세부 (응답자)
 
-- **응답의 host_ip**: DISCOVERY_RESPONSE의 `host_ip`에는 **요청자 쪽에서 보이는 주소**(요청자로 나갈 때의 outbound IP)를 넣는다. 이렇게 해야 요청자가 올바른 IP로 접속할 수 있고, 여러 인터페이스·동일 호스트명 환경에서 요청자의 self 제거가 잘못 동작하지 않는다. outbound IP를 구할 수 없을 때만 hostinfo 기본 IP를 사용한다.
+- **응답의 host_ip**: DISCOVERY_RESPONSE에는 **host_ip 하나만** 넣어 보낸다. 이 값은 **요청자로 나갈 때의 outbound IP**(요청자 쪽에서 보이는 주소)이다. 요청을 보낸 주소(예: 172.29.236.41)에 따라 outbound IP가 달라지므로, 같은 호스트가 여러 인터페이스(예: .236, .237)로 응답하면 응답마다 다른 host_ip가 담긴다. **host_ips 배열은 응답 메시지에 넣지 않고**, 수신 측에서 같은 호스트(cpu_uuid)의 여러 응답을 받아 IP를 취합한다. outbound IP를 구할 수 없을 때만 hostinfo 기본 IP를 사용한다.
 
 ### 3.4 메시지 형식
 
@@ -57,7 +57,6 @@
   "type": "DISCOVERY_RESPONSE",
   "service": "programA",
   "host_ip": "192.168.0.102",
-  "host_ips": ["192.168.0.102", "172.29.244.1"],
   "hostname": "host-102",
   "service_port": 8888,
   "version": "1.2.3",
@@ -67,26 +66,29 @@
   "cpu_uuid": "abc-123",
   "memory_total_mb": 16384,
   "memory_used_mb": 8192,
-  "memory_usage_percent": 50.0
+  "memory_usage_percent": 50.0,
+  "responded_from_ip": "192.168.0.102"
 }
 ```
 
 - `request_id`: 요청 시 생성한 UUID를 응답에 그대로 넣어 요청·응답 매칭에 사용한다.
 - `cpu_uuid`: 호스트 식별용(동일 호스트 병합·self 제거에 사용). 없을 수 있음.
-- `host_ips`: (선택) 자기 정보( self ) 응답 시, 이 호스트가 Discovery 응답으로 사용하는 모든 IP(각 브로드캐스트 대역 outbound IP) 목록. 없으면 `host_ip`만 사용.
+- **응답자는 host_ip 하나만 보낸다.** 같은 호스트가 여러 NIC으로 응답하면 응답마다 다른 host_ip(해당 요청에 대한 outbound IP)가 담긴다. **수신 측**에서 같은 cpu_uuid의 여러 응답을 받아 IP 목록을 취합하여 화면에 표시한다.
+- `responded_from_ip`: (수신 측 설정) UDP 패킷의 **발신지 IP**로, 수신 측이 응답을 처리할 때 채운다. 화면에서 "응답한 IP"로 표시하며, 같은 호스트가 여러 IP로 응답한 경우 모두 취합해 보여준다. 전선 상의 메시지에는 없고, API/SSE로 내보낼 때만 포함된다.
+- 자기 정보 API(GET /self)에서는 브로드캐스트 대역별 outbound IP를 `host_ips` 배열로 반환할 수 있다. Discovery UDP 응답 메시지 자체에는 host_ips를 넣지 않는다.
 - 호스트 정보(CPU, MEMORY)는 위 필드로 확장하며, 단위·필드명은 이 스키마를 기준으로 한다.
 
 ### 3.5 중복 제거 및 설정
 
-- **중복 제거**: 동일 호스트(`host_ip:service_port` 기준)가 여러 번 응답해도 목록에는 **한 번만** 표시한다. 설정 `discovery_deduplicate`로 켜/끌 수 있다.
-- **동일 호스트 병합(프론트)**: `cpu_uuid`가 같은 응답은 **한 호스트**로 간주한다. 같은 호스트가 여러 IP로 응답해도 카드는 하나만 두고, IP는 모두 병합해 표시하며, CPU·메모리는 응답 중 하나만 사용한다.
+- **중복 제거**: 스트림/일괄 반환 시 동일한 (host_ip:service_port@responded_from_ip) 조합은 한 번만 전달한다. 즉 같은 호스트가 여러 IP로 응답하면 **응답 건수만큼** 이벤트가 나가며, 각 이벤트의 host_ip·responded_from_ip가 다를 수 있다. 설정 `discovery_deduplicate`로 켜/끌 수 있다.
+- **동일 호스트 병합(프론트)**: `cpu_uuid`가 같은 응답은 **한 호스트**로 간주한다. 카드는 하나만 두고, **IP**는 각 응답의 host_ip를 모두 취합해 표시하고, **응답한 IP**는 각 응답의 responded_from_ip를 모두 취합해 표시한다. CPU·메모리는 응답 중 하나만 사용한다.
 - **타임아웃**: 응답 수집 대기 시간은 설정 `discovery_timeout_seconds`(기본 10초)로 지정한다.
 
 ### 3.6 실시간 Discovery (SSE)
 
 - Discovery 결과를 **타임아웃 만료를 기다리지 않고** 응답이 도착하는 대로 화면에 반영한다.
 - **백엔드**: `GET /api/v1/discovery/stream` 엔드포인트를 두고, **Server-Sent Events(SSE)** 로 스트리밍한다. Discovery 요청을 보낸 뒤, 각 DISCOVERY_RESPONSE가 올 때마다 `data: {JSON}\n\n` 형식으로 한 건씩 전송하고 즉시 flush한다. 타임아웃이 되면 `event: done\ndata: {}\n\n` 를 보내고 스트림을 종료한다. 내부적으로는 **DoDiscoveryStream** 과 같이 요청 시 pending 등록 → 브로드캐스트 전송 → 수신 채널에서 응답을 하나씩 읽어 필터(self 제거·중복 제거) 후 SSE로 내보내는 방식을 사용한다.
-- **프론트엔드**: Discovery 버튼 클릭 시 **EventSource** 로 `/api/v1/discovery/stream` 에 연결한다. 기본 메시지 이벤트가 올 때마다 수신한 JSON을 파싱해, **같은 CPU UUID**가 이미 있으면 해당 카드에 IP만 병합·갱신하고, 없으면 같은 IP 카드가 있는지 보고 갱신 또는 새 카드 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 호스트 카드 상세에서는 **CPU UUID**를 맨 위에 표시한다.
+- **프론트엔드**: Discovery 버튼 클릭 시 **EventSource** 로 `/api/v1/discovery/stream` 에 연결한다. 기본 메시지 이벤트가 올 때마다 수신한 JSON을 파싱해, **같은 CPU UUID**가 이미 있으면 해당 카드에 **IP**(각 응답의 host_ip 취합)·**응답한 IP**(각 응답의 responded_from_ip 취합)를 병합·갱신하고, 없으면 같은 IP 카드 갱신 또는 새 카드 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 호스트 카드 상세에서는 **CPU UUID**를 맨 위에, **IP**·**응답한 IP** 순으로 표시한다.
 
 ### 3.7 유니캐스트 Discovery (단일 호스트 조회)
 
@@ -193,7 +195,7 @@
   - 클릭 시 **EventSource** 로 `GET /api/v1/discovery/stream` 에 연결하여 **실시간 Discovery**를 수행한다. **기존 발견된 호스트 목록은 비우지 않고** 유지하며, 진행 중에도 해당 카드들의 제어(시작/중지·업데이트 적용·상태 새로고침)가 가능하다. SSE로 호스트가 도착할 때 **같은 CPU UUID**가 있으면 해당 카드에 IP만 병합·갱신하고, 없으면 같은 IP 카드 갱신 또는 새 카드 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다.
 - **발견된 호스트 표시**
   - 각 호스트를 **서버 모양 아이콘**과 함께 표시한다.
-  - 표시 내용: **CPU UUID**(맨 위), mol 버전, IP(여러 개면 쉼표 구분), 호스트명, 서비스 포트, CPU, MEMORY — DISCOVERY_RESPONSE(및 그 확장) 기반. 동일 CPU UUID의 여러 응답은 **한 카드**로 병합하며, IP는 모두 표시하고 CPU·메모리는 하나만 표시한다.
+  - 표시 내용: **CPU UUID**(맨 위), mol 버전, **IP**(여러 개면 쉼표 구분, 같은 호스트의 여러 응답에서 host_ip를 취합), **응답한 IP**(실제로 Discovery 응답을 보낸 UDP 발신지 IP, 여러 개면 취합), 호스트명, 서비스 포트, CPU, MEMORY. 동일 CPU UUID의 여러 응답은 **한 카드**로 병합하며, IP와 응답한 IP는 모두 취합해 표시하고 CPU·메모리는 하나만 표시한다.
   - 내 정보와 동일한 형태(카드/테이블 등)로 보여주어 일관된 UX를 유지한다.
 - **원격 적용 후**: 원격 mol 업데이트가 성공하면 **Discovery를 다시 수행하지 않고**, 해당 호스트 카드만 **일정 시간(예: 5초) 후** `GET /api/v1/host-info?ip=...`와 `GET /api/v1/service-status?ip=...`로 상태·호스트 정보를 갱신한다.
 
@@ -298,7 +300,7 @@
 - [ ] 단일 실행 파일, net/http 만 사용
 - [ ] 포트 8888 (HTTP), 9999 (UDP Discovery), UDP SO_BROADCAST 설정
 - [ ] Discovery: UDP broadcast 요청, 응답은 요청자 IP:9999 로 unicast; pending 등록 후 전송, 타임아웃 시 drain
-- [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid, host_ips 선택) 포함; 응답의 host_ip는 요청자 기준 outbound IP
+- [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합
 - [ ] Self 제거: **CPU UUID**로 자기 식별(같으면 제외), CPU UUID 없을 때만 IP+ServicePort 폴백
 - [ ] Discovery 복수 브로드캐스트: `discovery_broadcast_addresses` 지원, 각 주소마다 DISCOVERY_REQUEST 전송
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
@@ -307,7 +309,7 @@
 - [ ] URL prefix: /web, /api/v1, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
-- [ ] 발견된 호스트: 서버 아이콘 + CPU UUID(맨 위), 버전, IP(복수 시 병합 표시), 호스트명, CPU, MEMORY; 동일 CPU UUID 한 카드로 병합
+- [ ] 발견된 호스트: 서버 아이콘 + CPU UUID(맨 위), 버전, IP(복수 시 취합 표시), 응답한 IP(복수 시 취합), 호스트명, CPU, MEMORY; 동일 CPU UUID 한 카드로 병합
 - [ ] systemctl status: 접기/펼치기(기본 접힘), 접힌 상태에서 [정상 서비스 상태] / [서비스 중지 상태]
 - [ ] 내 정보 카드: 시작/중지 버튼 없음
 - [ ] 발견된 호스트 카드: 시작(파란색)·중지(빨간색) 버튼; Active면 시작 disabled, dead면 중지 disabled

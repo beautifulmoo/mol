@@ -23,4 +23,6 @@ type DiscoveryResponse struct {
 	MemoryTotalMB       uint64  `json:"memory_total_mb"`
 	MemoryUsedMB        uint64  `json:"memory_used_mb"`
 	MemoryUsagePercent  float64 `json:"memory_usage_percent"`
+	// RespondedFromIP is set by the receiver: UDP source IP of the packet (the IP that actually sent this response). Not sent over the wire.
+	RespondedFromIP string `json:"responded_from_ip,omitempty"`
 }

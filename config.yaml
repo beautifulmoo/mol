@@ -6,8 +6,8 @@ service_name: "mol"
 # discovery_broadcast_address: "172.29.236.255"
 # Multiple subnets: send DISCOVERY_REQUEST to each (both 172.29.236.x and 172.29.244.x):
 discovery_broadcast_addresses:
-  - "172.29.236.255"
-  - "172.29.244.255"
+  - "172.29.237.255"
+#  - "172.29.244.255"
 discovery_udp_port: 9999
 http_port: 8888
 web_prefix: "/web"

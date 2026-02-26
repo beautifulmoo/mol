@@ -42,21 +42,54 @@ func main() {
 		version = "0.0.0"
 	}
 
-	// UDP listener for discovery (receive requests + receive responses)
-	addr, err := net.ResolveUDPAddr("udp", ":"+strconv.Itoa(cfg.DiscoveryUDPPort))
-	if err != nil {
-		log.Fatal("resolve discovery addr: ", err)
+	// UDP listener for discovery: one conn on :port (all interfaces) and one per local IPv4 so we can send broadcast from each interface (source port stays 9999 so responses are received).
+	portStr := ":" + strconv.Itoa(cfg.DiscoveryUDPPort)
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
+				_ = setSOReuseport(int(fd))
+			})
+		},
 	}
-	conn, err := net.ListenUDP("udp", addr)
+	ctx := context.Background()
+	pc0, err := lc.ListenPacket(ctx, "udp", portStr)
 	if err != nil {
 		log.Fatal("listen discovery: ", err)
 	}
-	defer conn.Close()
-	// Allow sending to broadcast address (required for discovery request).
-	if raw, err := conn.SyscallConn(); err == nil {
-		raw.Control(func(fd uintptr) {
-			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-		})
+	conn0 := pc0.(*net.UDPConn)
+	defer conn0.Close()
+	conns := []*net.UDPConn{conn0}
+	seenIP := make(map[string]bool)
+	boundIPs := []string{"0.0.0.0"}
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
+				continue
+			}
+			ip := ipnet.IP.String()
+			if seenIP[ip] {
+				continue
+			}
+			seenIP[ip] = true
+			pc, err := lc.ListenPacket(ctx, "udp", net.JoinHostPort(ip, strconv.Itoa(cfg.DiscoveryUDPPort)))
+			if err != nil {
+				log.Printf("discovery: bind %s:%d failed: %v (responses to this IP may not be received)", ip, cfg.DiscoveryUDPPort, err)
+				continue
+			}
+			conns = append(conns, pc.(*net.UDPConn))
+			boundIPs = append(boundIPs, ip)
+		}
+	}
+	log.Printf("discovery: listening on %s (bound IPs: %v)", portStr, boundIPs)
+	for i := 1; i < len(conns); i++ {
+		defer conns[i].Close()
 	}
 
 	getter := func() (hostname, hostIP, cpuInfo string, cpuUsage float64, memTotalMB, memUsedMB uint64, memUsagePct float64, cpuUUID string) {
@@ -85,7 +118,7 @@ func main() {
 		Version:                   version,
 		ServicePort:               cfg.HTTPPort,
 	}
-	disc := discovery.New(discCfg, conn, getter)
+	disc := discovery.New(discCfg, conns, getter)
 	go disc.Run()
 
 	// Web FS: embed embeds "web/*" at build time; no web/ dir needed at runtime.
@@ -159,7 +192,7 @@ func main() {
 	sig := <-sigChan
 	log.Printf("received %v, shutting down...", sig)
 
-	conn.Close() // stop discovery Run() and any pending DoDiscovery
+	conn0.Close() // stop discovery Run() and any pending DoDiscovery
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(ctx); err != nil {

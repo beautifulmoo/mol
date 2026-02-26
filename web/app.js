@@ -36,9 +36,12 @@
     var ipsDisplay = (host.host_ips && host.host_ips.length) ? host.host_ips.join(', ') : (host.host_ip || '-');
     var ipsAttr = (host.host_ips && host.host_ips.length) ? host.host_ips.join(',') : (host.host_ip || '');
     var primaryIp = host.host_ip || (host.host_ips && host.host_ips[0]) || '';
+    var respondedFromDisplay = host.responded_from_ip || '-';
     div.setAttribute('data-cpu-uuid', host.cpu_uuid || '');
+    div.setAttribute('data-hostname', host.hostname || '');
     div.setAttribute('data-host-ip', primaryIp);
     div.setAttribute('data-host-ips', ipsAttr);
+    div.setAttribute('data-responded-from-ips', host.responded_from_ip || '');
     div.innerHTML =
       '<div class="updating-indicator" role="status" aria-label="업데이트 적용 중"></div>' +
       '<div class="host-icon">' + serverIconSvg + '</div>' +
@@ -46,6 +49,7 @@
       '<dt>CPU UUID</dt><dd>' + escapeHtml(host.cpu_uuid || '-') + '</dd>' +
       '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + '</dd>' +
       '<dt>IP</dt><dd>' + escapeHtml(ipsDisplay) + '</dd>' +
+      '<dt>응답한 IP</dt><dd>' + escapeHtml(respondedFromDisplay) + '</dd>' +
       '<dt>호스트명</dt><dd>' + escapeHtml(host.hostname || '-') + '</dd>' +
       '<dt>서비스 포트</dt><dd>' + (host.service_port != null ? host.service_port : '-') + '</dd>' +
       '<dt>CPU</dt><dd>' + escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '') + '</dd>' +
@@ -373,6 +377,7 @@
   function updateHostCardDetails(cardEl, host) {
     if (!cardEl || !host) return;
     cardEl.setAttribute('data-host-version', host.version || '');
+    cardEl.setAttribute('data-hostname', host.hostname || '');
     var existingIps = (cardEl.getAttribute('data-host-ips') || '').trim();
     var ipDisplay;
     var ipsAttr;
@@ -388,15 +393,22 @@
     }
     cardEl.setAttribute('data-host-ip', primaryIp);
     cardEl.setAttribute('data-host-ips', ipsAttr);
+    if (host.responded_from_ip) {
+      var rf = (cardEl.getAttribute('data-responded-from-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      if (rf.indexOf(host.responded_from_ip) === -1) rf.push(host.responded_from_ip);
+      cardEl.setAttribute('data-responded-from-ips', rf.join(','));
+    }
+    var respondedFromDisplay = (cardEl.getAttribute('data-responded-from-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(', ') || '-';
     var dds = cardEl.querySelectorAll('.host-details > dd');
-    if (dds.length >= 7) {
+    if (dds.length >= 8) {
       dds[0].textContent = host.cpu_uuid || '-';
       dds[1].textContent = host.version || '-';
       dds[2].textContent = ipDisplay;
-      dds[3].textContent = host.hostname || '-';
-      dds[4].textContent = host.service_port != null ? host.service_port : '-';
-      dds[5].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
-      dds[6].textContent = formatMemory(host);
+      dds[3].textContent = respondedFromDisplay;
+      dds[4].textContent = host.hostname || '-';
+      dds[5].textContent = host.service_port != null ? host.service_port : '-';
+      dds[6].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
+      dds[7].textContent = formatMemory(host);
     }
   }
 
@@ -430,7 +442,19 @@
     if (!container || !ip) return null;
     var cards = container.querySelectorAll('.host-card[data-host-ip]');
     for (var i = 0; i < cards.length; i++) {
-      if (cards[i].getAttribute('data-host-ip') === ip) return cards[i];
+      var c = cards[i];
+      if (c.getAttribute('data-host-ip') === ip) return c;
+      var ips = (c.getAttribute('data-host-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      if (ips.indexOf(ip) !== -1) return c;
+    }
+    return null;
+  }
+
+  function findHostCardByHostname(container, hostname) {
+    if (!container || !hostname) return null;
+    var cards = container.querySelectorAll('.host-card[data-hostname]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-hostname') === hostname) return cards[i];
     }
     return null;
   }
@@ -450,7 +474,25 @@
     if (ips.indexOf(newIp) === -1) ips.push(newIp);
     cardEl.setAttribute('data-host-ips', ips.join(','));
     var dds = cardEl.querySelectorAll('.host-details > dd');
-    if (dds.length >= 7) dds[2].textContent = ips.join(', ');
+    if (dds.length >= 8) dds[2].textContent = ips.join(', ');
+  }
+
+  function mergeHostIpsFromResponseIntoCard(cardEl, host) {
+    if (!cardEl || !host) return;
+    if (host.host_ips && host.host_ips.length) {
+      for (var i = 0; i < host.host_ips.length; i++) mergeHostIpsIntoCard(cardEl, host.host_ips[i]);
+    } else if (host.host_ip) {
+      mergeHostIpsIntoCard(cardEl, host.host_ip);
+    }
+  }
+
+  function mergeRespondedFromIntoCard(cardEl, newRespondedFromIp) {
+    if (!cardEl || !newRespondedFromIp) return;
+    var ips = (cardEl.getAttribute('data-responded-from-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    if (ips.indexOf(newRespondedFromIp) === -1) ips.push(newRespondedFromIp);
+    cardEl.setAttribute('data-responded-from-ips', ips.join(','));
+    var dds = cardEl.querySelectorAll('.host-details > dd');
+    if (dds.length >= 8) dds[3].textContent = ips.join(', ');
   }
 
   function runDiscovery() {
@@ -471,7 +513,8 @@
         if (cpuUuid) {
           existing = findHostCardByCpuUuid(list, cpuUuid);
           if (existing) {
-            mergeHostIpsIntoCard(existing, ip);
+            mergeHostIpsFromResponseIntoCard(existing, host);
+            if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
             updateHostCardDetails(existing, host);
             var primaryIp = existing.getAttribute('data-host-ip') || ip;
             fetchServiceStatus(existing, primaryIp);
@@ -482,14 +525,29 @@
           existing = findHostCardByIp(list, ip);
           if (existing) {
             if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
+            mergeHostIpsFromResponseIntoCard(existing, host);
+            if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
             updateHostCardDetails(existing, host);
             fetchServiceStatus(existing, ip);
             updateAllHostApplyButtons();
           } else {
-            var card = renderHostCard(host, false);
-            list.appendChild(card);
-            bindServiceControlButtons(card);
-            fetchServiceStatus(card, ip);
+            var hostname = (host.hostname || '').trim();
+            existing = hostname ? findHostCardByHostname(list, hostname) : null;
+            if (existing) {
+              mergeHostIpsFromResponseIntoCard(existing, host);
+              if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
+              if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
+              existing.setAttribute('data-hostname', hostname);
+              updateHostCardDetails(existing, host);
+              var primaryIp = existing.getAttribute('data-host-ip') || ip;
+              fetchServiceStatus(existing, primaryIp);
+              updateAllHostApplyButtons();
+            } else {
+              var card = renderHostCard(host, false);
+              list.appendChild(card);
+              bindServiceControlButtons(card);
+              fetchServiceStatus(card, ip);
+            }
           }
         }
         count = list.querySelectorAll('.host-card:not(.self-card)').length;

@@ -12,7 +12,7 @@ type DiscoveryResponse struct {
 	Type                string   `json:"type"` // "DISCOVERY_RESPONSE"
 	Service             string   `json:"service"`
 	HostIP              string   `json:"host_ip"`
-	HostIPs             []string `json:"host_ips,omitempty"` // optional; for self, all IPs this host responds with (e.g. per broadcast)
+	HostIPs             []string `json:"host_ips,omitempty"` // used by GET /self only; not sent in UDP DISCOVERY_RESPONSE
 	Hostname            string   `json:"hostname"`
 	ServicePort         int     `json:"service_port"`
 	Version             string  `json:"version"`
@@ -25,4 +25,6 @@ type DiscoveryResponse struct {
 	MemoryUsagePercent  float64 `json:"memory_usage_percent"`
 	// RespondedFromIP is set by the receiver: UDP source IP of the packet (the IP that actually sent this response). Not sent over the wire.
 	RespondedFromIP string `json:"responded_from_ip,omitempty"`
+	// IsSelf is set when the response is from this host (CPU UUID match). Stream receiver uses it to update the self card's "응답한 IP" only.
+	IsSelf bool `json:"self,omitempty"`
 }

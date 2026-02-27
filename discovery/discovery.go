@@ -102,11 +102,18 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 	}
 	log.Printf("discovery: received DISCOVERY_REQUEST from %s", from)
 	hostname, hostIP, cpuInfo, cpuUsage, memTotalMB, memUsedMB, memUsagePct, cpuUUID := d.getter()
-	// Use outbound IP toward requester so the response has the IP the requester can use to reach us (avoids wrong self-filter when multiple hosts share an IP or getter returns a different interface).
-	if out := d.outboundIP(from.IP); out != "" {
-		hostIP = out
+	to := &net.UDPAddr{IP: from.IP, Port: d.cfg.DiscoveryUDPPort}
+	// Prefer sending from the local IP that is in the same subnet as the requester, so the response has the expected source IP (e.g. .236 when replying to .236, .237 when replying to .237).
+	sendFrom := localIPInSameSubnetAs(from.IP)
+	if sendFrom != nil {
+		hostIP = sendFrom.String()
 	}
-	// Send only host_ip (this response's outbound IP toward requester). Requester aggregates IPs from multiple responses (same host, different interfaces).
+	if hostIP == "" {
+		if out := d.outboundIP(from.IP); out != "" {
+			hostIP = out
+		}
+	}
+	// Send only host_ip (this response's source / outbound IP). Requester aggregates IPs from multiple responses (same host, different interfaces).
 	resp := DiscoveryResponse{
 		Type:               "DISCOVERY_RESPONSE",
 		Service:            d.cfg.ServiceName,
@@ -122,12 +129,24 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 		MemoryUsedMB:       memUsedMB,
 		MemoryUsagePercent: memUsagePct,
 	}
-	// Send unicast to from (requester) IP:discovery_port
-	to := &net.UDPAddr{IP: from.IP, Port: d.cfg.DiscoveryUDPPort}
 	data, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("discovery: failed to marshal DISCOVERY_RESPONSE: %v", err)
 		return
+	}
+	if sendFrom != nil {
+		for _, conn := range d.conns {
+			la, ok := conn.LocalAddr().(*net.UDPAddr)
+			if !ok || la == nil || !la.IP.Equal(sendFrom) {
+				continue
+			}
+			if _, err := conn.WriteToUDP(data, to); err != nil {
+				log.Printf("discovery: failed to write DISCOVERY_RESPONSE from %s to %s: %v", sendFrom, to, err)
+				return
+			}
+			log.Printf("discovery: sending DISCOVERY_RESPONSE from %s to %s (hostname=%s)", sendFrom, to, hostname)
+			return
+		}
 	}
 	log.Printf("discovery: sending DISCOVERY_RESPONSE to %s (hostname=%s)", to, hostname)
 	connOut, err := net.DialUDP("udp", nil, to)
@@ -159,6 +178,54 @@ func OutboundIP(remote net.IP, port int) string {
 
 func (d *Discovery) outboundIP(remote net.IP) string {
 	return OutboundIP(remote, d.cfg.DiscoveryUDPPort)
+}
+
+// localIPInSameSubnetAs returns a local IPv4 address that is in the same subnet as the given remote IP (requester), or nil. Prefers the same /24 as remote so that with /23 networks we reply from .236 when requester is .236 and from .237 when requester is .237.
+func localIPInSameSubnetAs(remote net.IP) net.IP {
+	remote = remote.To4()
+	if remote == nil {
+		return nil
+	}
+	mask24 := net.CIDRMask(24, 32)
+	remote24 := remote.Mask(mask24)
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var first, same24 net.IP
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
+				continue
+			}
+			if !ipnet.Contains(remote) {
+				continue
+			}
+			ip := ipnet.IP.To4()
+			if ip == nil {
+				continue
+			}
+			if first == nil {
+				first = append(net.IP(nil), ip...)
+			}
+			if ip.Mask(mask24).Equal(remote24) {
+				same24 = append(net.IP(nil), ip...)
+				break
+			}
+		}
+		if same24 != nil {
+			break
+		}
+	}
+	if same24 != nil {
+		return same24
+	}
+	return first
 }
 
 // localIPsInSubnet returns local IPv4 addresses that belong to the same subnet as the given broadcast IP.
@@ -411,7 +478,8 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 
 		processAndMaybeSend := func(r *DiscoveryResponse) bool {
 			if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
-				return false
+				r.IsSelf = true
+				return true
 			}
 			if selfCPUUUID == "" {
 				selfHostIP := d.outboundIP(addrs[0].IP)

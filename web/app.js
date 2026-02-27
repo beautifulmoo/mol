@@ -183,24 +183,7 @@
             .then(function (res) { return res.json(); })
             .then(function (body) {
               if (body.status === 'success') {
-                if (summary) summary.textContent = body.data || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
-                fetchServiceStatus(cardEl, ip);
-                setTimeout(function () {
-                  fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
-                    .then(function (res) { return res.json(); })
-                    .then(function (body) {
-                      if (body.status === 'success' && body.data) {
-                        updateHostCardDetails(cardEl, body.data);
-                        updateAllHostApplyButtons();
-                      }
-                      fetchServiceStatus(cardEl, ip);
-                      showCardUpdating(cardEl, false);
-                    })
-                    .catch(function () {
-                      fetchServiceStatus(cardEl, ip);
-                      showCardUpdating(cardEl, false);
-                    });
-                }, 5000);
+                scheduleRefreshAfterApply(cardEl, ip, summary, body.data, version);
               } else {
                 updateStatusUI(cardEl, null, body.data || '적용 실패');
                 showCardUpdating(cardEl, false);
@@ -238,24 +221,12 @@
           .then(function (res) { return res.json(); })
           .then(function (body) {
             if (body.status === 'success') {
-              if (summary) summary.textContent = body.data || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
-              fetchServiceStatus(cardEl, ip);
-              setTimeout(function () {
-                fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
-                  .then(function (res) { return res.json(); })
-                  .then(function (body) {
-                    if (body.status === 'success' && body.data) {
-                      updateHostCardDetails(cardEl, body.data);
-                      updateAllHostApplyButtons();
-                    }
-                    fetchServiceStatus(cardEl, ip);
-                    showCardUpdating(cardEl, false);
-                  })
-                  .catch(function () {
-                    fetchServiceStatus(cardEl, ip);
-                    showCardUpdating(cardEl, false);
-                  });
-              }, 5000);
+              var ver;
+              if (body.data && typeof body.data === 'string') {
+                var m = body.data.match(/버전\s+([\d.]+)\s+적용 완료/);
+                if (m) ver = m[1];
+              }
+              scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);
             } else {
               updateStatusUI(cardEl, null, body.data || '적용 실패');
               showCardUpdating(cardEl, false);
@@ -292,6 +263,41 @@
       return '먼저 업데이트 영역에서 버전을 업로드하세요';
     }
     return '최신 버전입니다';
+  }
+
+  function scheduleRefreshAfterApply(cardEl, ip, summary, successMessage, appliedVersion) {
+    if (summary) summary.textContent = successMessage || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
+    if (appliedVersion && cardEl) {
+      cardEl.setAttribute('data-host-version', appliedVersion);
+      var dds = cardEl.querySelectorAll('.host-details > dd');
+      if (dds && dds.length >= 8) dds[1].textContent = appliedVersion;
+      updateAllHostApplyButtons();
+    }
+    if (!ip) fetchServiceStatus(cardEl, ip);
+    function tryFetchHostInfo(attempt) {
+      var maxAttempts = 4;
+      var delayMs = attempt === 0 ? 5000 : 2000;
+      setTimeout(function () {
+        fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
+          .then(function (res) { return res.json(); })
+          .then(function (body) {
+            if (body.status === 'success' && body.data) {
+              updateHostCardDetails(cardEl, body.data);
+              updateAllHostApplyButtons();
+              fetchServiceStatus(cardEl, ip);
+              showCardUpdating(cardEl, false);
+              return;
+            }
+            if (attempt + 1 < maxAttempts) tryFetchHostInfo(attempt + 1);
+            else { fetchServiceStatus(cardEl, ip); showCardUpdating(cardEl, false); }
+          })
+          .catch(function () {
+            if (attempt + 1 < maxAttempts) tryFetchHostInfo(attempt + 1);
+            else { fetchServiceStatus(cardEl, ip); showCardUpdating(cardEl, false); }
+          });
+      }, delayMs);
+    }
+    tryFetchHostInfo(0);
   }
 
   function updateAllHostApplyButtons() {
@@ -507,48 +513,34 @@
     evtSource.onmessage = function (e) {
       try {
         var host = JSON.parse(e.data);
+        if (host.self) {
+          var selfCard = el('self-info') && el('self-info').querySelector('.host-card');
+          if (selfCard && host.responded_from_ip) mergeRespondedFromIntoCard(selfCard, host.responded_from_ip);
+          return;
+        }
         var ip = host.host_ip || '';
         var cpuUuid = (host.cpu_uuid || '').trim();
         var existing = null;
-        if (cpuUuid) {
-          existing = findHostCardByCpuUuid(list, cpuUuid);
-          if (existing) {
-            mergeHostIpsFromResponseIntoCard(existing, host);
-            if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
-            updateHostCardDetails(existing, host);
-            var primaryIp = existing.getAttribute('data-host-ip') || ip;
-            fetchServiceStatus(existing, primaryIp);
-            updateAllHostApplyButtons();
-          }
-        }
+        if (cpuUuid) existing = findHostCardByCpuUuid(list, cpuUuid);
+        if (!existing && ip) existing = findHostCardByIp(list, ip);
         if (!existing) {
-          existing = findHostCardByIp(list, ip);
-          if (existing) {
-            if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
-            mergeHostIpsFromResponseIntoCard(existing, host);
-            if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
-            updateHostCardDetails(existing, host);
-            fetchServiceStatus(existing, ip);
-            updateAllHostApplyButtons();
-          } else {
-            var hostname = (host.hostname || '').trim();
-            existing = hostname ? findHostCardByHostname(list, hostname) : null;
-            if (existing) {
-              mergeHostIpsFromResponseIntoCard(existing, host);
-              if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
-              if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
-              existing.setAttribute('data-hostname', hostname);
-              updateHostCardDetails(existing, host);
-              var primaryIp = existing.getAttribute('data-host-ip') || ip;
-              fetchServiceStatus(existing, primaryIp);
-              updateAllHostApplyButtons();
-            } else {
-              var card = renderHostCard(host, false);
-              list.appendChild(card);
-              bindServiceControlButtons(card);
-              fetchServiceStatus(card, ip);
-            }
-          }
+          var hostname = (host.hostname || '').trim();
+          if (hostname) existing = findHostCardByHostname(list, hostname);
+        }
+        if (existing) {
+          if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
+          if (host.hostname) existing.setAttribute('data-hostname', host.hostname);
+          mergeHostIpsFromResponseIntoCard(existing, host);
+          if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
+          updateHostCardDetails(existing, host);
+          var primaryIp = existing.getAttribute('data-host-ip') || ip;
+          fetchServiceStatus(existing, primaryIp);
+          updateAllHostApplyButtons();
+        } else {
+          var card = renderHostCard(host, false);
+          list.appendChild(card);
+          bindServiceControlButtons(card);
+          fetchServiceStatus(card, ip);
         }
         count = list.querySelectorAll('.host-card:not(.self-card)').length;
         status.textContent = 'Discovery 진행 중… (호스트 ' + count + '개, 응답 오는 대로 갱신)';

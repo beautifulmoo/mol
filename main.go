@@ -134,31 +134,14 @@ func main() {
 		if err != nil {
 			return info, err
 		}
-		var addrsForOutbound []string
-		if len(cfg.DiscoveryBroadcastAddresses) > 0 {
-			addrsForOutbound = cfg.DiscoveryBroadcastAddresses
-		} else if cfg.DiscoveryBroadcastAddress != "" {
-			addrsForOutbound = []string{cfg.DiscoveryBroadcastAddress}
-		}
-		seen := make(map[string]struct{})
-		for _, a := range addrsForOutbound {
-			if ip := net.ParseIP(a); ip != nil {
-				if addr := discovery.OutboundIP(ip, cfg.DiscoveryUDPPort); addr != "" {
-					if _, ok := seen[addr]; !ok {
-						seen[addr] = struct{}{}
-						info.HostIPs = append(info.HostIPs, addr)
-					}
-				}
+		// Use all IPs bound for discovery (so self card shows e.g. 172.29.236.41 and 172.29.237.141)
+		for _, b := range boundIPs {
+			if b != "0.0.0.0" {
+				info.HostIPs = append(info.HostIPs, b)
 			}
 		}
 		if len(info.HostIPs) > 0 {
 			info.HostIP = info.HostIPs[0]
-		} else if len(addrsForOutbound) > 0 {
-			if ip := net.ParseIP(addrsForOutbound[0]); ip != nil {
-				if addr := discovery.OutboundIP(ip, cfg.DiscoveryUDPPort); addr != "" {
-					info.HostIP = addr
-				}
-			}
 		}
 		return info, nil
 	}

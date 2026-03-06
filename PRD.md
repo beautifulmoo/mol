@@ -45,8 +45,8 @@
 ```json
 {
   "type": "DISCOVERY_REQUEST",
-  "service": "programA",
-  "request_id": "uuid-1234"
+  "service": "mol",
+  "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 }
 ```
 
@@ -55,22 +55,23 @@
 ```json
 {
   "type": "DISCOVERY_RESPONSE",
-  "service": "programA",
-  "host_ip": "192.168.0.102",
-  "hostname": "host-102",
+  "service": "mol",
+  "host_ip": "172.29.237.41",
+  "hostname": "mol-host-41",
   "service_port": 8888,
-  "version": "1.2.3",
-  "request_id": "uuid-1234",
+  "version": "0.2.0",
+  "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "cpu_info": "Intel Xeon 8 cores",
   "cpu_usage_percent": 23.5,
-  "cpu_uuid": "abc-123",
+  "cpu_uuid": "550e8400-e29b-41d4-a716-446655440000",
   "memory_total_mb": 16384,
   "memory_used_mb": 8192,
   "memory_usage_percent": 50.0,
-  "responded_from_ip": "192.168.0.102"
+  "responded_from_ip": "172.29.236.50"
 }
 ```
 
+- 위 예시는 **다른 호스트(다른 서브넷)에서 온 Discovery 요청**에 대한 응답을 가정한다. 응답자가 그 요청자로 나갈 때의 outbound IP는 `host_ip`(172.29.237.41)이고, 수신 측에서 본 이 UDP 패킷의 발신지 IP는 `responded_from_ip`(172.29.236.50)로 서로 다를 수 있다(같은 호스트가 여러 NIC로 응답한 경우 등).
 - `request_id`: 요청 시 생성한 UUID를 응답에 그대로 넣어 요청·응답 매칭에 사용한다.
 - `cpu_uuid`: 호스트 식별용(동일 호스트 병합·self 제거에 사용). 없을 수 있음.
 - **응답자는 host_ip 하나만 보낸다.** 같은 호스트가 여러 NIC으로 응답하면 응답마다 다른 host_ip(해당 요청에 대한 outbound IP)가 담긴다. **수신 측**에서 같은 cpu_uuid의 여러 응답을 받아 IP 목록을 취합하여 화면에 표시한다.
@@ -138,9 +139,9 @@
 
 ### 5.3 Discovery API
 
-- Discovery 요청은 **프론트엔드의 Discovery 버튼**에 의해 트리거된다.
-- **실시간 스트리밍 (기본 UX)**: `GET {serverUrl}/api/v1/discovery/stream` — **Server-Sent Events(SSE)**. Content-Type `text/event-stream`. 응답이 올 때마다 `data: {JSON}\n\n` 로 호스트 한 건씩 전송, 타임아웃 시 `event: done\ndata: {}\n\n` 후 스트림 종료. 클라이언트는 EventSource로 연결해 응답이 오는 대로 화면에 반영한다.
-- **일괄 반환 (선택)**: `GET {serverUrl}/api/v1/discovery` — 타임아웃(설정값)까지 수집한 뒤 `status` + `data`(발견된 호스트 배열)를 한 번에 JSON으로 반환. `data`는 배열이며, 결과가 없어도 `[]` 로 반환한다(null 아님).
+- Discovery 요청은 **프론트엔드의 Discovery 버튼**에 의해 트리거되며, **웹 UI는 스트리밍 API만 사용**한다.
+- **실시간 스트리밍 (웹 UI 사용)**: `GET {serverUrl}/api/v1/discovery/stream` — **Server-Sent Events(SSE)**. Content-Type `text/event-stream`. 응답이 올 때마다 `data: {JSON}\n\n` 로 호스트 한 건씩 전송, 타임아웃(설정값) 시 `event: done\ndata: {}\n\n` 후 스트림 종료. mol 웹 UI는 Discovery 버튼 클릭 시 EventSource로 이 엔드포인트만 호출하며, 응답이 오는 대로 화면에 반영하고 `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 타임아웃 이후 별도의 일괄 API 호출은 하지 않는다.
+- **일괄 반환 (웹 UI 미사용)**: `GET {serverUrl}/api/v1/discovery` — 타임아웃(설정값)까지 수집한 뒤 `status` + `data`(발견된 호스트 배열)를 한 번에 JSON으로 반환. `data`는 배열이며, 결과가 없어도 `[]` 로 반환한다(null 아님). 서버에는 구현되어 있으나 **mol 웹 UI에서는 호출하지 않으며**, 스크립트·다른 클라이언트용으로만 사용할 수 있다.
 
 ### 5.4 서비스 상태·제어 API
 
@@ -182,6 +183,9 @@
 - **rollback.sh**: 인자는 없다. `{deploy_base}/previous` 심볼릭 링크가 있어야 하며, 서비스 중지 → `current` 를 `previous` 가 가리키는 버전으로 교체 → 서비스 시작을 수행한다. 웹 API에서는 호출하지 않고, update.sh 의 실패 복구 또는 운영자가 수동 실행할 때 사용한다.
 - **업로드**: `POST {serverUrl}/api/v1/upload`  
   - **multipart/form-data**: `mol`(실행 파일), `config`(config.yaml). 버전은 config에서 파싱.  
+  - **mol 실행 파일 검증**: 업로드된 mol 파트에 대해 (1) **ELF 매직**: 앞 4바이트가 `\x7fELF`인지 확인(텍스트·설정·압축 파일 등 잘못된 파일 차단). (2) **실행 검증**: 스테이징에 저장한 뒤 해당 경로의 바이너리를 `--version` 인자로 실행(타임아웃 5초)하여, 출력이 `"mol "`로 시작하고 종료 코드 0인지 확인. 검증 실패 시 스테이징에 넣지 않거나 저장 후 삭제하고 `status: "fail"`, `data`에 에러 메시지를 반환(400).  
+  - **config.yaml 검증**: 업로드된 config 본문을 mol **config 구조체**로 파싱한다. 파싱 실패 시(구문 오류·타입 오류) **어떤 항목/몇 번째 줄**에서 오류가 났는지, **어떤 항목이 있어야 하고 타입은 무엇인지**를 안내하는 에러 메시지를 반환한다(예: "N번째 줄: 숫자 항목에 문자열이 들어갔습니다", "필요한 항목 및 타입: service_name(문자열), discovery_udp_port(숫자), http_port(숫자), version(문자열) 등").  
+  - **config 수정 업로드**: 웹 UI에서는 config.yaml 파일을 선택하면 내용이 편집 영역에 표시되고, 사용자가 버전 등 내용을 **수정한 뒤** 업로드할 수 있다. 이때 전송·스테이징에 저장되는 것은 **수정된 내용**이며, 원본 파일을 그대로 보내지 않아도 된다. API는 클라이언트가 보낸 config 본문을 그대로 받아 저장한다.  
   - 버전은 영문·숫자·`.`·`-`만 허용.  
   - 요청을 받은 mol 인스턴스는 **자기 자신의 스테이징** `{deploy_base}/staging/{version}/` 에만 저장한다(mol, config.yaml). 로컬 웹에서 업로드하면 로컬 mol의 스테이징에 저장되고, 원격 배포 시에는 **원격 mol**에 같은 upload API를 호출하여 그 mol의 스테이징에 저장한다.  
   - 성공 시 `{ "status": "success", "data": { "version": "..." } }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
@@ -196,7 +200,7 @@
   - **`systemd-run`** 로 실행: `systemd-run --unit=mol-update --property=RemainAfterExit=yes {deploy_base}/update.sh {version}`. 로그는 `{deploy_base}/update_last.log`. mol.service는 root로 실행되므로 sudo를 사용하지 않는다. 응답은 즉시 반환, 실제 업데이트는 백그라운드.
 - **적용 (원격)**: 원격 mol로의 배포는 **원격 mol의 업로드 API**를 사용한다. 요청을 받은 서버(로컬 mol)는 대상 원격 mol의 **서비스 포트(8888)** 로 HTTP로 (1) `POST /api/v1/upload` (multipart: `mol`, `config`)를 보내 해당 mol의 **스테이징**에 올린 뒤, (2) `POST /api/v1/apply-update` (Body: `{ "version": "<버전>", "ip": "self" }`)를 보내 그 mol이 자기 스테이징을 적용·재시작하도록 한다.  
   - **JSON** Body: `{ "version": "<버전>", "ip": "<원격 IP>" }`. 로컬의 스테이징 또는 versions에서 해당 버전의 mol·config를 읽어, 위와 같이 원격의 upload API로 전송한 후 원격의 apply-update API를 호출한다.  
-  - **multipart** (원격 전용): `ip`, `mol`, `config`. 수신한 파일을 로컬 스테이징에 저장하지 않고, 원격 mol의 upload API로 그대로 전송한 뒤 원격의 apply-update API를 호출한다.
+  - **multipart** (원격 전용): `ip`, `mol`, `config`. 수신한 mol에 대해 로컬에서 동일한 검증(ELF + `--version` 실행)을 수행한 뒤, 통과 시에만 원격 mol의 upload API로 전송하고 apply-update API를 호출한다. 검증 실패 시 400 및 에러 메시지.
 - **업데이트 로그**: `GET {serverUrl}/api/v1/update-log`  
   - `{deploy_base}/update_last.log` 파일 내용을 읽어 `{ "status": "success", "data": { "output": "<로그 텍스트>" } }` 로 반환.  
   - 파일이 없거나 읽기 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
@@ -240,7 +244,8 @@
 
 ### 6.3 업데이트 (업로드·적용·로그)
 
-- **업로드**: mol 실행 파일 + config.yaml 선택(및 편집) 후 `POST /api/v1/upload` (multipart: `mol`, `config`). 버전은 config에서 파싱. 업로드는 **스테이징**에 저장. 성공/실패 메시지 표시.
+- **업로드**: mol 실행 파일과 config.yaml을 선택한 뒤 `POST /api/v1/upload` (multipart: `mol`, `config`). 버전은 config에서 파싱. 업로드는 **스테이징**에 저장. 성공/실패 메시지 표시. 서버에서 **mol 실행 파일 검증**(ELF 형식 + `--version` 실행)과 **config.yaml 검증**(mol config 구조체로 파싱, 실패 시 항목/줄/필요 타입 안내)을 수행하며, 잘못된 파일·설정이면 거절하고 에러 메시지를 반환한다.  
+  - **config.yaml 수정 후 업로드**: config 파일을 선택하면 내용이 **편집 영역**(textarea)에 표시된다. 사용자가 버전, broadcast 주소 등 설정을 수정한 뒤 업로드하면 **수정된 내용**이 서버로 전송되어 스테이징에 저장된다. 원본 파일을 수정 없이 올릴 수도 있고, 편집만 하고 파일을 다시 선택하지 않아도 업로드 시 편집 영역 내용이 사용된다.
 - **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, 적용 버튼으로 `POST /api/v1/apply-update` (`{ "version": "..." }`). 성공 시 "업데이트를 적용 중입니다. …" 안내, 실패 시 에러 메시지.
 - **적용 (원격)**  
   - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 스테이징(또는 세션 내 업로드된 버전)에 버전이 있고, 그 버전이 **해당 호스트의 현재 버전과 다를 때**만 해당 호스트의 「업데이트 적용」이 활성화된다. 카드에는 해당 호스트의 버전을 `data-host-version`으로 저장하여 비교에 사용한다.  
@@ -307,10 +312,10 @@
 - Discovery 요청 수신 시 자신의 정보를 담은 DISCOVERY_RESPONSE를 요청자 IP:9999로 unicast 전송.
 - **자기 정보 API**: GET /api/v1/self — 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하고, `host_ip`는 그중 첫 번째. 버전, CPU UUID, CPU, 메모리 등 포함.
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
-- **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간), GET /api/v1/discovery (일괄 반환). Discovery 결과는 `data` 배열로 반환하며, 없을 때는 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast). 타임아웃은 최대 5초.
+- **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간) — 웹 UI에서 사용. GET /api/v1/discovery (일괄 반환) — 웹 UI 미사용, 다른 클라이언트용. 일괄 API의 `data`는 배열이며 없을 때 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast). 타임아웃은 최대 5초.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 mol의 서비스 포트로 GET service-status를 호출하고, 원격 mol이 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `systemctl start/stop` (sudo 없음, root 실행). 원격은 요청자가 원격 mol의 서비스 포트로 POST service-control(ip: "self", action)을 호출하고, 원격 mol이 자체 systemctl start/stop 실행 후 응답을 반환.
-- **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
+- **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). 업로드 시 **mol 검증**(ELF 매직 + `--version` 실행, 타임아웃 5초)과 **config 검증**(mol config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내)을 수행하여 잘못된 파일·설정은 400으로 거절. POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
 - 정적 파일 서빙 (`/web` prefix).
 
 ---
@@ -325,8 +330,8 @@
 - [ ] Self 제거: **CPU UUID**로 자기 식별(같으면 제외), CPU UUID 없을 때만 IP+ServicePort 폴백
 - [ ] Discovery 복수 브로드캐스트: `discovery_broadcast_addresses` 지원, 각 주소마다 DISCOVERY_REQUEST 전송
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
-- [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), EventSource, 응답 오는 대로 화면 갱신; 동일 CPU UUID는 한 카드로 병합(IP 모두 표시), event: done
-- [ ] Discovery 일괄: GET /api/v1/discovery, data는 배열(빈 경우 []), null 미사용
+- [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, 응답 오는 대로 화면 갱신; 동일 CPU UUID는 한 카드로 병합(IP 모두 표시), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
+- [ ] Discovery 일괄: GET /api/v1/discovery 구현됨, data는 배열(빈 경우 []), null 미사용; **웹 UI에서는 호출하지 않음**(다른 클라이언트용)
 - [ ] URL prefix: /web, /api/v1, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
@@ -336,8 +341,8 @@
 - [ ] 발견된 호스트 카드: 시작(파란색)·중지(빨간색) 버튼; Active면 시작 disabled, dead면 중지 disabled
 - [ ] 서비스 상태/제어 API: 로컬은 systemctl만 (sudo 없음, mol.service root 실행), 원격은 원격 mol API 호출
 - [ ] 설정: systemctl_service_name, deploy_base, discovery_broadcast_addresses (선택)
-- [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만; upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); systemd-run (root 실행으로 sudo 없음); update_last.log, update-log API
-- [ ] 프론트: 업데이트 영역 — 업로드(mol+config·편집), 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
+- [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만, **mol 업로드 검증**(ELF 매직 + --version 실행), **config 검증**(config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내); upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); systemd-run (root 실행으로 sudo 없음); update_last.log, update-log API
+- [ ] 프론트: 업데이트 영역 — 업로드(mol+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 mol·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 동일 호스트 응답 시 카드 갱신; 원격 적용 후 Discovery 재수행 없이 해당 카드만 지연 후 host-info·service-status 갱신
 - [ ] 원격 적용: 호스트별 버전 비교(data-host-version), 스테이징 버전과 다를 때만 적용 버튼 활성(초록), 툴팁(스테이징 없음/최신 버전/x.x.x 버전으로 업데이트 가능), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신
 - [ ] 호스트 정보 API: GET /api/v1/host-info?ip= (self=로컬, 지정=유니캐스트 Discovery)

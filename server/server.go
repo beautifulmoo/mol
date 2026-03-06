@@ -23,6 +23,32 @@ import (
 	"mol/svcstatus"
 )
 
+// elfMagic is the first 4 bytes of an ELF executable.
+var elfMagic = []byte{0x7f, 'E', 'L', 'F'}
+
+func isELFExecutable(header []byte) bool {
+	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
+}
+
+// validateMolBinary runs molPath --version with a short timeout and checks that output starts with "mol " and exit code is 0.
+func validateMolBinary(molPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, molPath, "--version")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("mol 실행 파일 검증 시간 초과 (--version이 5초 내에 끝나지 않음)")
+		}
+		return fmt.Errorf("mol 실행 파일이 아닌 것 같습니다 (--version 실패): %w", err)
+	}
+	line := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(line, "mol ") {
+		return fmt.Errorf("mol 실행 파일이 아닌 것 같습니다 (출력: %q)", line)
+	}
+	return nil
+}
+
 const (
 	sseContentType = "text/event-stream"
 	sseNoCache     = "no-cache"
@@ -440,6 +466,19 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer molFile.Close()
+	molBytes, err := io.ReadAll(molFile)
+	if err != nil {
+		s.send(w, "fail", "mol 파일 읽기 실패", http.StatusInternalServerError)
+		return
+	}
+	if len(molBytes) < 4 {
+		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
+		return
+	}
+	if !isELFExecutable(molBytes[:4]) {
+		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). mol 실행 파일을 선택하세요.", http.StatusBadRequest)
+		return
+	}
 	configFile, _, err := r.FormFile("config")
 	if err != nil {
 		s.send(w, "fail", "config 파일이 필요합니다", http.StatusBadRequest)
@@ -452,9 +491,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 		return
 	}
+	if _, err := config.LoadFromBytes(configData); err != nil {
+		s.send(w, "fail", err.Error(), http.StatusBadRequest)
+		return
+	}
 	version, err := config.ParseVersionFromYAML(configData)
 	if err != nil || version == "" {
-		s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다", http.StatusBadRequest)
+		s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다. version 항목(문자열)이 필요합니다", http.StatusBadRequest)
 		return
 	}
 	for _, c := range version {
@@ -474,9 +517,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		base = "/opt/mol"
 	}
 	s.clearStaging(base)
-	stagingDir, err := s.writeToStaging(base, version, molFile, configData)
+	stagingDir, err := s.writeToStaging(base, version, bytes.NewReader(molBytes), configData)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	molPath := filepath.Join(stagingDir, "mol")
+	if err := validateMolBinary(molPath); err != nil {
+		os.RemoveAll(stagingDir)
+		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
 	log.Printf("upload: version %s -> %s (staging)", version, stagingDir)
@@ -645,7 +694,45 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "mol 파일이 필요합니다", http.StatusBadRequest)
 			return
 		}
-		defer molFile.Close()
+		molBytes, err := io.ReadAll(molFile)
+		molFile.Close()
+		if err != nil {
+			s.send(w, "fail", "mol 파일 읽기 실패", http.StatusInternalServerError)
+			return
+		}
+		if len(molBytes) < 4 {
+			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
+			return
+		}
+		if !isELFExecutable(molBytes[:4]) {
+			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). mol 실행 파일을 선택하세요.", http.StatusBadRequest)
+			return
+		}
+		tmp, err := os.CreateTemp("", "mol-validate-*")
+		if err != nil {
+			s.send(w, "fail", "임시 파일 생성 실패", http.StatusInternalServerError)
+			return
+		}
+		tmpPath := tmp.Name()
+		defer os.Remove(tmpPath)
+		if _, err := tmp.Write(molBytes); err != nil {
+			tmp.Close()
+			s.send(w, "fail", "mol 검증용 임시 쓰기 실패", http.StatusInternalServerError)
+			return
+		}
+		if err := tmp.Chmod(0755); err != nil {
+			tmp.Close()
+			s.send(w, "fail", "mol 검증 실패", http.StatusInternalServerError)
+			return
+		}
+		if err := tmp.Close(); err != nil {
+			s.send(w, "fail", "mol 검증 실패", http.StatusInternalServerError)
+			return
+		}
+		if err := validateMolBinary(tmpPath); err != nil {
+			s.send(w, "fail", err.Error(), http.StatusBadRequest)
+			return
+		}
 		configFile, _, err := r.FormFile("config")
 		if err != nil {
 			s.send(w, "fail", "config 파일이 필요합니다", http.StatusBadRequest)
@@ -657,9 +744,13 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 			return
 		}
+		if _, err := config.LoadFromBytes(configData); err != nil {
+			s.send(w, "fail", err.Error(), http.StatusBadRequest)
+			return
+		}
 		version, err := config.ParseVersionFromYAML(configData)
 		if err != nil || version == "" {
-			s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다", http.StatusBadRequest)
+			s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다. version 항목(문자열)이 필요합니다", http.StatusBadRequest)
 			return
 		}
 		for _, c := range version {
@@ -676,7 +767,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		baseURL := "http://" + ip + ":" + strconv.Itoa(port)
 		ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 		defer cancel()
-		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, molFile, configData); err != nil {
+		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, bytes.NewReader(molBytes), configData); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}

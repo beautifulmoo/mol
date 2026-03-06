@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -26,6 +27,14 @@ var Version string
 var webFS embed.FS
 
 func main() {
+	if len(os.Args) >= 2 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		v := Version
+		if v == "" {
+			v = "devel"
+		}
+		fmt.Println("mol", v)
+		os.Exit(0)
+	}
 	cfgPath := ""
 	if len(os.Args) > 1 && os.Args[1] == "-config" && len(os.Args) > 2 {
 		cfgPath = os.Args[2]

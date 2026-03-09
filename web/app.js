@@ -7,6 +7,65 @@
     return document.getElementById(id);
   }
 
+  function getHostRowLabel(host, isSelf) {
+    if (isSelf) {
+      var name = (host.hostname && host.hostname.trim()) ? host.hostname.trim() : '로컬';
+      var sub = host.responded_from_ip || host.host_ip || (host.host_ips && host.host_ips[0]) || '-';
+      return name + ' · ' + sub;
+    }
+    var name = (host.hostname && host.hostname.trim()) ? host.hostname.trim() : (host.host_ip || '호스트');
+    var sub = host.host_ip || ((host.cpu_uuid || '').trim().slice(0, 8)) || '-';
+    return name + ' · ' + sub;
+  }
+
+  function renderHostRow(host, isSelf) {
+    var row = document.createElement('div');
+    row.className = 'host-row' + (isSelf ? ' host-row--local' : '');
+    if (host.host_ip) row.setAttribute('data-host-ip', host.host_ip);
+    var label = getHostRowLabel(host, isSelf);
+    var card = renderHostCard(host, isSelf);
+    row.innerHTML =
+      '<div class="host-row__header" role="button" tabindex="0" aria-expanded="false">' +
+      '<span class="host-row__dot" aria-hidden="true"></span>' +
+      '<span class="host-row__label">' + escapeHtml(label) + '</span>' +
+      '<span class="host-row__expand-icon" aria-hidden="true">▶</span>' +
+      '</div>' +
+      '<div class="host-row__body"></div>';
+    row.querySelector('.host-row__body').appendChild(card);
+    row.setAttribute('data-hostname', host.hostname || '');
+    row.setAttribute('data-cpu-uuid', host.cpu_uuid || '');
+    bindHostRowToggle(row);
+    return row;
+  }
+
+  function bindHostRowToggle(row) {
+    var header = row && row.querySelector('.host-row__header');
+    if (!header) return;
+    function toggle() {
+      var expanded = row.classList.toggle('host-row--expanded');
+      header.setAttribute('aria-expanded', expanded);
+    }
+    header.addEventListener('click', toggle);
+    header.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+
+  function updateHostRowLabel(row, host, isSelf) {
+    if (!row) return;
+    var labelEl = row.querySelector('.host-row__label');
+    if (labelEl) labelEl.textContent = getHostRowLabel(host || {}, isSelf);
+  }
+
+  function updateHostRowDot(row, isRunning) {
+    if (!row) return;
+    var dot = row.querySelector('.host-row__dot');
+    if (!dot) return;
+    dot.classList.remove('host-row__dot--running', 'host-row__dot--stopped');
+    if (isRunning) dot.classList.add('host-row__dot--running');
+    else dot.classList.add('host-row__dot--stopped');
+  }
+
   function renderHostCard(host, isSelf) {
     const div = document.createElement('div');
     div.className = 'host-card' + (isSelf ? ' self-card' : '');
@@ -79,6 +138,8 @@
       var active = parseActiveFromOutput(output);
       if (startBtn) startBtn.disabled = active;
       if (stopBtn) stopBtn.disabled = !active;
+      var row = cardEl.closest && cardEl.closest('.host-row');
+      if (row) updateHostRowDot(row, active);
     }
   }
 
@@ -413,6 +474,8 @@
       dds[6].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
       dds[7].textContent = formatMemory(host);
     }
+    var row = cardEl.closest && cardEl.closest('.host-row');
+    if (row) updateHostRowLabel(row, host, cardEl.classList.contains('self-card'));
   }
 
   function loadSelf() {
@@ -423,8 +486,9 @@
       .then(function (body) {
         if (body.status === 'success' && body.data) {
           container.innerHTML = '';
-          var card = renderHostCard(body.data, true);
-          container.appendChild(card);
+          var row = renderHostRow(body.data, true);
+          container.appendChild(row);
+          var card = row.querySelector('.host-card');
           bindServiceControlButtons(card);
           fetchServiceStatus(card, '');
         } else {
@@ -512,7 +576,11 @@
         var host = JSON.parse(e.data);
         if (host.self) {
           var selfCard = el('self-info') && el('self-info').querySelector('.host-card');
-          if (selfCard && host.responded_from_ip) mergeRespondedFromIntoCard(selfCard, host.responded_from_ip);
+          if (selfCard && host.responded_from_ip) {
+            mergeRespondedFromIntoCard(selfCard, host.responded_from_ip);
+            var selfRow = el('self-info').querySelector('.host-row');
+            if (selfRow) updateHostRowLabel(selfRow, { hostname: host.hostname || selfCard.getAttribute('data-hostname') || '', responded_from_ip: host.responded_from_ip }, true);
+          }
           return;
         }
         var ip = host.host_ip || '';
@@ -530,12 +598,15 @@
           mergeHostIpsFromResponseIntoCard(existing, host);
           if (host.responded_from_ip) mergeRespondedFromIntoCard(existing, host.responded_from_ip);
           updateHostCardDetails(existing, host);
+          var row = existing.closest && existing.closest('.host-row');
+          if (row) updateHostRowLabel(row, host, false);
           var primaryIp = existing.getAttribute('data-host-ip') || ip;
           fetchServiceStatus(existing, primaryIp);
           updateAllHostApplyButtons();
         } else {
-          var card = renderHostCard(host, false);
-          list.appendChild(card);
+          var row = renderHostRow(host, false);
+          list.appendChild(row);
+          var card = row.querySelector('.host-card');
           bindServiceControlButtons(card);
           fetchServiceStatus(card, ip);
         }

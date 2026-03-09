@@ -245,10 +245,82 @@ h3 {
   font-size: 0.85rem;
   color: #a1a1aa;
 }
+/* 호스트 아코디언: 한 줄 요약 + 클릭 시 카드 펼침 */
+.host-row {
+  border-radius: 8px;
+  border: 1px solid #3f3f46;
+  overflow: hidden;
+  background: #25262b;
+}
+.host-row--local {
+  background: #1e2a3a;
+  border-color: #2d3d52;
+}
+.host-row--local .host-row__header {
+  color: #93b8e0;
+}
+.host-row__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  min-height: 2.5rem;
+}
+.host-row__header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.host-row--local .host-row__header:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+.host-row__dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #71717a;
+}
+.host-row__dot--running {
+  background: #3b82f6;
+}
+.host-row__dot--stopped {
+  background: #ef4444;
+}
+.host-row__label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.host-row__expand-icon {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: #71717a;
+  transition: transform 0.15s ease;
+}
+.host-row--expanded .host-row__expand-icon {
+  transform: rotate(90deg);
+}
+.host-row__body {
+  display: none;
+  border-top: 1px solid #3f3f46;
+}
+.host-row--local .host-row__body {
+  border-top-color: #2d3d52;
+}
+.host-row--expanded .host-row__body {
+  display: block;
+}
+.host-row__body .host-card {
+  border-radius: 0;
+  border: none;
+  border-top: none;
+}
 .host-list {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
   margin-top: 0.5rem;
 }
 .update-desc {

@@ -108,25 +108,22 @@
     var refreshBtn = cardEl.querySelector('.status-refresh-btn');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', function () {
-        if (isSelf) {
-          loadSelf();
-          return;
-        }
         if (summary) summary.textContent = '갱신 중…';
-        fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
+        var url = isSelf ? (API_BASE + '/self') : (API_BASE + '/host-info?ip=' + encodeURIComponent(ip));
+        fetch(url)
           .then(function (res) { return res.json(); })
           .then(function (body) {
             if (body.status === 'success' && body.data) {
               updateHostCardDetails(cardEl, body.data);
-              updateAllHostApplyButtons();
+              if (!isSelf) updateAllHostApplyButtons();
             } else {
-              if (summary) summary.textContent = body.data || '호스트 정보를 불러올 수 없습니다.';
+              if (summary) summary.textContent = isSelf ? (body.data || '내 정보를 불러올 수 없습니다.') : (body.data || '호스트 정보를 불러올 수 없습니다.');
             }
-            fetchServiceStatus(cardEl, ip);
+            fetchServiceStatus(cardEl, isSelf ? '' : ip);
           })
           .catch(function () {
-            if (summary) summary.textContent = '호스트 정보 요청 실패.';
-            fetchServiceStatus(cardEl, ip);
+            if (summary) summary.textContent = isSelf ? '내 정보 요청 실패.' : '호스트 정보 요청 실패.';
+            fetchServiceStatus(cardEl, isSelf ? '' : ip);
           });
       });
     }

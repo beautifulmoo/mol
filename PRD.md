@@ -152,7 +152,7 @@
 - **서비스 제어**: `POST {serverUrl}/api/v1/service-control`  
   - Body: `{ "ip": "" | "self" | "<host_ip>", "action": "start" | "stop" }`.  
   - `ip` 비어 있거나 `"self"`: 로컬 `systemctl start/stop <systemctl_service_name>` (mol.service는 root로 실행).  
-  - 그 외: 요청을 받은 서버가 **원격 mol의 서비스 포트(8888)** 로 `POST .../service-control` (Body: `{ "ip": "self", "action": "start"|"stop" }`)를 호출한다. 원격 mol은 자기 서버에서 `systemctl start` 또는 `stop` 을 실행한 뒤 응답을 반환하고, 요청자는 그 응답을 그대로 클라이언트에 전달한다.  
+  - 그 외(원격): 요청을 받은 서버가 대상 호스트로 **SSH** 접속(`ssh_port`·`ssh_user` 설정 사용, 미지정 시 22·root)하여 `systemctl start` 또는 `stop <서비스명>`을 실행한다. 원격 mol이 중지된 상태여도 SSH로 시작할 수 있다.  
   - 성공 시 `{ "status": "success", "data": null }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
 
 ### 5.5 업데이트 API
@@ -211,6 +211,10 @@
 
 - **구현 방식**: 정적 파일(HTML, CSS, JavaScript)을 **Go embed**로 단일 실행 파일에 포함.
 - **JavaScript**: **Vanilla JS**만 사용. API 호출은 `fetch`, UI 업데이트는 DOM 조작으로 처리. SPA 프레임워크(React, Vue 등)는 사용하지 않는다.
+- **레이아웃**
+  - 호스트 정보(내 정보·발견된 호스트) 카드는 **가운데 열**에 배치하고, **업데이트** 영역은 **화면 오른쪽**에 고정(sticky)하여 스크롤 시 카드만 스크롤되고 업데이트 영역은 고정된다. 스크롤바가 생겨도 레이아웃이 밀리지 않도록 `scrollbar-gutter: stable`을 사용한다.
+  - 호스트 카드의 가로 최대 너비는 610px로 통일하며, 내 정보와 발견된 호스트 카드는 동일한 카드 스타일 한 겹만 사용한다(내 정보 컨테이너는 카드 클래스를 갖지 않고, 렌더된 카드 한 개만 자식으로 둔다).
+  - 카드 내 **시작/중지·업데이트 적용·상태 새로고침** 버튼은 카드 **오른쪽 위**에 절대 위치로 배치한다. 상단의 호스트 정보 항목(CPU UUID, 버전, IP 등)만 버튼과 겹치지 않도록 오른쪽 여백을 두고, **서비스 상태(터미널)** 영역은 카드 오른쪽 끝까지 넓게 표시한다.
 - **초기 화면**
   - **내 정보**: 현재 mol 인스턴스의 버전, **IP(또는 응답으로 사용하는 모든 IP `host_ips`)** , 호스트명, CPU UUID, CPU, MEMORY 등을 표시 (자기 정보 API 사용). 자기 정보 API는 각 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하여 Discovery 응답으로 사용하는 IP들을 모두 보여준다.
 - **Discovery 버튼**
@@ -232,15 +236,14 @@
   - 그 외(dead 등)면 **\[서비스 중지 상태]**  
   - 로딩/에러 시 "불러오는 중…", "상태를 불러올 수 없습니다." 등.
 
-### 6.2 서비스 시작/중지 (발견된 호스트만)
+### 6.2 서비스 시작/중지 및 원격 카드 버튼
 
-- **내 정보(자기 자신) 카드에는 시작/중지 버튼을 두지 않는다.**
-- **발견된 호스트** 카드에만 **시작**·**중지** 버튼을 둔다.  
-  - **시작**: `POST /api/v1/service-control` with `{ "ip": "<host_ip>", "action": "start" }` 후, 성공 시 해당 카드의 systemctl status를 다시 조회해 표시를 갱신한다. **시작** 버튼은 **파란색** 계열로 표시하여 직관적으로 구분한다.  
-  - **중지**: `POST /api/v1/service-control` with `{ "ip": "<host_ip>", "action": "stop" }` 후, 동일하게 status를 갱신한다. **중지** 버튼은 **빨간색** 계열.
-- **버튼 비활성화**  
-  - **Active (running)** 이면 **시작** 버튼 disabled, **중지** 버튼 enabled.  
-  - **dead(중지)** 상태이면 **시작** 버튼 enabled, **중지** 버튼 disabled.
+- **내 정보(자기 자신) 카드에는 시작/중지 버튼을 두지 않는다.** 「상태 새로고침」만 둔다.
+- **발견된 호스트(원격) 카드**에는 **시작**·**중지** 버튼을 **노출하지 않고**, **업데이트 적용**과 **상태 새로고침**만 표시한다(업데이트 적용이 맨 위). 원격 mol이 중지된 뒤에는 API로는 시작할 수 없으므로, 서비스 시작/중지는 백엔드에서 **SSH**로만 수행하며 UI에서는 해당 버튼을 숨긴다.
+- **서비스 제어 API 동작**: `POST /api/v1/service-control` with `{ "ip": "<host_ip>", "action": "start"|"stop" }`.  
+  - **로컬**(ip 없음/self): `systemctl start/stop` (sudo 없음, root 실행).  
+  - **원격**: 요청을 받은 서버가 해당 원격 호스트로 **SSH** 접속(`ssh -p <ssh_port> <ssh_user>@<ip> systemctl start|stop <서비스명>`)하여 실행한다. 원격 mol이 꺼져 있어도 SSH로 시작할 수 있다. 설정 `ssh_port`(기본 22), `ssh_user`(기본 "root")를 사용한다.
+- (참고) **서비스 상태** 조회(GET /api/v1/service-status?ip=)는 로컬은 직접 systemctl, 원격은 원격 mol API를 호출하는 방식으로 유지한다.
 
 ### 6.3 업데이트 (업로드·적용·로그)
 
@@ -265,8 +268,9 @@
 ### 6.4 상태 새로고침 (내 정보·발견된 호스트)
 
 - **내 정보** 카드와 **발견된 호스트** 카드 각각에 **「상태 새로고침」** 버튼을 둔다.
-- **내 정보**에서 클릭 시: `GET /api/v1/self`로 호스트 정보를 다시 가져와 카드(버전, IP, 호스트명, CPU, 메모리 등)를 갱신하고, `GET /api/v1/service-status`로 systemctl status를 다시 조회해 표시한다.
-- **발견된 호스트**에서 클릭 시: `GET /api/v1/host-info?ip=<해당 호스트 IP>`로 해당 호스트의 최신 정보(버전, CPU, 메모리 등)를 가져와 카드의 호스트 정보를 갱신하고, `GET /api/v1/service-status?ip=...`로 systemctl status를 갱신한다. 적용 버튼의 활성/비활성 및 툴팁도 갱신한다. host-info 요청이 실패해도 service-status는 조회하여 systemctl 상태는 갱신한다.
+- **동작 방식**(로컬·원격 동일): 카드 전체를 다시 그리지 않고, (1) 호스트 정보 API로 카드 내용만 갱신한 뒤 (2) systemctl status를 조회해 표시한다.  
+  - **내 정보**: `GET /api/v1/self`로 응답을 받아 기존 카드 DOM의 항목(버전, IP, 호스트명, CPU, 메모리 등)만 갱신하고, 이어서 `GET /api/v1/service-status`로 systemctl status를 갱신한다.  
+  - **발견된 호스트**: `GET /api/v1/host-info?ip=<해당 호스트 IP>`로 응답을 받아 기존 카드의 호스트 정보만 갱신하고, 적용 버튼 활성/비활성·툴팁을 갱신한 뒤, `GET /api/v1/service-status?ip=...`로 systemctl status를 갱신한다. host-info가 실패해도 service-status는 조회하여 상태 영역은 갱신한다.
 
 ---
 
@@ -291,16 +295,19 @@
 | `version` | (선택) 버전 override. 비어 있으면 빌드 시 ldflags 값 사용 | `"1.2.3"` 또는 빈 문자열 |
 | `systemctl_service_name` | (선택) 서비스 상태·제어 대상 유닛 이름 | `"mol.service"` |
 | `deploy_base` | (선택) 업데이트 배포 베이스. `staging/`, `versions/`, `update.sh`, `rollback.sh`, `update_last.log` 의 기준 경로 | `"/opt/mol"` |
+| `ssh_port` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
+| `ssh_user` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
 
 - IP 대역(예: broadcast 주소)은 실제 환경에 따라 다를 수 있으므로 `discovery_broadcast_address` 또는 `discovery_broadcast_addresses` 로 설정에서 지정한다. 복수 주소를 쓰면 여러 서브넷(예: 172.29.236.x, 172.29.244.x)에 한 번에 Discovery 요청을 보낼 수 있다.
-- **mol.service는 root로 실행**되며, 서비스 상태·제어 시 **sudo를 사용하지 않는다** (소스 및 스크립트에서 sudo 제거). 원격 서비스 상태·제어는 요청을 받은 서버가 **원격 mol의 API**(서비스 포트 8888)를 호출하고, 원격 mol이 자체적으로 `systemctl status` / `start` / `stop` 을 실행한 뒤 응답을 반환하는 방식으로 수행한다.
+- **mol.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 mol의 API(서비스 포트 8888)를 호출하고, 원격 mol이 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 mol이 꺼져 있어도 시작 가능). SSH 포트·사용자는 `ssh_port`, `ssh_user`로 지정하며, 키 기반 인증이 필요하다.
 
 ---
 
 ## 8. 버전 정보
 
-- **기본**: 빌드 시 **ldflags**로 버전 문자열 주입 (예: `-ldflags "-X main.Version=1.2.3"`).
+- **기본**: 빌드 시 **ldflags**로 버전 문자열 주입 (예: `-ldflags "-X main.Version=1.2.3"` 또는 Makefile `VERSION=`). 미지정 시 `--version` 출력은 `"mol devel"`로 한다.
 - **override**: 설정 파일에 `version`이 있으면 해당 값으로 노출 (자기 정보 API 및 DISCOVERY_RESPONSE의 `version` 필드).
+- **실행 파일 검증**: 업로드된 mol 바이너리는 `--version` 옵션으로 실행해 출력이 `"mol "`로 시작하는지 확인한다. mol 실행 파일은 `--version` / `-version` 인자 시 버전 한 줄 출력 후 종료한다.
 
 ---
 
@@ -314,7 +321,7 @@
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
 - **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간) — 웹 UI에서 사용. GET /api/v1/discovery (일괄 반환) — 웹 UI 미사용, 다른 클라이언트용. 일괄 API의 `data`는 배열이며 없을 때 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast). 타임아웃은 최대 5초.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 mol의 서비스 포트로 GET service-status를 호출하고, 원격 mol이 자체 systemctl status 실행 후 응답을 반환.
-- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `systemctl start/stop` (sudo 없음, root 실행). 원격은 요청자가 원격 mol의 서비스 포트로 POST service-control(ip: "self", action)을 호출하고, 원격 mol이 자체 systemctl start/stop 실행 후 응답을 반환.
+- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `systemctl start/stop` (sudo 없음, root 실행). 원격은 요청자를 받은 서버가 대상 호스트로 **SSH**(`ssh_port`, `ssh_user` 사용) 접속하여 `systemctl start/stop <서비스명>`을 실행한다. 원격 mol이 중지된 상태에서도 SSH로 시작할 수 있다.
 - **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). 업로드 시 **mol 검증**(ELF 매직 + `--version` 실행, 타임아웃 5초)과 **config 검증**(mol config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내)을 수행하여 잘못된 파일·설정은 400으로 거절. POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
 - 정적 파일 서빙 (`/web` prefix).
 
@@ -337,17 +344,18 @@
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
 - [ ] 발견된 호스트: 서버 아이콘 + CPU UUID(맨 위), 버전, IP(복수 시 취합 표시), 응답한 IP(복수 시 취합), 호스트명, CPU, MEMORY; 동일 CPU UUID 한 카드로 병합
 - [ ] systemctl status: 접기/펼치기(기본 접힘), 접힌 상태에서 [정상 서비스 상태] / [서비스 중지 상태]
-- [ ] 내 정보 카드: 시작/중지 버튼 없음
-- [ ] 발견된 호스트 카드: 시작(파란색)·중지(빨간색) 버튼; Active면 시작 disabled, dead면 중지 disabled
-- [ ] 서비스 상태/제어 API: 로컬은 systemctl만 (sudo 없음, mol.service root 실행), 원격은 원격 mol API 호출
-- [ ] 설정: systemctl_service_name, deploy_base, discovery_broadcast_addresses (선택)
+- [ ] 레이아웃: 호스트 카드 가운데 열(max-width 610px), 업데이트 영역 오른쪽 sticky; scrollbar-gutter: stable; 카드 내 버튼 오른쪽 위 절대 위치, 서비스 상태 영역은 카드 끝까지 넓게; 내 정보는 카드 한 겹만
+- [ ] 내 정보 카드: 시작/중지 버튼 없음, 상태 새로고침만
+- [ ] 발견된 호스트 카드: 시작·중지 버튼 비노출; 업데이트 적용·상태 새로고침만(업데이트 적용 맨 위). 원격 서비스 시작/중지는 SSH로만 수행
+- [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 mol API. 서비스 제어 API: 로컬은 systemctl, 원격은 SSH(ssh_port, ssh_user)로 systemctl 실행
+- [ ] 설정: systemctl_service_name, deploy_base, discovery_broadcast_addresses, ssh_port(기본 22), ssh_user(기본 root) (선택)
 - [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만, **mol 업로드 검증**(ELF 매직 + --version 실행), **config 검증**(config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내); upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); systemd-run (root 실행으로 sudo 없음); update_last.log, update-log API
 - [ ] 프론트: 업데이트 영역 — 업로드(mol+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 mol·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 동일 호스트 응답 시 카드 갱신; 원격 적용 후 Discovery 재수행 없이 해당 카드만 지연 후 host-info·service-status 갱신
 - [ ] 원격 적용: 호스트별 버전 비교(data-host-version), 스테이징 버전과 다를 때만 적용 버튼 활성(초록), 툴팁(스테이징 없음/최신 버전/x.x.x 버전으로 업데이트 가능), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신
 - [ ] 호스트 정보 API: GET /api/v1/host-info?ip= (self=로컬, 지정=유니캐스트 Discovery)
 - [ ] Discovery 유니캐스트: DoDiscoveryUnicast(ip), 타임아웃 최대 5초
-- [ ] 상태 새로고침: 내 정보·발견된 호스트 카드에 「상태 새로고침」; 내 정보=GET /self 후 카드·status 갱신, 원격=GET /host-info?ip= 후 카드·status·적용 버튼 갱신
+- [ ] 상태 새로고침: 내 정보·원격 동일 방식 — 호스트 정보 API(GET /self 또는 GET /host-info?ip=)로 카드 내용만 갱신 후 GET /service-status로 systemctl 상태 갱신(카드 전체 재렌더링 없음)
 - [ ] 일반 API 응답: status + data
 - [ ] 자기 정보 API: GET /api/v1/self
 - [ ] 설정: YAML, 항목 7.1 반영

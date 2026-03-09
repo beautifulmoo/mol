@@ -1,10 +1,13 @@
 * {
   box-sizing: border-box;
 }
+/* 스크롤바가 생겨도 레이아웃이 밀리지 않도록 공간을 미리 확보 */
+html {
+  scrollbar-gutter: stable;
+}
 body {
   font-family: system-ui, -apple-system, sans-serif;
-  max-width: 720px;
-  margin: 0 auto;
+  margin: 0;
   padding: 1rem;
   background: #1a1b1e;
   color: #e4e4e7;
@@ -14,31 +17,55 @@ header h1 {
   font-size: 1.5rem;
   font-weight: 600;
 }
-main section {
-  margin-bottom: 2rem;
-}
-.top-row {
+main {
   display: flex;
   gap: 1.5rem;
   align-items: flex-start;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+main section {
   margin-bottom: 2rem;
 }
-.top-row .self-section {
+/* 왼쪽·가운데: 호스트 카드 영역 (스크롤 시 함께 스크롤) */
+.host-column {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+.host-column .self-section,
+.host-column .discovery-section {
+  max-width: 620px;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
   margin-bottom: 0;
 }
-.top-row .update-section {
+.host-column .discovery-section {
+  margin-bottom: 2rem;
+}
+/* 오른쪽: 업데이트 영역 (스크롤해도 고정) */
+.update-section {
   flex-shrink: 0;
   width: 320px;
-  margin-bottom: 0;
+  position: sticky;
+  top: 1rem;
+  align-self: flex-start;
 }
-@media (max-width: 720px) {
-  .top-row {
+@media (max-width: 900px) {
+  main {
     flex-direction: column;
   }
-  .top-row .update-section {
+  .update-section {
+    position: static;
     width: 100%;
+    order: 2;
+  }
+  .host-column {
+    order: 1;
   }
 }
 h2 {
@@ -56,6 +83,7 @@ h3 {
 .host-card {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 1rem;
   padding: 1rem;
@@ -99,6 +127,11 @@ h3 {
   flex: 1;
   min-width: 0;
 }
+/* 상단 항목(버튼과 같은 줄)만 오른쪽 여백, 서비스 상태 창은 카드 끝까지 넓게 */
+.host-details > dt,
+.host-details > dd:not(.service-status-dd) {
+  padding-right: 8rem;
+}
 .host-details dt {
   font-size: 0.75rem;
   color: #71717a;
@@ -114,6 +147,22 @@ h3 {
 }
 .service-status-block {
   font-size: 0.9rem;
+}
+/* 버튼은 카드 오른쪽 위에 고정 (호스트 아이콘 상단과 맞춤) */
+.service-control {
+  position: absolute;
+  top: 1.35rem;
+  right: 1rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+/* 원격 카드: 시작·중지 버튼 숨김 (업데이트 적용이 맨 위로) */
+.host-card:not(.self-card) .host-control-start,
+.host-card:not(.self-card) .service-stop {
+  display: none;
 }
 .service-status-header {
   cursor: pointer;
@@ -149,13 +198,6 @@ h3 {
 }
 .service-status-block.expanded .service-status-output {
   display: block;
-}
-.service-control {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  align-items: flex-start;
 }
 .service-btn {
   padding: 0.35rem 0.75rem;

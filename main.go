@@ -165,6 +165,8 @@ func main() {
 		ServiceName:          cfg.ServiceName,
 		SystemctlServiceName: cfg.SystemctlServiceName,
 		DeployBase:           cfg.DeployBase,
+		SSHPort:              cfg.SSHPort,
+		SSHUser:              cfg.SSHUser,
 	})
 
 	listenAddr := ":" + strconv.Itoa(cfg.HTTPPort)

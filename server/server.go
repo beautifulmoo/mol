@@ -73,6 +73,8 @@ type Server struct {
 	serviceName          string
 	systemctlServiceName string
 	deployBase           string
+	sshPort              int
+	sshUser              string
 }
 
 // Config for Server.
@@ -87,6 +89,8 @@ type Config struct {
 	ServiceName          string
 	SystemctlServiceName string
 	DeployBase           string
+	SSHPort              int    // for remote service start/stop via SSH (default 22)
+	SSHUser              string // SSH user for remote (default "root")
 }
 
 // New creates a Server.
@@ -102,6 +106,8 @@ func New(cfg Config) *Server {
 		serviceName:          cfg.ServiceName,
 		systemctlServiceName: cfg.SystemctlServiceName,
 		deployBase:           strings.TrimSuffix(cfg.DeployBase, "/"),
+		sshPort:              cfg.SSHPort,
+		sshUser:              cfg.SSHUser,
 	}
 }
 
@@ -323,25 +329,21 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 		svcName = "mol.service"
 	}
 	if ip != "" && ip != "self" {
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		// 원격: API가 아닌 SSH로 systemctl 실행 (서비스가 중지되면 API 호출 불가)
+		sshPort := s.sshPort
+		if sshPort <= 0 {
+			sshPort = 22
 		}
-		url := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/service-control"
-		payload, _ := json.Marshal(map[string]string{"ip": "self", "action": action})
-		resp, err := remoteHTTPClient.Post(url, "application/json", bytes.NewReader(payload))
+		sshUser := s.sshUser
+		if sshUser == "" {
+			sshUser = "root"
+		}
+		err := svcstatus.RunRemote(ip, sshUser, sshPort, svcName, action)
 		if err != nil {
-			s.send(w, "fail", "원격 제어 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "원격 SSH 제어 실패: "+err.Error(), http.StatusOK)
 			return
 		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		var out APIResponse
-		if json.Unmarshal(body, &out) != nil {
-			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
-			return
-		}
-		s.send(w, out.Status, out.Data, http.StatusOK)
+		s.send(w, "success", nil, http.StatusOK)
 		return
 	}
 	var err error

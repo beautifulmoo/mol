@@ -24,6 +24,9 @@ type Config struct {
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"systemctl_service_name"` // e.g. "mol.service"
 	DeployBase           string `yaml:"deploy_base"`             // e.g. "/opt/mol" for versions/ and update.sh
+	// SSH for remote service start/stop (when remote mol is stopped, API is unreachable)
+	SSHPort int    `yaml:"ssh_port"` // default 22; used for ssh -p when starting/stopping remote mol service
+	SSHUser string `yaml:"ssh_user"` // default "root"; user for ssh to remote host
 }
 
 // Default returns default configuration values.
@@ -40,6 +43,8 @@ func Default() Config {
 		Version:                   "",
 		SystemctlServiceName:      "mol.service",
 		DeployBase:                "/opt/mol",
+		SSHPort:                   22,
+		SSHUser:                   "root",
 	}
 }
 

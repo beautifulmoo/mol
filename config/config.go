@@ -23,7 +23,8 @@ type Config struct {
 	Version                    string `yaml:"version"`
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"systemctl_service_name"` // e.g. "mol.service"
-	DeployBase           string `yaml:"deploy_base"`             // e.g. "/opt/mol" for versions/ and update.sh
+	DeployBase           string `yaml:"deploy_base"`             // e.g. "/opt/mol" for staging/, update.sh
+	InstallPrefix        string `yaml:"install_prefix"`          // mol 설치 경로 prefix (versions/ 목록·삭제, installer 등). 비면 deploy_base 사용
 	// SSH for remote service start/stop (when remote mol is stopped, API is unreachable)
 	SSHPort int    `yaml:"ssh_port"` // default 22; used for ssh -p when starting/stopping remote mol service
 	SSHUser string `yaml:"ssh_user"` // default "root"; user for ssh to remote host

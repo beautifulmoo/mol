@@ -588,10 +588,7 @@
         var existing = null;
         if (cpuUuid) existing = findHostCardByCpuUuid(list, cpuUuid);
         if (!existing && ip) existing = findHostCardByIp(list, ip);
-        if (!existing) {
-          var hostname = (host.hostname || '').trim();
-          if (hostname) existing = findHostCardByHostname(list, hostname);
-        }
+        /* hostname으로는 기존 카드를 찾지 않음: 서로 다른 호스트가 같은 hostname(예: kt-vm)을 쓰면 한 카드로 잘못 병합됨 */
         if (existing) {
           if (cpuUuid) existing.setAttribute('data-cpu-uuid', cpuUuid);
           if (host.hostname) existing.setAttribute('data-hostname', host.hostname);
@@ -826,12 +823,116 @@
       });
   }
 
+  function fetchVersionsList() {
+    var container = el('versions-list-container');
+    var statusEl = el('versions-status');
+    var removeBtn = el('versions-remove-btn');
+    if (!container) return;
+    container.innerHTML = '<div class="versions-loading">불러오는 중…</div>';
+    if (statusEl) statusEl.textContent = '';
+    if (removeBtn) removeBtn.disabled = true;
+    fetch(API_BASE + '/versions/list')
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status !== 'success' || !body.data || !body.data.versions) {
+          container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
+          return;
+        }
+        var versions = body.data.versions;
+        if (versions.length === 0) {
+          container.innerHTML = '<div class="versions-loading">설치된 버전이 없습니다.</div>';
+          return;
+        }
+        var mid = Math.ceil(versions.length / 2);
+        var col0 = versions.slice(0, mid);
+        var col1 = versions.slice(mid);
+        function makeList(part, offset) {
+          var ul = document.createElement('ul');
+          ul.className = 'versions-list';
+          for (var i = 0; i < part.length; i++) {
+            var v = part[i];
+            var idx = offset + i;
+            var li = document.createElement('li');
+            var canDelete = !v.is_current && !v.is_previous;
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.id = 'versions-cb-' + idx;
+            cb.setAttribute('data-version', v.version);
+            cb.disabled = !canDelete;
+            var label = document.createElement('label');
+            label.htmlFor = cb.id;
+            label.textContent = v.version;
+            var badge = document.createElement('span');
+            badge.className = 'version-badge';
+            if (v.is_current) badge.className += ' is-current';
+            else if (v.is_previous) badge.className += ' is-previous';
+            badge.textContent = v.is_current ? '현재' : (v.is_previous ? '이전' : '');
+            li.appendChild(cb);
+            li.appendChild(badge);
+            li.appendChild(label);
+            ul.appendChild(li);
+          }
+          return ul;
+        }
+        var wrapper = document.createElement('div');
+        wrapper.className = 'versions-list-wrapper';
+        wrapper.appendChild(makeList(col0, 0));
+        wrapper.appendChild(makeList(col1, mid));
+        container.innerHTML = '';
+        container.appendChild(wrapper);
+        wrapper.addEventListener('change', updateVersionsRemoveButtonState);
+        updateVersionsRemoveButtonState();
+      })
+      .catch(function () {
+        container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
+      });
+  }
+
+  function updateVersionsRemoveButtonState() {
+    var removeBtn = el('versions-remove-btn');
+    if (!removeBtn) return;
+    var container = el('versions-list-container');
+    var checked = container ? container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked') : [];
+    removeBtn.disabled = checked.length === 0;
+  }
+
+  function doVersionsRemove() {
+    var container = el('versions-list-container');
+    var statusEl = el('versions-status');
+    var removeBtn = el('versions-remove-btn');
+    if (!container || !removeBtn || removeBtn.disabled) return;
+    var checked = container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
+    if (checked.length === 0) return;
+    var versions = [];
+    for (var i = 0; i < checked.length; i++) {
+      versions.push(checked[i].getAttribute('data-version'));
+    }
+    if (statusEl) statusEl.textContent = '삭제 중…';
+    removeBtn.disabled = true;
+    fetch(API_BASE + '/versions/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ versions: versions })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (statusEl) statusEl.textContent = body.data || (body.status === 'success' ? '삭제 요청 완료.' : '');
+        fetchVersionsList();
+      })
+      .catch(function () {
+        if (statusEl) statusEl.textContent = '요청 실패.';
+        fetchVersionsList();
+      });
+  }
+
   el('discovery-btn').addEventListener('click', runDiscovery);
   el('upload-btn').addEventListener('click', doUpload);
   el('apply-update-btn').addEventListener('click', doApplyUpdate);
   el('reset-selection-btn').addEventListener('click', resetUploadForm);
   el('remove-upload-btn').addEventListener('click', doRemoveUpload);
   el('update-log-refresh-btn').addEventListener('click', fetchUpdateLog);
+  if (el('versions-list-refresh-btn')) el('versions-list-refresh-btn').addEventListener('click', fetchVersionsList);
+  if (el('versions-remove-btn')) el('versions-remove-btn').addEventListener('click', doVersionsRemove);
   el('upload-mol').addEventListener('change', function () { updateFileLabel('upload-mol', 'upload-mol-label'); });
   el('upload-config').addEventListener('change', function () {
     var configInput = el('upload-config');
@@ -847,4 +948,5 @@
   updateAllHostApplyButtons();
   loadSelf();
   fetchUpdateLog();
+  fetchVersionsList();
 })();

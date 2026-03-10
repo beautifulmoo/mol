@@ -165,6 +165,7 @@ func main() {
 		ServiceName:          cfg.ServiceName,
 		SystemctlServiceName: cfg.SystemctlServiceName,
 		DeployBase:           cfg.DeployBase,
+		InstallPrefix:        cfg.InstallPrefix,
 		SSHPort:              cfg.SSHPort,
 		SSHUser:              cfg.SSHUser,
 	})

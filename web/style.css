@@ -419,6 +419,71 @@ h3 {
 .update-form .discovery-status {
   margin-top: 0.5rem;
 }
+.installed-versions {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #3f3f46;
+}
+.installed-versions h3 {
+  margin-bottom: 0.5rem;
+}
+.installed-versions .update-desc {
+  margin-bottom: 0.5rem;
+}
+.versions-list-container {
+  margin: 0.5rem 0;
+  min-height: 2rem;
+}
+.versions-loading {
+  color: #a1a1aa;
+  font-size: 0.9rem;
+}
+.versions-list-wrapper {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1rem;
+}
+.versions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.versions-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.9rem;
+}
+.versions-list li input[type="checkbox"] {
+  flex-shrink: 0;
+}
+.versions-list li .version-badge {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: #3f3f46;
+  color: #a1a1aa;
+}
+.versions-list li .version-badge.is-current {
+  background: #22c55e;
+  color: #fff;
+}
+.versions-list li .version-badge.is-previous {
+  background: #71717a;
+  color: #fff;
+}
+.versions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.versions-actions .discovery-status {
+  margin: 0;
+}
+
 .update-log {
   margin-top: 1rem;
   padding-top: 1rem;

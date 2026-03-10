@@ -56,6 +56,18 @@
         <p id="upload-status" class="discovery-status"></p>
         <p id="apply-update-status" class="discovery-status"></p>
       </div>
+      <div class="installed-versions">
+        <h3>설치된 버전 (versions)</h3>
+        <p class="update-desc">current·previous가 가리키는 버전은 삭제할 수 없습니다. 구 버전을 선택해 삭제하면 디스크를 정리할 수 있습니다.</p>
+        <button type="button" id="versions-list-refresh-btn" class="service-btn">목록 새로고침</button>
+        <div id="versions-list-container" class="versions-list-container">
+          <div class="versions-loading">불러오는 중…</div>
+        </div>
+        <div class="versions-actions">
+          <button type="button" id="versions-remove-btn" class="service-btn" disabled title="선택한 버전을 versions에서 삭제합니다">선택한 버전 삭제</button>
+          <span id="versions-status" class="discovery-status" aria-live="polite"></span>
+        </div>
+      </div>
       <div class="update-log">
         <h3>업데이트 실행 로그 (systemd-run 출력)</h3>
         <button type="button" id="update-log-refresh-btn" class="service-btn">로그 새로고침</button>

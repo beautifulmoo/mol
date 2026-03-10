@@ -73,6 +73,7 @@ type Server struct {
 	serviceName          string
 	systemctlServiceName string
 	deployBase           string
+	installPrefix        string // mol 설치 경로 prefix (versions/ 기준). 비면 deployBase 사용
 	sshPort              int
 	sshUser              string
 }
@@ -89,13 +90,14 @@ type Config struct {
 	ServiceName          string
 	SystemctlServiceName string
 	DeployBase           string
+	InstallPrefix        string // mol 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
 	SSHPort              int    // for remote service start/stop via SSH (default 22)
 	SSHUser              string // SSH user for remote (default "root")
 }
 
 // New creates a Server.
 func New(cfg Config) *Server {
-	return &Server{
+	s := &Server{
 		webPrefix:            strings.TrimSuffix(cfg.WebPrefix, "/"),
 		apiPrefix:            strings.TrimSuffix(cfg.APIPrefix, "/"),
 		webFS:                cfg.WebFS,
@@ -106,9 +108,14 @@ func New(cfg Config) *Server {
 		serviceName:          cfg.ServiceName,
 		systemctlServiceName: cfg.SystemctlServiceName,
 		deployBase:           strings.TrimSuffix(cfg.DeployBase, "/"),
+		installPrefix:        strings.TrimSuffix(cfg.InstallPrefix, "/"),
 		sshPort:              cfg.SSHPort,
 		sshUser:              cfg.SSHUser,
 	}
+	if s.installPrefix == "" {
+		s.installPrefix = s.deployBase
+	}
+	return s
 }
 
 // looksLikeBrowser returns true if the request is likely from a browser (e.g. Accept: text/html or User-Agent: Mozilla/...).
@@ -153,6 +160,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/update-status", s.handleUpdateStatus)
 	mux.HandleFunc(s.apiPrefix+"/apply-update", s.handleApplyUpdate)
 	mux.HandleFunc(s.apiPrefix+"/update-log", s.handleUpdateLog)
+	mux.HandleFunc(s.apiPrefix+"/versions/list", s.handleVersionsList)
+	mux.HandleFunc(s.apiPrefix+"/versions/remove", s.handleVersionsRemove)
 	// Web (static)
 	webHandler := http.StripPrefix(s.webPrefix, http.FileServer(http.FS(s.webFS)))
 	mux.Handle(s.webPrefix+"/", webHandler)
@@ -372,9 +381,21 @@ func (s *Server) clearStaging(base string) {
 	_ = os.RemoveAll(stagingParent)
 }
 
-// versionsDir returns deploy_base/versions/<version> (the running path).
+// versionsDir returns base/versions/<version> (the running path).
 func (s *Server) versionsDir(base, version string) string {
 	return filepath.Join(base, "versions", version)
+}
+
+// versionsBase returns the base path for versions/ (install_prefix or deploy_base). Used for list/remove and installer.
+func (s *Server) versionsBase() string {
+	base := s.installPrefix
+	if base == "" {
+		base = s.deployBase
+	}
+	if base == "" {
+		base = "/opt/mol"
+	}
+	return base
 }
 
 // writeToStaging writes mol (from reader) and configData to base/staging/version/. Returns the staging dir path.
@@ -943,6 +964,151 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		"apply_version":    applyVersion,
 		"remove_version":   removeVersion,
 	}, http.StatusOK)
+}
+
+// versionEntry is one item in GET /api/v1/versions/list response.
+type versionEntry struct {
+	Version    string `json:"version"`
+	IsCurrent  bool   `json:"is_current"`
+	IsPrevious bool   `json:"is_previous"`
+}
+
+func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	base := s.versionsBase()
+	versionsParent := filepath.Join(base, "versions")
+	entries, err := os.ReadDir(versionsParent)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.send(w, "success", map[string]interface{}{"versions": []versionEntry{}}, http.StatusOK)
+			return
+		}
+		s.send(w, "fail", "versions 디렉터리를 읽을 수 없습니다: "+err.Error(), http.StatusOK)
+		return
+	}
+	currentVer := s.resolveSymlinkVersion(base, "current")
+	previousVer := s.resolveSymlinkVersion(base, "previous")
+	var list []versionEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		ver := e.Name()
+		if ver == "." || ver == ".." {
+			continue
+		}
+		molPath := filepath.Join(versionsParent, ver, "mol")
+		if _, err := os.Stat(molPath); err != nil {
+			continue
+		}
+		list = append(list, versionEntry{
+			Version:    ver,
+			IsCurrent:  ver == currentVer,
+			IsPrevious: ver == previousVer,
+		})
+	}
+	s.send(w, "success", map[string]interface{}{"versions": list}, http.StatusOK)
+}
+
+// resolveSymlinkVersion returns the version name (dir under base/versions/) that the symlink base/name points to, or "".
+func (s *Server) resolveSymlinkVersion(base, name string) string {
+	linkPath := filepath.Join(base, name)
+	resolved, err := filepath.EvalSymlinks(linkPath)
+	if err != nil {
+		return ""
+	}
+	versionsDir := filepath.Join(base, "versions")
+	rel, err := filepath.Rel(versionsDir, resolved)
+	if err != nil {
+		return ""
+	}
+	// rel should be like "0.3.0" or "0.3.0/something" — we want the top-level version dir only
+	if rel == ".." || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) >= 1 && parts[0] != "" {
+		return parts[0]
+	}
+	return ""
+}
+
+func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Versions []string `json:"versions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.send(w, "fail", "invalid body", http.StatusBadRequest)
+		return
+	}
+	base := s.versionsBase()
+	currentVer := s.resolveSymlinkVersion(base, "current")
+	previousVer := s.resolveSymlinkVersion(base, "previous")
+	var removed []string
+	var skipped []string
+	versionsParent := filepath.Join(base, "versions")
+	for _, ver := range req.Versions {
+		ver = strings.TrimSpace(ver)
+		if ver == "" {
+			continue
+		}
+		invalidChar := false
+		for _, c := range ver {
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
+				continue
+			}
+			invalidChar = true
+			break
+		}
+		if invalidChar {
+			skipped = append(skipped, ver+" (허용되지 않은 문자)")
+			continue
+		}
+		if ver == currentVer {
+			skipped = append(skipped, ver+" (현재 실행 중)")
+			continue
+		}
+		if ver == previousVer {
+			skipped = append(skipped, ver+" (이전 버전, 롤백용)")
+			continue
+		}
+		dir := s.versionsDir(base, ver)
+		clean := filepath.Clean(dir)
+		rel, relErr := filepath.Rel(versionsParent, clean)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, "..") || clean == versionsParent {
+			skipped = append(skipped, ver+" (잘못된 경로)")
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			skipped = append(skipped, ver+": "+err.Error())
+			continue
+		}
+		removed = append(removed, ver)
+	}
+	if len(removed) > 0 {
+		log.Printf("versions/remove: deleted %v from %s/versions", removed, base)
+	}
+	msg := ""
+	if len(removed) > 0 {
+		msg = "삭제됨: " + strings.Join(removed, ", ")
+	}
+	if len(skipped) > 0 {
+		if msg != "" {
+			msg += ". "
+		}
+		msg += "제외: " + strings.Join(skipped, "; ")
+	}
+	if msg == "" {
+		msg = "삭제할 버전을 선택하세요."
+	}
+	s.send(w, "success", msg, http.StatusOK)
 }
 
 func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {

@@ -165,7 +165,7 @@
   ├── previous -> versions/1.2.5  # 심볼릭 링크, 이전 버전(롤백용)
   ├── update.sh
   ├── rollback.sh
-  ├── update_last.log             # update.sh 실행 로그
+  ├── update_history.log          # 업데이트·롤백 기록 (맨 앞에 추가, 최근 5건을 웹에 표시)
   ├── staging/                    # 업로드 API로 저장, 적용 시 versions로 복사
   │   └── <버전>/
   │       ├── mol
@@ -178,9 +178,15 @@
 
 - **스테이징**: 업로드는 **실행 경로(versions/)가 아닌** `{deploy_base}/staging/<버전>/` 에만 저장된다. 이렇게 해서 실행 중인 바이너리 경로를 덮어쓰지 않아 "text file busy" 를 피한다. 적용 시에는 스테이징을 우선 사용하고, 없으면 versions/ 를 사용한다.
 - **스테이징 정리**: 스테이징은 자동 삭제하지 않는다. 로컬 적용 후에도 스테이징을 남겨 두어 같은 버전으로 원격 업데이트를 할 수 있게 한다. 삭제는 사용자가 웹의 「업로드된 버전 삭제」를 눌러 수동으로만 수행하며, 이때 스테이징에서만 해당 버전을 삭제하고 versions/ 는 건드리지 않는다.
-- **스크립트 위치**: 소스 저장소 프로젝트 루트에 `update.sh`, `rollback.sh` 가 참고용으로 포함되어 있다. 실제 사용 시에는 이 두 파일을 **배포 베이스 직하**에 복사해 둔다. 즉 `{deploy_base}/update.sh`, `{deploy_base}/rollback.sh`. 스크립트 내부의 `BASE`(기본값 `/opt/mol`)는 `deploy_base` 와 일치해야 하며, 다르면 수정이 필요하다.
-- **update.sh**: 인자로 버전 하나를 받는다. `{deploy_base}/versions/{버전}/mol` 이 존재·실행 가능한지 확인한 뒤, 서비스 중지 → `current`/`previous` 심볼릭 링크 갱신 → 서비스 시작을 수행한다. 시작 실패 시 `{deploy_base}/rollback.sh` 를 호출해 이전 버전으로 되돌린다.
-- **rollback.sh**: 인자는 없다. `{deploy_base}/previous` 심볼릭 링크가 있어야 하며, 서비스 중지 → `current` 를 `previous` 가 가리키는 버전으로 교체 → 서비스 시작을 수행한다. 웹 API에서는 호출하지 않고, update.sh 의 실패 복구 또는 운영자가 수동 실행할 때 사용한다.
+- **스크립트 위치**: 소스 저장소 프로젝트 루트에 `update.sh`, `rollback.sh` 가 참고용으로 포함되어 있다. 실제 사용 시에는 이 두 파일을 **배포 베이스 직하**에 복사해 둔다. 즉 `{deploy_base}/update.sh`, `{deploy_base}/rollback.sh`.
+- **update.sh / rollback.sh 구현 상세**
+  - **BASE**: 스크립트가 있는 디렉터리를 배포 루트로 사용한다. `BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` 로 설정하여, 서버가 `{deploy_base}/update.sh`를 실행할 때 로그 경로가 서버의 deploy_base와 자동으로 일치한다.
+  - **update_history.log**: `HISTORY_LOG="$BASE/update_history.log"`. prepend_history()로 새 줄을 **맨 앞**에 추가하여 최근 기록이 최상단에 오도록 한다.
+  - **PATH**: systemd transient 유닛은 PATH가 비어 있을 수 있어, `export PATH="/usr/bin:/bin:/usr/local/bin:${PATH:-}"` 를 스크립트 상단에 두었다. 환경에 따라 필수는 아니나, 미니멀 환경에서 grep/sed를 찾지 못해 스크립트가 죽는 것을 방지하는 방어용이다.
+  - **config 읽기**: 적용할 버전의 `config.yaml`에서 `http_port`, `systemctl_service_name`을 읽는다. 실패해도 기본값을 유지하도록 `|| true`로 감싼다.
+  - **헬스 체크**: 서비스 시작 후 `curl` 로 `http://127.0.0.1:${HTTP_PORT}/version` 에 요청하여 200이면 성공, 그렇지 않으면 롤백한다. 루트 `/`는 브라우저일 때만 /web 리다이렉트하고 그 외에는 404이므로 `/version` 전용 엔드포인트를 사용한다.
+- **update.sh**: 인자로 버전 하나를 받는다. `{BASE}/versions/{버전}/mol` 이 존재·실행 가능한지 확인한 뒤, 서비스 중지 → `current`/`previous` 심볼릭 링크 갱신 → 서비스 시작 → **HTTP 헬스 체크(/version)** 를 수행한다. 시작 실패 또는 헬스 체크 실패 시 `{BASE}/rollback.sh` 를 호출해 이전 버전으로 되돌린다.
+- **rollback.sh**: 인자는 없다. `{BASE}/previous` 심볼릭 링크가 있어야 하며, 서비스 중지 → `current` 를 `previous` 가 가리키는 버전으로 교체 → 서비스 시작을 수행한다. 웹 API에서는 호출하지 않고, update.sh 의 실패 복구 또는 운영자가 수동 실행할 때 사용한다.
 - **업로드**: `POST {serverUrl}/api/v1/upload`  
   - **multipart/form-data**: `mol`(실행 파일), `config`(config.yaml). 버전은 config에서 파싱.  
   - **mol 실행 파일 검증**: 업로드된 mol 파트에 대해 (1) **ELF 매직**: 앞 4바이트가 `\x7fELF`인지 확인(텍스트·설정·압축 파일 등 잘못된 파일 차단). (2) **실행 검증**: 스테이징에 저장한 뒤 해당 경로의 바이너리를 `--version` 인자로 실행(타임아웃 5초)하여, 출력이 `"mol "`로 시작하고 종료 코드 0인지 확인. 검증 실패 시 스테이징에 넣지 않거나 저장 후 삭제하고 `status: "fail"`, `data`에 에러 메시지를 반환(400).  
@@ -197,13 +203,15 @@
   - **스테이징에만 있는 경우**: 스테이징 → versions 복사 후 `update.sh` 실행. 스테이징은 삭제하지 않고 남겨 두어 원격 업데이트에 재사용 가능.  
   - **versions에 이미 있는 경우**: 그대로 `update.sh` 실행.  
   - 실행 전 **mol-update 유닛 정리**: `systemctl reset-failed mol-update.service`, `systemctl stop mol-update.service` (실패해도 무시).  
-  - **`systemd-run`** 로 실행: `systemd-run --unit=mol-update --property=RemainAfterExit=yes {deploy_base}/update.sh {version}`. 로그는 `{deploy_base}/update_last.log`. mol.service는 root로 실행되므로 sudo를 사용하지 않는다. 응답은 즉시 반환, 실제 업데이트는 백그라운드.
+  - **`systemd-run`** 로 실행: `systemd-run --unit=mol-update --property=RemainAfterExit=yes /bin/bash {deploy_base}/update.sh {version}`. 스크립트는 **bash로 명시 실행**하여 transient 유닛 환경에서도 동작하도록 한다. 실행 출력은 남기지 않으며, 상세 기록은 update.sh·rollback.sh가 `{deploy_base}/update_history.log`에 맨 앞줄로 추가한다. mol.service는 root로 실행되므로 sudo를 사용하지 않는다. 응답은 즉시 반환, 실제 업데이트는 백그라운드.
 - **적용 (원격)**: 원격 mol로의 배포는 **원격 mol의 업로드 API**를 사용한다. 요청을 받은 서버(로컬 mol)는 대상 원격 mol의 **서비스 포트(8888)** 로 HTTP로 (1) `POST /api/v1/upload` (multipart: `mol`, `config`)를 보내 해당 mol의 **스테이징**에 올린 뒤, (2) `POST /api/v1/apply-update` (Body: `{ "version": "<버전>", "ip": "self" }`)를 보내 그 mol이 자기 스테이징을 적용·재시작하도록 한다.  
   - **JSON** Body: `{ "version": "<버전>", "ip": "<원격 IP>" }`. 로컬의 스테이징 또는 versions에서 해당 버전의 mol·config를 읽어, 위와 같이 원격의 upload API로 전송한 후 원격의 apply-update API를 호출한다.  
   - **multipart** (원격 전용): `ip`, `mol`, `config`. 수신한 mol에 대해 로컬에서 동일한 검증(ELF + `--version` 실행)을 수행한 뒤, 통과 시에만 원격 mol의 upload API로 전송하고 apply-update API를 호출한다. 검증 실패 시 400 및 에러 메시지.
-- **업데이트 로그**: `GET {serverUrl}/api/v1/update-log`  
-  - `{deploy_base}/update_last.log` 파일 내용을 읽어 `{ "status": "success", "data": { "output": "<로그 텍스트>" } }` 로 반환.  
+- **업데이트 기록**: `GET {serverUrl}/api/v1/update-log`
+  - `{deploy_base}/update_history.log` 파일의 **최근 5줄**을 읽어 `{ "status": "success", "data": { "output": "<5줄 텍스트>", "recent_rollback": true|false } }` 로 반환. `recent_rollback`은 최상단 줄에 "rollback" 또는 "failed"가 있으면 true. **단, mol-update.service가 active(업데이트 진행 중)이면** `recent_rollback`을 false로 반환하여 이전 실패 기록이 새 적용과 혼동되지 않도록 한다.
   - 파일이 없거나 읽기 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
+- **업데이트 상태**: `GET {serverUrl}/api/v1/update-status` 응답에 `update_in_progress`(boolean)를 포함. `systemctl is-active mol-update.service`가 active이면 true.
+- **헬스 체크용 버전 엔드포인트**: `GET {serverUrl}/version` — **text/plain**으로 `mol <version>` 한 줄 반환(예: `mol 0.3.4`). 브라우저/curl 구분 없이 항상 200. update.sh의 HTTP 헬스 체크는 이 URL로 요청한다(루트 `/`는 브라우저일 때만 /web 리다이렉트, 그 외 404이므로 헬스 체크에 사용하지 않음).
 
 ### 5.6 설치된 버전(versions) API
 
@@ -276,7 +284,7 @@
 - **업데이트 인디케이터**: 로컬·리모트 카드 모두, 업데이트 적용이 진행 중일 때(완료로 판단될 때까지) 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. 로컬은 요청 실패 시에만 숨기고, 성공 시에는 페이지 자동 새로고침으로 사라진다. 리모트는 성공 시 일정 시간 후 상태·호스트 정보 갱신이 끝나면 숨기고, 실패 시 즉시 숨긴다.
 - **파일 선택 초기화**: mol·config 선택 및 편집 내용만 초기화. 스테이징/versions 에 올라간 버전은 유지.
 - **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제.
-- **로그**: `GET /api/v1/update-log` 로 최근 업데이트 로그를 가져와 표시. 새로고침으로 최신 로그 확인 가능.
+- **업데이트 기록(로그)**: `GET /api/v1/update-log` 로 최근 5건을 표시. **적용 요청 성공 후** 10초 자동 새로고침 전까지 **1.5초 간격으로 폴링**하여 실시간 갱신한다. 폴링 시에는 "불러오는 중" 문구 없이 기존 내용만 덮어쓴다. **업데이트 진행 중**(mol-update.service active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다.
 - **설치된 버전(versions)**: `GET /api/v1/versions/list` 로 `install_prefix/versions/` 내 버전 목록을 가져온다. **current**·**previous**가 가리키는 버전은 뱃지로 표시하고 삭제 체크박스를 비활성화한다. 목록은 2열·세로 우선(열 단위)으로 표시한다. 사용자가 선택한 버전만 `POST /api/v1/versions/remove` 로 삭제하며, current/previous는 서버에서 삭제하지 않는다.
 
 ### 6.4 상태 새로고침 (내 정보·발견된 호스트)
@@ -308,7 +316,7 @@
 | `discovery_deduplicate` | 동일 호스트 중복 제거 여부 | `true` |
 | `version` | (선택) 버전 override. 비어 있으면 빌드 시 ldflags 값 사용 | `"1.2.3"` 또는 빈 문자열 |
 | `systemctl_service_name` | (선택) 서비스 상태·제어 대상 유닛 이름 | `"mol.service"` |
-| `deploy_base` | (선택) 업데이트 배포 베이스. `staging/`, `update.sh`, `rollback.sh`, `update_last.log` 의 기준 경로 | `"/opt/mol"` |
+| `deploy_base` | (선택) 업데이트 배포 베이스. `staging/`, `update.sh`, `rollback.sh`, `update_history.log` 의 기준 경로 | `"/opt/mol"` |
 | `install_prefix` | (선택) mol 설치 경로 prefix. `versions/` 목록·삭제 API 및 installer에서 사용. 비면 `deploy_base` 사용 | `"/opt/mol"` |
 | `ssh_port` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `ssh_user` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
@@ -318,7 +326,13 @@
 
 ---
 
-## 8. 버전 정보
+## 8. 서비스 시작 로그 및 버전 노출
+
+- **systemctl status / journalctl**: mol 서비스가 시작할 때 **버전**을 로그에 남긴다. 예: `mol version 0.3.4: discovery listening on :9999 (bound IPs: ...)`. `systemctl status mol` 또는 `journalctl -u mol.service` 로 확인할 수 있다.
+
+---
+
+## 9. 버전 정보
 
 - **기본**: 빌드 시 **ldflags**로 버전 문자열 주입 (예: `-ldflags "-X main.Version=1.2.3"` 또는 Makefile `VERSION=`). 미지정 시 `--version` 출력은 `"mol devel"`로 한다.
 - **override**: 설정 파일에 `version`이 있으면 해당 값으로 노출 (자기 정보 API 및 DISCOVERY_RESPONSE의 `version` 필드).
@@ -326,7 +340,7 @@
 
 ---
 
-## 9. 백엔드 역할
+## 10. 백엔드 역할
 
 - **UDP Discovery**: 포트 9999에서 listen, **SO_BROADCAST** 설정 후 broadcast 주소로 Discovery 요청 송신, 응답은 unicast로 수신.
 - **Pending**: 요청 전송 **전에** request_id → 수신 채널을 pending에 등록하여 빠른 응답이 버려지지 않도록 함. 타임아웃 시 반환 전 채널 drain.
@@ -343,7 +357,7 @@
 
 ---
 
-## 10. 요약 체크리스트
+## 11. 요약 체크리스트
 
 - [ ] Go, 소스 경로 `~/work/mol`
 - [ ] 단일 실행 파일, net/http 만 사용
@@ -367,7 +381,7 @@
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 mol API. 서비스 제어 API: 로컬은 systemctl, 원격은 SSH(ssh_port, ssh_user)로 systemctl 실행
 - [ ] 설정: systemctl_service_name, deploy_base, **install_prefix**(비면 deploy_base, versions·installer용), discovery_broadcast_addresses, ssh_port(기본 22), ssh_user(기본 root) (선택)
 - [ ] 설치된 버전: GET /api/v1/versions/list, POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
-- [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만, **mol 업로드 검증**(ELF 매직 + --version 실행), **config 검증**(config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내); upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); systemd-run (root 실행으로 sudo 없음); update_last.log, update-log API
+- [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만, **mol 업로드 검증**(ELF 매직 + --version 실행), **config 검증**(config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내); upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); **systemd-run** with `/bin/bash update.sh version`; update.sh/rollback.sh는 BASE=스크립트 디렉터리, HISTORY_LOG=$BASE/update_history.log, **헬스 체크는 GET /version**; update_history.log(맨 앞 추가), update-log API(최근 5건·recent_rollback; **업데이트 진행 중이면 recent_rollback false**), update-status에 **update_in_progress**; **GET /version** (text/plain, mol \<version\>); **시작 로그에 버전 포함**; **적용 후 업데이트 로그 1.5초 폴링·진행 중 롤백 경고 숨김**
 - [ ] 프론트: 업데이트 영역 — 업로드(mol+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 mol·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 동일 호스트 응답 시 카드 갱신; 원격 적용 후 Discovery 재수행 없이 해당 카드만 지연 후 host-info·service-status 갱신
 - [ ] 원격 적용: 호스트별 버전 비교(data-host-version), 스테이징 버전과 다를 때만 적용 버튼 활성(초록), 툴팁(스테이징 없음/최신 버전/x.x.x 버전으로 업데이트 가능), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신

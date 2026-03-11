@@ -144,9 +144,24 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/version" || r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	v := s.version
+	if v == "" {
+		v = "0.0.0"
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("mol " + v))
+}
+
 // Handler returns http.Handler that serves web and API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/", s.handleRoot)
 	// API
 	mux.HandleFunc(s.apiPrefix+"/self", s.handleSelf)
@@ -855,26 +870,19 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		exec.Command("systemctl", "reset-failed", "mol-update.service").Run()
 		exec.Command("systemctl", "stop", "mol-update.service").Run()
-		logPath := filepath.Join(base, "update_last.log")
-		logFile, err := os.Create(logPath)
-		if err != nil {
-			s.send(w, "fail", "로그 파일 생성 실패: "+err.Error(), http.StatusOK)
-			return
-		}
 		go func() {
-			defer logFile.Close()
 			cmd := exec.Command("systemd-run",
 				"--unit=mol-update",
 				"--property=RemainAfterExit=yes",
-				updateScript, version)
-			cmd.Stdout = logFile
-			cmd.Stderr = logFile
+				"/bin/bash", updateScript, version)
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
 			if err := cmd.Run(); err != nil {
-				log.Printf("apply-update: systemd-run %s %s: %v", updateScript, version, err)
+				log.Printf("apply-update: systemd-run failed: %v", err)
 			}
 			// 스테이징은 자동 삭제하지 않음. 원격 업데이트에 재사용할 수 있도록 남겨 두고, 사용자가 「업로드된 버전 삭제」로 수동 삭제.
 		}()
-		log.Printf("apply-update: systemd-run --unit=mol-update %s %s (log: %s)", updateScript, version, logPath)
+		log.Printf("apply-update: systemd-run --unit=mol-update /bin/bash %s %s", updateScript, version)
 		s.send(w, "success", "업데이트를 적용 중입니다. 잠시 후 서버가 재시작됩니다. 아래 로그를 새로고침하세요.", http.StatusOK)
 		return
 	}
@@ -958,12 +966,19 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.send(w, "success", map[string]interface{}{
-		"current_version":  currentVersion,
-		"staging_versions": stagingVersions,
-		"can_apply":        canApply,
-		"apply_version":    applyVersion,
-		"remove_version":   removeVersion,
+		"current_version":     currentVersion,
+		"staging_versions":    stagingVersions,
+		"can_apply":           canApply,
+		"apply_version":       applyVersion,
+		"remove_version":      removeVersion,
+		"update_in_progress":  isMolUpdateActive(),
 	}, http.StatusOK)
+}
+
+// isMolUpdateActive returns true if mol-update.service is active (update script running).
+func isMolUpdateActive() bool {
+	out, err := exec.Command("systemctl", "is-active", "mol-update.service").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "active"
 }
 
 // versionEntry is one item in GET /api/v1/versions/list response.
@@ -1120,17 +1135,41 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	if base == "" {
 		base = "/opt/mol"
 	}
-	logPath := filepath.Join(base, "update_last.log")
-	data, err := os.ReadFile(logPath)
+	historyPath := filepath.Join(base, "update_history.log")
+	data, err := os.ReadFile(historyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.send(w, "success", map[string]string{"output": "(아직 실행 기록 없음)"}, http.StatusOK)
+			s.send(w, "success", map[string]interface{}{"output": "(아직 기록 없음)", "recent_rollback": false}, http.StatusOK)
 			return
 		}
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	s.send(w, "success", map[string]string{"output": string(data)}, http.StatusOK)
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		lines = nil
+	}
+	const maxLines = 5
+	var outLines []string
+	if len(lines) > maxLines {
+		outLines = lines[:maxLines]
+	} else {
+		outLines = lines
+	}
+	output := strings.Join(outLines, "\n")
+	if output == "" {
+		output = "(아직 기록 없음)"
+	}
+	recentRollback := false
+	if len(lines) > 0 {
+		first := strings.ToLower(lines[0])
+		recentRollback = strings.Contains(first, "rollback") || strings.Contains(first, "failed")
+	}
+	// 업데이트 진행 중에는 롤백 경고 숨김 (이전 실패 기록이 새 적용과 혼동되지 않도록)
+	if recentRollback && isMolUpdateActive() {
+		recentRollback = false
+	}
+	s.send(w, "success", map[string]interface{}{"output": output, "recent_rollback": recentRollback}, http.StatusOK)
 }
 
 func (s *Server) send(w http.ResponseWriter, status string, data interface{}, code int) {

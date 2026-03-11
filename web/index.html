@@ -33,13 +33,11 @@
         <div class="update-fields">
           <div class="update-file-row">
             <label for="upload-mol">mol 실행 파일</label>
-            <span id="upload-mol-label" class="file-label">선택된 파일 없음</span>
-            <input type="file" id="upload-mol" accept="application/octet-stream" aria-describedby="upload-mol-label">
+            <input type="file" id="upload-mol" accept="application/octet-stream">
           </div>
           <div class="update-file-row">
             <label for="upload-config">config.yaml</label>
-            <span id="upload-config-label" class="file-label">선택된 파일 없음</span>
-            <input type="file" id="upload-config" accept=".yaml,.yml,text/yaml,text/plain" aria-describedby="upload-config-label">
+            <input type="file" id="upload-config" accept=".yaml,.yml,text/yaml,text/plain">
           </div>
           <div class="update-config-editor-wrap">
             <label for="upload-config-editor" class="editor-label">config.yaml 내용 수정 (버전 등)</label>
@@ -56,6 +54,12 @@
         <p id="upload-status" class="discovery-status"></p>
         <p id="apply-update-status" class="discovery-status"></p>
       </div>
+      <div class="update-log">
+        <h3>업데이트 기록 (최근 5건)</h3>
+        <div id="update-rollback-warning" class="update-rollback-warning" role="alert" aria-live="polite" hidden></div>
+        <button type="button" id="update-log-refresh-btn" class="service-btn">목록 새로고침</button>
+        <pre id="update-log-output" class="update-log-output">(새로고침으로 로그 불러오기)</pre>
+      </div>
       <div class="installed-versions">
         <h3>설치된 버전 (versions)</h3>
         <p class="update-desc">current·previous가 가리키는 버전은 삭제할 수 없습니다. 구 버전을 선택해 삭제하면 디스크를 정리할 수 있습니다.</p>
@@ -67,11 +71,6 @@
           <button type="button" id="versions-remove-btn" class="service-btn" disabled title="선택한 버전을 versions에서 삭제합니다">선택한 버전 삭제</button>
           <span id="versions-status" class="discovery-status" aria-live="polite"></span>
         </div>
-      </div>
-      <div class="update-log">
-        <h3>업데이트 실행 로그 (systemd-run 출력)</h3>
-        <button type="button" id="update-log-refresh-btn" class="service-btn">로그 새로고침</button>
-        <pre id="update-log-output" class="update-log-output">(새로고침으로 로그 불러오기)</pre>
       </div>
     </aside>
   </main>

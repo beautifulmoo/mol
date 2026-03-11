@@ -50,7 +50,7 @@ main section {
 /* 오른쪽: 업데이트 영역 (스크롤해도 고정) */
 .update-section {
   flex-shrink: 0;
-  width: 320px;
+  width: 340px;
   position: sticky;
   top: 1rem;
   align-self: flex-start;
@@ -346,26 +346,19 @@ h3 {
 }
 .update-file-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
   font-size: 0.9rem;
 }
 .update-file-row label {
-  flex: 0 0 auto;
-  min-width: 6.5em;
   color: #a1a1aa;
 }
-.file-label {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.85rem;
-  color: #71717a;
-}
 .update-file-row input[type="file"] {
-  flex: 0 0 auto;
+  width: 100%;
+  max-width: 20em;
   font-size: 0.8rem;
-  max-width: 100%;
+  box-sizing: border-box;
 }
 .update-config-editor-wrap {
   margin-top: 0.5rem;
@@ -491,6 +484,22 @@ h3 {
 }
 .update-log h3 {
   margin-bottom: 0.5rem;
+}
+.update-rollback-warning {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #b45309;
+  background: #451a03;
+  color: #fcd34d;
+  font-size: 0.85rem;
+}
+.update-rollback-warning .update-warning-title {
+  color: #fca5a5;
+  font-weight: 600;
+}
+.update-rollback-warning .update-warning-desc {
+  color: #fde047;
 }
 .update-log .service-btn {
   margin-bottom: 0.5rem;

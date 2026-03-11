@@ -96,7 +96,7 @@ func main() {
 			boundIPs = append(boundIPs, ip)
 		}
 	}
-	log.Printf("discovery: listening on %s (bound IPs: %v)", portStr, boundIPs)
+	log.Printf("mol version %s: discovery listening on %s (bound IPs: %v)", version, portStr, boundIPs)
 	for i := 1; i < len(conns); i++ {
 		defer conns[i].Close()
 	}

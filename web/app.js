@@ -632,8 +632,6 @@
   var lastUploadedVersion = '';
   var lastUpdateStatus = { can_apply: false, apply_version: '', staging_versions: [], remove_version: '' };
 
-  var FILE_LABEL_NONE = '선택된 파일 없음';
-
   function fetchUpdateStatus() {
     fetch(API_BASE + '/update-status')
       .then(function (res) { return res.json(); })
@@ -659,15 +657,6 @@
         updateAllHostApplyButtons();
       })
       .catch(function () {});
-  }
-
-  function updateFileLabel(inputId, labelId) {
-    var input = el(inputId);
-    var labelEl = el(labelId);
-    if (!input || !labelEl) return;
-    var name = input.files && input.files[0] ? input.files[0].name : '';
-    labelEl.textContent = name || FILE_LABEL_NONE;
-    updateUploadButtonState();
   }
 
   function hasUploadableSelection() {
@@ -713,10 +702,6 @@
     var configInput = el('upload-config');
     if (molInput) { molInput.value = ''; }
     if (configInput) { configInput.value = ''; }
-    var molLabel = el('upload-mol-label');
-    var configLabel = el('upload-config-label');
-    if (molLabel) molLabel.textContent = FILE_LABEL_NONE;
-    if (configLabel) configLabel.textContent = FILE_LABEL_NONE;
     var editor = el('upload-config-editor');
     if (editor) editor.value = '';
     var uploadBtn = el('upload-btn');
@@ -782,10 +767,12 @@
           fetchUpdateStatus();
           var sec = 10;
           status.textContent = '업데이트 적용이 요청되었습니다. 서버가 재시작됩니다. ' + sec + '초 후 자동 새로고침…';
+          var logPoll = setInterval(function () { fetchUpdateLog(true); }, 1500);
           var t = setInterval(function () {
             sec -= 1;
             if (sec <= 0) {
               clearInterval(t);
+              clearInterval(logPoll);
               status.textContent = '새로고침 중…';
               location.reload();
               return;
@@ -805,15 +792,24 @@
       });
   }
 
-  function fetchUpdateLog() {
+  function fetchUpdateLog(silent) {
     var pre = el('update-log-output');
+    var warningEl = el('update-rollback-warning');
     if (!pre) return;
-    pre.textContent = '불러오는 중…';
+    if (!silent) {
+      pre.textContent = '불러오는 중…';
+    }
+    if (warningEl) warningEl.hidden = true;
     fetch(API_BASE + '/update-log')
       .then(function (res) { return res.json(); })
       .then(function (body) {
-        if (body.status === 'success' && body.data && body.data.output !== undefined) {
-          pre.textContent = body.data.output || '(비어 있음)';
+        if (body.status === 'success' && body.data) {
+          var output = body.data.output !== undefined ? body.data.output : '(비어 있음)';
+          pre.textContent = output;
+          if (warningEl && body.data.recent_rollback) {
+            warningEl.hidden = false;
+            warningEl.innerHTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
+          }
         } else {
           pre.textContent = body.data || '로그를 불러올 수 없습니다.';
         }
@@ -933,12 +929,12 @@
   el('update-log-refresh-btn').addEventListener('click', fetchUpdateLog);
   if (el('versions-list-refresh-btn')) el('versions-list-refresh-btn').addEventListener('click', fetchVersionsList);
   if (el('versions-remove-btn')) el('versions-remove-btn').addEventListener('click', doVersionsRemove);
-  el('upload-mol').addEventListener('change', function () { updateFileLabel('upload-mol', 'upload-mol-label'); });
+  el('upload-mol').addEventListener('change', updateUploadButtonState);
   el('upload-config').addEventListener('change', function () {
     var configInput = el('upload-config');
     var file = configInput && configInput.files && configInput.files[0];
     loadConfigIntoEditor(file, function () {
-      updateFileLabel('upload-config', 'upload-config-label');
+      updateUploadButtonState();
     });
   });
   el('upload-config-editor').addEventListener('input', updateUploadButtonState);

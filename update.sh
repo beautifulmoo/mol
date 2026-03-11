@@ -1,24 +1,53 @@
 #!/bin/bash
 set -euo pipefail
+# systemd-run 유닛은 PATH가 비어 있을 수 있음. config 읽기(grep/sed) 전에 보강.
+export PATH="/usr/bin:/bin:/usr/local/bin:${PATH:-}"
 
-SERVICE=mol.service
-BASE=/opt/mol
-VERSIONS=$BASE/versions
-NEW_VERSION="$1"   # 예: 1.2.6
+# 스크립트가 있는 디렉터리 = mol 배포 루트 (서버가 실행할 때 base/update.sh 이므로 로그 경로와 일치)
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HISTORY_LOG="$BASE/update_history.log"
 
+# 맨 앞줄에 한 줄 추가 (새 기록이 최상단)
+prepend_history() {
+    local line="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    if [ -f "$HISTORY_LOG" ]; then
+        echo "$line" > "${HISTORY_LOG}.tmp"
+        cat "$HISTORY_LOG" >> "${HISTORY_LOG}.tmp"
+        mv "${HISTORY_LOG}.tmp" "$HISTORY_LOG"
+    else
+        echo "$line" > "$HISTORY_LOG"
+    fi
+}
+
+VERSIONS="$BASE/versions"
+NEW_VERSION="${1:?usage: update.sh <version>}"
 NEW_DIR="$VERSIONS/$NEW_VERSION"
 NEW_BIN="$NEW_DIR/mol"
 
 # 1. 사전 체크
 [ -x "$NEW_BIN" ] || {
+    prepend_history "update $NEW_VERSION failed: new binary not found"
     echo "new binary not found: $NEW_BIN"
     exit 1
 }
+
+# 2. 적용할 버전의 config.yaml에서 설정 읽기 (mol과 중복 제거). 실패해도 기본값 유지.
+SERVICE=mol.service
+HTTP_PORT=8888
+if [ -f "$NEW_DIR/config.yaml" ]; then
+    v=$(grep -E '^http_port:[[:space:]]*[0-9]+' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' 2>/dev/null) || true
+    [ -n "$v" ] && HTTP_PORT=$v
+    v=$(grep -E '^systemctl_service_name:' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
+    [ -n "$v" ] && SERVICE=$v
+fi
+
+prepend_history "update $NEW_VERSION started"
 
 # 2. 서비스 중지
 systemctl stop $SERVICE
 
 systemctl is-active --quiet $SERVICE && {
+    prepend_history "update $NEW_VERSION failed: service did not stop"
     echo "service did not stop"
     exit 1
 }
@@ -34,20 +63,23 @@ ln -sfn "versions/$NEW_VERSION" "$BASE/current"
 # 5. 서비스 시작
 systemctl start $SERVICE
 
-# 6. 헬스 체크
+# 6. 헬스 체크 (Restart= 시 재시작 루프에서도 is-active는 성공하므로, 실제 HTTP 응답으로 검사)
 sleep 3
 if ! systemctl is-active --quiet $SERVICE; then
+    prepend_history "update $NEW_VERSION failed, rollback"
     echo "start failed, rollback"
     "$BASE/rollback.sh"
+    prepend_history "rollback completed"
+    exit 1
+fi
+if ! curl -sSf -o /dev/null --connect-timeout 5 --max-time 10 "http://127.0.0.1:${HTTP_PORT}/version" 2>/dev/null; then
+    prepend_history "update $NEW_VERSION failed (health check), rollback"
+    echo "health check failed (HTTP :${HTTP_PORT} not responding), rollback"
+    "$BASE/rollback.sh"
+    prepend_history "rollback completed"
     exit 1
 fi
 
-# (선택) 바이너리 헬스 체크
-#if ! "$BASE/current/aaa" --healthcheck; then
-#    echo "healthcheck failed, rollback"
-#    "$BASE/rollback.sh"
-#    exit 1
-#fi
-
+prepend_history "update $NEW_VERSION success"
 echo "update to $NEW_VERSION successful"
 

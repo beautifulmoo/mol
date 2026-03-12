@@ -150,9 +150,10 @@
   - `ip` 지정: 요청을 받은 서버가 **원격 mol의 서비스 포트(8888)** 로 `GET .../service-status` 를 호출한다. 원격 mol은 자기 서버에서 `systemctl status` 를 실행한 뒤 그 결과를 응답으로 반환하고, 요청자는 그 응답을 그대로 클라이언트에 전달한다.
   - 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
 - **서비스 제어**: `POST {serverUrl}/api/v1/service-control`  
-  - Body: `{ "ip": "" | "self" | "<host_ip>", "action": "start" | "stop" }`.  
-  - `ip` 비어 있거나 `"self"`: 로컬 `systemctl start/stop <systemctl_service_name>` (mol.service는 root로 실행).  
-  - 그 외(원격): 요청을 받은 서버가 대상 호스트로 **SSH** 접속(`ssh_port`·`ssh_user` 설정 사용, 미지정 시 22·root)하여 `systemctl start` 또는 `stop <서비스명>`을 실행한다. 원격 mol이 중지된 상태여도 SSH로 시작할 수 있다.  
+  - Body: `{ "ip": "" | "self" | "<host_ip>", "action": "start" | "stop" | "restart" }`.  
+  - `ip` 비어 있거나 `"self"`: 로컬 `systemctl start/stop/restart <systemctl_service_name>` (mol.service는 root로 실행).  
+  - **원격 start/stop**: 요청을 받은 서버가 대상 호스트로 **SSH** 접속(`ssh_port`·`ssh_user` 설정 사용, 미지정 시 22·root)하여 `systemctl start` 또는 `stop <서비스명>`을 실행한다. 원격 mol이 중지된 상태여도 SSH로 시작할 수 있다.  
+  - **원격 restart**: SSH를 사용하지 않고, 요청을 받은 서버가 **원격 mol의 서비스 포트(8888)** 로 `POST .../service-control` (Body: `{ "ip": "self", "action": "restart" }`)를 호출한다. 원격 mol은 자기 서버에서 `systemctl restart` 를 실행한 뒤 응답을 반환한다. SSH 공개키 등록 없이 재시작 가능하다.  
   - 성공 시 `{ "status": "success", "data": null }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
 
 ### 5.5 업데이트 API
@@ -207,19 +208,24 @@
 - **적용 (원격)**: 원격 mol로의 배포는 **원격 mol의 업로드 API**를 사용한다. 요청을 받은 서버(로컬 mol)는 대상 원격 mol의 **서비스 포트(8888)** 로 HTTP로 (1) `POST /api/v1/upload` (multipart: `mol`, `config`)를 보내 해당 mol의 **스테이징**에 올린 뒤, (2) `POST /api/v1/apply-update` (Body: `{ "version": "<버전>", "ip": "self" }`)를 보내 그 mol이 자기 스테이징을 적용·재시작하도록 한다.  
   - **JSON** Body: `{ "version": "<버전>", "ip": "<원격 IP>" }`. 로컬의 스테이징 또는 versions에서 해당 버전의 mol·config를 읽어, 위와 같이 원격의 upload API로 전송한 후 원격의 apply-update API를 호출한다.  
   - **multipart** (원격 전용): `ip`, `mol`, `config`. 수신한 mol에 대해 로컬에서 동일한 검증(ELF + `--version` 실행)을 수행한 뒤, 통과 시에만 원격 mol의 upload API로 전송하고 apply-update API를 호출한다. 검증 실패 시 400 및 에러 메시지.
-- **업데이트 기록**: `GET {serverUrl}/api/v1/update-log`
-  - `{deploy_base}/update_history.log` 파일의 **최근 5줄**을 읽어 `{ "status": "success", "data": { "output": "<5줄 텍스트>", "recent_rollback": true|false } }` 로 반환. `recent_rollback`은 최상단 줄에 "rollback" 또는 "failed"가 있으면 true. **단, mol-update.service가 active(업데이트 진행 중)이면** `recent_rollback`을 false로 반환하여 이전 실패 기록이 새 적용과 혼동되지 않도록 한다.
+- **업데이트 기록**: `GET {serverUrl}/api/v1/update-log?ip=`  
+  - `ip` 비어 있거나 `"self"`: `{deploy_base}/update_history.log` 파일의 **최근 5줄**을 읽어 `{ "status": "success", "data": { "output": "<5줄 텍스트>", "recent_rollback": true|false } }` 로 반환. `recent_rollback`은 최상단 줄에 "rollback" 또는 "failed"가 있으면 true. **단, mol-update.service가 active(업데이트 진행 중)이면** `recent_rollback`을 false로 반환한다.  
+  - `ip` 지정: 요청을 받은 서버가 **원격 mol의 서비스 포트** 로 `GET .../update-log` 를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.  
   - 파일이 없거나 읽기 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
+- **config.yaml (current)**: `GET {serverUrl}/api/v1/current-config?ip=` / `POST {serverUrl}/api/v1/current-config` (Body: `{ "content": "<yaml 본문>", "ip": "" | "self" | "<host_ip>" }`).  
+  - `ip` 비어 있거나 `"self"`: 로컬 current 버전의 config.yaml 읽기·저장. GET은 `{ "status": "success", "data": { "content": "..." } }`, POST는 저장 후 success/fail.  
+  - `ip` 지정: 요청을 받은 서버가 **원격 mol의 서비스 포트** 로 GET 또는 POST current-config를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.
 - **업데이트 상태**: `GET {serverUrl}/api/v1/update-status` 응답에 `update_in_progress`(boolean)를 포함. `systemctl is-active mol-update.service`가 active이면 true.
 - **헬스 체크용 버전 엔드포인트**: `GET {serverUrl}/version` — **text/plain**으로 `mol <version>` 한 줄 반환(예: `mol 0.3.4`). 브라우저/curl 구분 없이 항상 200. update.sh의 HTTP 헬스 체크는 이 URL로 요청한다(루트 `/`는 브라우저일 때만 /web 리다이렉트, 그 외 404이므로 헬스 체크에 사용하지 않음).
 
 ### 5.6 설치된 버전(versions) API
 
 - **경로 기준**: `install_prefix`(설정, 비면 `deploy_base`) 아래 `versions/` 디렉터리 및 `current`·`previous` 심볼릭 링크를 사용한다. installer 등에서도 동일 경로를 참조할 수 있도록 `install_prefix`를 둔다.
-- **목록**: `GET {serverUrl}/api/v1/versions/list`  
-  - `{install_prefix}/versions/` 디렉터리 내 각 버전 디렉터리(그 안에 `mol` 실행 파일이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ] } }`.
+- **목록**: `GET {serverUrl}/api/v1/versions/list?ip=`  
+  - `ip` 비어 있거나 `"self"`: `{install_prefix}/versions/` 디렉터리 내 각 버전 디렉터리(그 안에 `mol` 실행 파일이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ] } }`.  
+  - `ip` 지정: 요청을 받은 서버가 **원격 mol의 서비스 포트** 로 `GET .../versions/list` 를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.
 - **삭제**: `POST {serverUrl}/api/v1/versions/remove`  
-  - Body: `{ "versions": [ "<버전>", ... ] }`. `current`·`previous`가 가리키는 버전은 삭제하지 않고 제외 사유와 함께 응답에 포함한다. 그 외 버전은 `{install_prefix}/versions/<버전>/` 디렉터리를 삭제하여 디스크를 정리한다.
+  - Body: `{ "versions": [ "<버전>", ... ], "ip": "" | "self" | "<host_ip>" }`. `ip`가 비어 있거나 `"self"`이면 로컬에서 삭제. `ip` 지정 시 요청을 받은 서버가 **원격 mol의 서비스 포트** 로 `POST .../versions/remove` (Body: `{ "versions": [...] }`)를 호출한 뒤 응답을 그대로 클라이언트에 전달한다. 로컬/원격 공통: `current`·`previous`가 가리키는 버전은 삭제하지 않고 제외 사유와 함께 응답에 포함한다.
 
 ---
 
@@ -257,13 +263,16 @@
   - 그 외(dead 등)면 **\[서비스 중지 상태]**  
   - 로딩/에러 시 "불러오는 중…", "상태를 불러올 수 없습니다." 등.
 
-### 6.2 서비스 시작/중지 및 원격 카드 버튼
+### 6.2 서비스 시작/중지·재시작 및 원격 카드 레이아웃
 
-- **내 정보(자기 자신) 카드에는 시작/중지 버튼을 두지 않는다.** 「상태 새로고침」만 둔다.
-- **발견된 호스트(원격) 카드**에는 **시작**·**중지** 버튼을 **노출하지 않고**, **업데이트 적용**과 **상태 새로고침**만 표시한다(업데이트 적용이 맨 위). 원격 mol이 중지된 뒤에는 API로는 시작할 수 없으므로, 서비스 시작/중지는 백엔드에서 **SSH**로만 수행하며 UI에서는 해당 버튼을 숨긴다.
-- **서비스 제어 API 동작**: `POST /api/v1/service-control` with `{ "ip": "<host_ip>", "action": "start"|"stop" }`.  
-  - **로컬**(ip 없음/self): `systemctl start/stop` (sudo 없음, root 실행).  
-  - **원격**: 요청을 받은 서버가 해당 원격 호스트로 **SSH** 접속(`ssh -p <ssh_port> <ssh_user>@<ip> systemctl start|stop <서비스명>`)하여 실행한다. 원격 mol이 꺼져 있어도 SSH로 시작할 수 있다. 설정 `ssh_port`(기본 22), `ssh_user`(기본 "root")를 사용한다.
+- **내 정보(자기 자신) 카드**에는 시작/중지 버튼을 두지 않는다. **오른쪽 컬럼**에 업데이트 기록(최근 5건)·config.yaml(current) 편집·설치된 버전(versions) 목록을 두고, **하단**에 서비스 상태(접기/펼치기)·「상태 새로고침」·「서비스 재시작」을 둔다.
+- **발견된 호스트(원격) 카드**는 **로컬 카드와 동일한 레이아웃**을 사용한다. 오른쪽 컬럼에 업데이트 기록·config.yaml(current)·설치된 버전을 두고, 하단에 서비스 상태·「상태 새로고침」·「서비스 재시작」·「업데이트 적용」을 둔다. **시작**·**중지** 버튼은 노출하지 않는다(원격 시작/중지는 SSH로만 수행).
+- **원격 카드 열릴 때**: 해당 행을 펼치면(아코디언 확장 시) **업데이트 기록**·**config.yaml 불러오기**·**설치된 버전 목록**을 자동으로 해당 원격 호스트 API(`?ip=` 또는 body `ip`)로 요청하여 표시한다. 로컬 카드는 초기 로드 시 동일 데이터를 자동 표시한다.
+- **서비스 제어 API 동작**: `POST /api/v1/service-control` with `{ "ip": "<host_ip>", "action": "start"|"stop"|"restart" }`.  
+  - **로컬**(ip 없음/self): `systemctl start/stop/restart` (sudo 없음, root 실행).  
+  - **원격 start/stop**: 요청을 받은 서버가 해당 원격 호스트로 **SSH** 접속하여 `systemctl start|stop` 실행. 설정 `ssh_port`(기본 22), `ssh_user`(기본 "root") 사용.  
+  - **원격 restart**: SSH 없이 요청을 받은 서버가 **원격 mol API**로 `POST .../service-control` (Body `{ "ip": "self", "action": "restart" }`)를 호출. 원격 mol이 자기 서버에서 `systemctl restart` 실행.
+- **서비스 재시작 후 UI**: 재시작 요청 성공 시 또는 연결 끊김/terminated 등 재시작 진행 중으로 보이는 오류 시, 요약에 「재시작되었습니다. 잠시 후 상태를 불러옵니다.」 등 친절한 메시지를 표시하고, **몇 초 후 자동으로** `GET /api/v1/service-status`를 호출하여 요약을 [정상 서비스 상태] 등으로 갱신한다. 사용자가 「상태 새로고침」을 누르지 않아도 된다.
 - (참고) **서비스 상태** 조회(GET /api/v1/service-status?ip=)는 로컬은 직접 systemctl, 원격은 원격 mol API를 호출하는 방식으로 유지한다.
 
 ### 6.3 업데이트 (업로드·적용·로그)
@@ -322,7 +331,7 @@
 | `ssh_user` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
 
 - IP 대역(예: broadcast 주소)은 실제 환경에 따라 다를 수 있으므로 `discovery_broadcast_address` 또는 `discovery_broadcast_addresses` 로 설정에서 지정한다. 복수 주소를 쓰면 여러 서브넷(예: 172.29.236.x, 172.29.244.x)에 한 번에 Discovery 요청을 보낼 수 있다.
-- **mol.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 mol의 API(서비스 포트 8888)를 호출하고, 원격 mol이 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 mol이 꺼져 있어도 시작 가능). SSH 포트·사용자는 `ssh_port`, `ssh_user`로 지정하며, 키 기반 인증이 필요하다.
+- **mol.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 mol의 API(서비스 포트 8888)를 호출하고, 원격 mol이 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 mol이 꺼져 있어도 시작 가능). SSH 포트·사용자는 `ssh_port`, `ssh_user`로 지정하며, 키 기반 인증이 필요하다. 원격 **서비스 재시작**은 SSH를 사용하지 않고, 요청을 받은 서버가 원격 mol의 API로 `POST service-control` (ip: "self", action: "restart")를 호출하며, 원격 mol이 자기 서버에서 `systemctl restart`를 실행한다(SSH 공개키 등록 없이 가능).
 
 ---
 
@@ -350,9 +359,9 @@
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
 - **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간) — 웹 UI에서 사용. GET /api/v1/discovery (일괄 반환) — 웹 UI 미사용, 다른 클라이언트용. 일괄 API의 `data`는 배열이며 없을 때 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast). 타임아웃은 최대 5초.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 mol의 서비스 포트로 GET service-status를 호출하고, 원격 mol이 자체 systemctl status 실행 후 응답을 반환.
-- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop" }`. 로컬은 `systemctl start/stop` (sudo 없음, root 실행). 원격은 요청자를 받은 서버가 대상 호스트로 **SSH**(`ssh_port`, `ssh_user` 사용) 접속하여 `systemctl start/stop <서비스명>`을 실행한다. 원격 mol이 중지된 상태에서도 SSH로 시작할 수 있다.
-- **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). 업로드 시 **mol 검증**(ELF 매직 + `--version` 실행, 타임아웃 5초)과 **config 검증**(mol config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내)을 수행하여 잘못된 파일·설정은 400으로 거절. POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log → 로그 내용 반환. update.sh 실패 시 rollback.sh 자동 호출.
-- **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list → versions/ 목록 및 current/previous 여부. POST /api/v1/versions/remove → body `{ "versions": [ ... ] }`, current/previous가 가리키는 버전은 삭제하지 않음.
+- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`ssh_port`, `ssh_user` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 mol API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 mol이 자기 서버에서 `systemctl restart` 실행.
+- **업데이트 API**: 업로드는 **API** `POST /api/v1/upload`(multipart: mol, config)를 통해 **스테이징** `deploy_base/staging/{version}/` 에만 저장(text file busy 방지). 업로드 시 **mol 검증**(ELF 매직 + `--version` 실행, 타임아웃 5초)과 **config 검증**(mol config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내)을 수행하여 잘못된 파일·설정은 400으로 거절. POST /api/v1/upload/remove → 스테이징에서 해당 버전 삭제(수동 전용, 자동 삭제 없음). 적용 시 버전 소스는 스테이징 우선, 없으면 versions. 로컬 적용: 스테이징에만 있으면 스테이징→versions 복사 후 **systemd-run** 로 update.sh 실행; 스테이징은 남겨 두어 원격 재사용. **원격 적용**: 로컬 서버가 대상 원격 mol의 서비스 포트(8888)로 HTTP로 (1) POST /api/v1/upload 로 해당 mol의 스테이징에 파일 전송, (2) POST /api/v1/apply-update (version, ip: "self")로 그 mol이 자기 스테이징을 적용하도록 호출. JSON(version, ip)이면 로컬 스테이징/versions에서 파일을 읽어 원격 upload·apply-update 호출; multipart(ip, mol, config)이면 원격 upload로 전달 후 apply-update 호출(로컬 스테이징 미사용). GET /api/v1/update-log?ip=, GET/POST /api/v1/current-config?ip= 또는 body ip → `ip` 지정 시 요청을 받은 서버가 원격 mol 해당 API 호출 후 응답 전달. update.sh 실패 시 rollback.sh 자동 호출.
+- **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip=, POST /api/v1/versions/remove (body에 `ip` 선택) → `ip` 지정 시 요청을 받은 서버가 원격 mol 해당 API 호출 후 응답 전달. 로컬/원격 공통: current/previous가 가리키는 버전은 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
 
 ---
@@ -376,9 +385,11 @@
 - [ ] 발견된 호스트: 서버 아이콘 + CPU UUID(맨 위), 버전, IP(복수 시 취합 표시), 응답한 IP(복수 시 취합), 호스트명, CPU, MEMORY; 병합 시 기존 카드 매칭은 cpu_uuid·IP만(hostname 미사용)
 - [ ] systemctl status: 접기/펼치기(기본 접힘), 접힌 상태에서 [정상 서비스 상태] / [서비스 중지 상태]
 - [ ] 레이아웃: 호스트 카드 가운데 열(max-width 610px), 업데이트 영역 오른쪽 sticky; scrollbar-gutter: stable; 카드 내 버튼 오른쪽 위 절대 위치, 서비스 상태 영역은 카드 끝까지 넓게; 내 정보는 카드 한 겹만
-- [ ] 내 정보 카드: 시작/중지 버튼 없음, 상태 새로고침만
-- [ ] 발견된 호스트 카드: 시작·중지 버튼 비노출; 업데이트 적용·상태 새로고침만(업데이트 적용 맨 위). 원격 서비스 시작/중지는 SSH로만 수행
-- [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 mol API. 서비스 제어 API: 로컬은 systemctl, 원격은 SSH(ssh_port, ssh_user)로 systemctl 실행
+- [ ] 내 정보 카드: 시작/중지 버튼 없음; 오른쪽 컬럼(업데이트 기록·config.yaml·설치된 버전)·하단(상태 새로고침·서비스 재시작)
+- [ ] 발견된 호스트 카드: **로컬과 동일 레이아웃**(오른쪽 컬럼 + 하단 상태 행). 시작·중지 버튼 비노출; 상태 새로고침·서비스 재시작·업데이트 적용. 카드 열릴 때 업데이트 기록·config·버전 목록 자동 로드
+- [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 mol API. 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 mol API 호출**(SSH 키 불필요)
+- [ ] 원격 API 프록시: update-log·current-config(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 mol 해당 API 호출 후 응답 전달
+- [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 상태 새로고침
 - [ ] 설정: systemctl_service_name, deploy_base, **install_prefix**(비면 deploy_base, versions·installer용), discovery_broadcast_addresses, ssh_port(기본 22), ssh_user(기본 root) (선택)
 - [ ] 설치된 버전: GET /api/v1/versions/list, POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만, **mol 업로드 검증**(ELF 매직 + --version 실행), **config 검증**(config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내); upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); **systemd-run** with `/bin/bash update.sh version`; update.sh/rollback.sh는 BASE=스크립트 디렉터리, HISTORY_LOG=$BASE/update_history.log, **헬스 체크는 GET /version**; update_history.log(맨 앞 추가), update-log API(최근 5건·recent_rollback; **업데이트 진행 중이면 recent_rollback false**), update-status에 **update_in_progress**; **GET /version** (text/plain, mol \<version\>); **시작 로그에 버전 포함**; **적용 후 업데이트 로그 1.5초 폴링·진행 중 롤백 경고 숨김**

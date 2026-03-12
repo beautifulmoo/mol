@@ -44,6 +44,17 @@
     function toggle() {
       var expanded = row.classList.toggle('host-row--expanded');
       header.setAttribute('aria-expanded', expanded);
+      if (expanded) {
+        var card = row.querySelector('.host-card');
+        if (card && !card.classList.contains('self-card')) {
+          var ip = card.getAttribute('data-host-ip');
+          if (ip) {
+            fetchUpdateLogForCard(card, ip);
+            fetchCurrentConfigForCard(card, ip);
+            fetchVersionsListForCard(card, ip);
+          }
+        }
+      }
     }
     header.addEventListener('click', toggle);
     header.addEventListener('keydown', function (e) {
@@ -73,25 +84,70 @@
       div.setAttribute('data-host-ip', host.host_ip);
     }
     div.setAttribute('data-host-version', host.version || '');
-    var statusBlock =
-      '<dt>systemctl status</dt><dd class="service-status-dd">' +
+    var statusRowHtml = '<div class="self-status-row">' +
       '<div class="service-status-block">' +
+      '<div class="service-status-header-row">' +
       '<div class="service-status-header" role="button" tabindex="0" aria-expanded="false">' +
       '<span class="service-status-icon" aria-hidden="true">▶</span> ' +
       '<span class="service-status-summary">불러오는 중…</span>' +
       '</div>' +
+      '<div class="service-status-buttons">' +
+      '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
+      '<button type="button" class="service-btn service-restart-btn">서비스 재시작</button>' +
+      (isSelf ? '' : '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>') +
+      '</div></div>' +
       '<pre class="service-status-output"></pre>' +
-      '</div></dd>';
-    var controlBlock = isSelf
-      ? ('<div class="service-control">' +
-          '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
-          '</div>')
-      : ('<div class="service-control">' +
-          '<button type="button" class="service-btn host-control-start">시작</button>' +
-          '<button type="button" class="service-btn service-stop">중지</button>' +
-          '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>' +
-          '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
-          '</div>');
+      '</div></div>';
+    var rightColumnSelf = '<div class="self-card-right-column">' +
+      '<div class="card-right-log">' +
+      '<h4 class="card-right-title">업데이트 기록 (최근 5건)</h4>' +
+      '<div id="self-update-rollback-warning" class="update-rollback-warning" role="alert" aria-live="polite" hidden></div>' +
+      '<button type="button" id="self-update-log-refresh-btn" class="service-btn">목록 새로고침</button>' +
+      '<pre id="self-update-log-output" class="update-log-output card-right-log-output">(새로고침으로 로그 불러오기)</pre>' +
+      '</div>' +
+      '<div class="card-right-config">' +
+      '<h4 class="card-right-title">config.yaml (current)</h4>' +
+      '<textarea id="self-current-config-editor" class="config-editor card-right-config-editor" placeholder="불러오기로 current 버전의 config.yaml을 불러옵니다." spellcheck="false"></textarea>' +
+      '<div class="card-right-config-actions">' +
+      '<button type="button" id="self-current-config-load-btn" class="service-btn">불러오기</button>' +
+      '<button type="button" id="self-current-config-save-btn" class="service-btn">저장</button>' +
+      '<span id="self-current-config-status" class="discovery-status" aria-live="polite"></span>' +
+      '</div></div>' +
+      '<div class="card-right-versions">' +
+      '<h4 class="card-right-title">설치된 버전 (versions)</h4>' +
+      '<p class="card-versions-desc update-desc">current·previous는 삭제할 수 없습니다.</p>' +
+      '<button type="button" id="self-versions-list-refresh-btn" class="service-btn">목록 새로고침</button>' +
+      '<div id="self-versions-list-container" class="versions-list-container"><div class="versions-loading">불러오는 중…</div></div>' +
+      '<div class="versions-actions">' +
+      '<button type="button" id="self-versions-remove-btn" class="service-btn" disabled title="선택한 버전을 versions에서 삭제합니다">선택한 버전 삭제</button>' +
+      '<span id="self-versions-status" class="discovery-status" aria-live="polite"></span>' +
+      '</div></div>' +
+      '</div>';
+    var rightColumnRemote = '<div class="self-card-right-column">' +
+      '<div class="card-right-log">' +
+      '<h4 class="card-right-title">업데이트 기록 (최근 5건)</h4>' +
+      '<div class="update-rollback-warning card-update-rollback-warning" role="alert" aria-live="polite" hidden></div>' +
+      '<button type="button" class="service-btn card-update-log-refresh-btn">목록 새로고침</button>' +
+      '<pre class="update-log-output card-right-log-output">(새로고침으로 로그 불러오기)</pre>' +
+      '</div>' +
+      '<div class="card-right-config">' +
+      '<h4 class="card-right-title">config.yaml (current)</h4>' +
+      '<textarea class="config-editor card-right-config-editor" placeholder="불러오기로 current 버전의 config.yaml을 불러옵니다." spellcheck="false"></textarea>' +
+      '<div class="card-right-config-actions">' +
+      '<button type="button" class="service-btn card-current-config-load-btn">불러오기</button>' +
+      '<button type="button" class="service-btn card-current-config-save-btn">저장</button>' +
+      '<span class="discovery-status card-current-config-status" aria-live="polite"></span>' +
+      '</div></div>' +
+      '<div class="card-right-versions">' +
+      '<h4 class="card-right-title">설치된 버전 (versions)</h4>' +
+      '<p class="card-versions-desc update-desc">current·previous는 삭제할 수 없습니다.</p>' +
+      '<button type="button" class="service-btn card-versions-list-refresh-btn">목록 새로고침</button>' +
+      '<div class="versions-list-container card-right-versions-list-container"><div class="versions-loading">불러오는 중…</div></div>' +
+      '<div class="versions-actions">' +
+      '<button type="button" class="service-btn card-versions-remove-btn" disabled title="선택한 버전을 versions에서 삭제합니다">선택한 버전 삭제</button>' +
+      '<span class="discovery-status card-versions-status" aria-live="polite"></span>' +
+      '</div></div>' +
+      '</div>';
     var ipsDisplay = (host.host_ips && host.host_ips.length) ? host.host_ips.join(', ') : (host.host_ip || '-');
     var ipsAttr = (host.host_ips && host.host_ips.length) ? host.host_ips.join(',') : (host.host_ip || '');
     var primaryIp = host.host_ip || (host.host_ips && host.host_ips[0]) || '';
@@ -101,10 +157,7 @@
     div.setAttribute('data-host-ip', primaryIp);
     div.setAttribute('data-host-ips', ipsAttr);
     div.setAttribute('data-responded-from-ips', host.responded_from_ip || '');
-    div.innerHTML =
-      '<div class="updating-indicator" role="status" aria-label="업데이트 적용 중"></div>' +
-      '<div class="host-icon">' + serverIconSvg + '</div>' +
-      '<dl class="host-details">' +
+    var hostDetailsDl = '<dl class="host-details">' +
       '<dt>CPU UUID</dt><dd>' + escapeHtml(host.cpu_uuid || '-') + '</dd>' +
       '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + '</dd>' +
       '<dt>IP</dt><dd>' + escapeHtml(ipsDisplay) + '</dd>' +
@@ -113,9 +166,14 @@
       '<dt>서비스 포트</dt><dd>' + (host.service_port != null ? host.service_port : '-') + '</dd>' +
       '<dt>CPU</dt><dd>' + escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '') + '</dd>' +
       '<dt>메모리</dt><dd>' + formatMemory(host) + '</dd>' +
-      statusBlock +
-      '</dl>' +
-      controlBlock;
+      '</dl>';
+    var topContent = '<div class="updating-indicator" role="status" aria-label="업데이트 적용 중"></div>' +
+      '<div class="host-icon">' + serverIconSvg + '</div>' +
+      hostDetailsDl +
+      (isSelf ? rightColumnSelf : rightColumnRemote);
+    div.innerHTML = isSelf
+      ? ('<div class="self-card-top">' + topContent + '</div>' + statusRowHtml)
+      : ('<div class="self-card-top">' + topContent + '</div>' + statusRowHtml);
     bindStatusToggle(div);
     return div;
   }
@@ -187,6 +245,61 @@
             fetchServiceStatus(cardEl, isSelf ? '' : ip);
           });
       });
+    }
+    var restartBtn = cardEl.querySelector('.service-restart-btn');
+    if (restartBtn) {
+      restartBtn.addEventListener('click', function () {
+        if (summary) summary.textContent = '재시작 중…';
+        var restartIp = isSelf ? 'self' : ip;
+        function afterRestartMaybeRefresh() {
+          if (summary) summary.textContent = '재시작되었습니다. 잠시 후 상태를 불러옵니다.';
+          if (!isSelf && ip) {
+            setTimeout(function () { fetchServiceStatus(cardEl, ip); }, 3500);
+          } else if (isSelf) {
+            setTimeout(function () { fetchServiceStatus(cardEl, ''); }, 2000);
+          }
+        }
+        function isRestartInProgressError(msg) {
+          if (!msg || typeof msg !== 'string') return false;
+          var s = msg.toLowerCase();
+          return /terminated|connection reset|원격 재시작 요청 실패|eof/.test(s);
+        }
+        fetch(API_BASE + '/service-control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: restartIp, action: 'restart' })
+        })
+          .then(function (res) { return res.json(); })
+          .then(function (body) {
+            if (body.status === 'success') {
+              afterRestartMaybeRefresh();
+            } else {
+              if (isRestartInProgressError(body.data)) {
+                afterRestartMaybeRefresh();
+              } else {
+                if (summary) summary.textContent = body.data || '재시작 실패.';
+                if (isSelf) fetchServiceStatus(cardEl, '');
+              }
+            }
+          })
+          .catch(function () {
+            if (summary) summary.textContent = '재시작 요청을 보냈습니다. 잠시 후 상태를 불러옵니다.';
+            if (!isSelf && ip) setTimeout(function () { fetchServiceStatus(cardEl, ip); }, 3500);
+            else if (isSelf) setTimeout(function () { fetchServiceStatus(cardEl, ''); }, 2000);
+          });
+      });
+    }
+    if (!isSelf) {
+      var logRefreshBtn = cardEl.querySelector('.card-update-log-refresh-btn');
+      if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { fetchUpdateLogForCard(cardEl, ip); });
+      var configLoadBtn = cardEl.querySelector('.card-current-config-load-btn');
+      var configSaveBtn = cardEl.querySelector('.card-current-config-save-btn');
+      if (configLoadBtn) configLoadBtn.addEventListener('click', function () { fetchCurrentConfigForCard(cardEl, ip); });
+      if (configSaveBtn) configSaveBtn.addEventListener('click', function () { saveCurrentConfigForCard(cardEl, ip); });
+      var versionsRefreshBtn = cardEl.querySelector('.card-versions-list-refresh-btn');
+      var versionsRemoveBtn = cardEl.querySelector('.card-versions-remove-btn');
+      if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', function () { fetchVersionsListForCard(cardEl, ip); });
+      if (versionsRemoveBtn) versionsRemoveBtn.addEventListener('click', function () { doVersionsRemoveForCard(cardEl, ip); });
     }
     if (isSelf) return;
     function doControl(action) {
@@ -491,6 +604,19 @@
           var card = row.querySelector('.host-card');
           bindServiceControlButtons(card);
           fetchServiceStatus(card, '');
+          var logRefreshBtn = el('self-update-log-refresh-btn');
+          var versionsRefreshBtn = el('self-versions-list-refresh-btn');
+          var versionsRemoveBtn = el('self-versions-remove-btn');
+          if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { fetchUpdateLog(); });
+          if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', fetchVersionsList);
+          if (versionsRemoveBtn) versionsRemoveBtn.addEventListener('click', doVersionsRemove);
+          var configLoadBtn = el('self-current-config-load-btn');
+          var configSaveBtn = el('self-current-config-save-btn');
+          if (configLoadBtn) configLoadBtn.addEventListener('click', fetchCurrentConfig);
+          if (configSaveBtn) configSaveBtn.addEventListener('click', saveCurrentConfig);
+          fetchUpdateLog();
+          fetchCurrentConfig();
+          fetchVersionsList();
         } else {
           container.innerHTML = '<div class="host-error">내 정보를 불러올 수 없습니다.</div>';
         }
@@ -792,9 +918,55 @@
       });
   }
 
+  function fetchCurrentConfig() {
+    var editor = el('self-current-config-editor');
+    var statusEl = el('self-current-config-status');
+    if (!editor) return;
+    if (statusEl) statusEl.textContent = '';
+    editor.placeholder = '불러오는 중…';
+    fetch(API_BASE + '/current-config')
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        if (body.status === 'success' && body.data && body.data.content !== undefined) {
+          editor.value = body.data.content;
+          if (statusEl) statusEl.textContent = '불러왔습니다.';
+        } else {
+          editor.value = '';
+          if (statusEl) statusEl.textContent = body.data || '불러오기 실패.';
+        }
+      })
+      .catch(function () {
+        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        editor.value = '';
+        if (statusEl) statusEl.textContent = '불러오기 실패.';
+      });
+  }
+
+  function saveCurrentConfig() {
+    var editor = el('self-current-config-editor');
+    var statusEl = el('self-current-config-status');
+    if (!editor) return;
+    if (statusEl) statusEl.textContent = '저장 중…';
+    fetch(API_BASE + '/current-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: editor.value })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (statusEl) {
+          statusEl.textContent = body.status === 'success' ? '저장했습니다.' : (body.data || '저장 실패.');
+        }
+      })
+      .catch(function () {
+        if (statusEl) statusEl.textContent = '저장 요청 실패.';
+      });
+  }
+
   function fetchUpdateLog(silent) {
-    var pre = el('update-log-output');
-    var warningEl = el('update-rollback-warning');
+    var pre = el('self-update-log-output');
+    var warningEl = el('self-update-rollback-warning');
     if (!pre) return;
     if (!silent) {
       pre.textContent = '불러오는 중…';
@@ -820,9 +992,9 @@
   }
 
   function fetchVersionsList() {
-    var container = el('versions-list-container');
-    var statusEl = el('versions-status');
-    var removeBtn = el('versions-remove-btn');
+    var container = el('self-versions-list-container');
+    var statusEl = el('self-versions-status');
+    var removeBtn = el('self-versions-remove-btn');
     if (!container) return;
     container.innerHTML = '<div class="versions-loading">불러오는 중…</div>';
     if (statusEl) statusEl.textContent = '';
@@ -885,17 +1057,202 @@
   }
 
   function updateVersionsRemoveButtonState() {
-    var removeBtn = el('versions-remove-btn');
+    var removeBtn = el('self-versions-remove-btn');
     if (!removeBtn) return;
-    var container = el('versions-list-container');
+    var container = el('self-versions-list-container');
     var checked = container ? container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked') : [];
     removeBtn.disabled = checked.length === 0;
   }
 
+  function updateVersionsRemoveButtonStateForCard(cardEl) {
+    if (!cardEl) return;
+    var removeBtn = cardEl.querySelector('.card-versions-remove-btn');
+    var container = cardEl.querySelector('.card-right-versions-list-container');
+    if (!removeBtn) return;
+    var checked = container ? container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked') : [];
+    removeBtn.disabled = checked.length === 0;
+  }
+
+  function fetchUpdateLogForCard(cardEl, ip) {
+    if (!cardEl || !ip) return;
+    var pre = cardEl.querySelector('.card-right-log-output');
+    var warningEl = cardEl.querySelector('.card-update-rollback-warning');
+    if (!pre) return;
+    pre.textContent = '불러오는 중…';
+    if (warningEl) warningEl.hidden = true;
+    fetch(API_BASE + '/update-log?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status === 'success' && body.data) {
+          var output = body.data.output !== undefined ? body.data.output : '(비어 있음)';
+          pre.textContent = output;
+          if (warningEl && body.data.recent_rollback) {
+            warningEl.hidden = false;
+            warningEl.innerHTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
+          }
+        } else {
+          pre.textContent = body.data || '로그를 불러올 수 없습니다.';
+        }
+      })
+      .catch(function () {
+        pre.textContent = '로그를 불러올 수 없습니다.';
+      });
+  }
+
+  function fetchCurrentConfigForCard(cardEl, ip) {
+    if (!cardEl || !ip) return;
+    var editor = cardEl.querySelector('.card-right-config-editor');
+    var statusEl = cardEl.querySelector('.card-current-config-status');
+    if (!editor) return;
+    if (statusEl) statusEl.textContent = '';
+    editor.placeholder = '불러오는 중…';
+    fetch(API_BASE + '/current-config?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        if (body.status === 'success' && body.data && body.data.content !== undefined) {
+          editor.value = body.data.content;
+          if (statusEl) statusEl.textContent = '불러왔습니다.';
+        } else {
+          editor.value = '';
+          if (statusEl) statusEl.textContent = body.data || '불러오기 실패.';
+        }
+      })
+      .catch(function () {
+        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        editor.value = '';
+        if (statusEl) statusEl.textContent = '불러오기 실패.';
+      });
+  }
+
+  function saveCurrentConfigForCard(cardEl, ip) {
+    if (!cardEl || !ip) return;
+    var editor = cardEl.querySelector('.card-right-config-editor');
+    var statusEl = cardEl.querySelector('.card-current-config-status');
+    if (!editor) return;
+    if (statusEl) statusEl.textContent = '저장 중…';
+    fetch(API_BASE + '/current-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, content: editor.value })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (statusEl) {
+          statusEl.textContent = body.status === 'success' ? '저장했습니다.' : (body.data || '저장 실패.');
+        }
+      })
+      .catch(function () {
+        if (statusEl) statusEl.textContent = '저장 요청 실패.';
+      });
+  }
+
+  function renderVersionsListIntoContainer(container, versions, cardEl) {
+    if (!container || !versions || !Array.isArray(versions)) return;
+    if (versions.length === 0) {
+      container.innerHTML = '<div class="versions-loading">설치된 버전이 없습니다.</div>';
+      return;
+    }
+    var mid = Math.ceil(versions.length / 2);
+    var col0 = versions.slice(0, mid);
+    var col1 = versions.slice(mid);
+    function makeList(part, offset) {
+      var ul = document.createElement('ul');
+      ul.className = 'versions-list';
+      for (var i = 0; i < part.length; i++) {
+        var v = part[i];
+        var idx = offset + i;
+        var li = document.createElement('li');
+        var canDelete = !v.is_current && !v.is_previous;
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = 'versions-cb-' + (cardEl ? cardEl.getAttribute('data-host-ip') + '-' : '') + idx;
+        cb.setAttribute('data-version', v.version);
+        cb.disabled = !canDelete;
+        var label = document.createElement('label');
+        label.htmlFor = cb.id;
+        label.textContent = v.version;
+        var badge = document.createElement('span');
+        badge.className = 'version-badge';
+        if (v.is_current) badge.className += ' is-current';
+        else if (v.is_previous) badge.className += ' is-previous';
+        badge.textContent = v.is_current ? '현재' : (v.is_previous ? '이전' : '');
+        li.appendChild(cb);
+        li.appendChild(badge);
+        li.appendChild(label);
+        ul.appendChild(li);
+      }
+      return ul;
+    }
+    var wrapper = document.createElement('div');
+    wrapper.className = 'versions-list-wrapper';
+    wrapper.appendChild(makeList(col0, 0));
+    wrapper.appendChild(makeList(col1, mid));
+    container.innerHTML = '';
+    container.appendChild(wrapper);
+    if (cardEl) {
+      wrapper.addEventListener('change', function () { updateVersionsRemoveButtonStateForCard(cardEl); });
+      updateVersionsRemoveButtonStateForCard(cardEl);
+    }
+  }
+
+  function fetchVersionsListForCard(cardEl, ip) {
+    if (!cardEl || !ip) return;
+    var container = cardEl.querySelector('.card-right-versions-list-container');
+    var statusEl = cardEl.querySelector('.card-versions-status');
+    var removeBtn = cardEl.querySelector('.card-versions-remove-btn');
+    if (!container) return;
+    container.innerHTML = '<div class="versions-loading">불러오는 중…</div>';
+    if (statusEl) statusEl.textContent = '';
+    if (removeBtn) removeBtn.disabled = true;
+    fetch(API_BASE + '/versions/list?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status !== 'success' || !body.data || !body.data.versions) {
+          container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
+          return;
+        }
+        renderVersionsListIntoContainer(container, body.data.versions, cardEl);
+      })
+      .catch(function () {
+        container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
+      });
+  }
+
+  function doVersionsRemoveForCard(cardEl, ip) {
+    if (!cardEl || !ip) return;
+    var container = cardEl.querySelector('.card-right-versions-list-container');
+    var statusEl = cardEl.querySelector('.card-versions-status');
+    var removeBtn = cardEl.querySelector('.card-versions-remove-btn');
+    if (!container || !removeBtn || removeBtn.disabled) return;
+    var checked = container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
+    if (checked.length === 0) return;
+    var versions = [];
+    for (var i = 0; i < checked.length; i++) {
+      versions.push(checked[i].getAttribute('data-version'));
+    }
+    if (statusEl) statusEl.textContent = '삭제 중…';
+    removeBtn.disabled = true;
+    fetch(API_BASE + '/versions/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ versions: versions, ip: ip })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (statusEl) statusEl.textContent = body.data || (body.status === 'success' ? '삭제 요청 완료.' : '');
+        fetchVersionsListForCard(cardEl, ip);
+      })
+      .catch(function () {
+        if (statusEl) statusEl.textContent = '삭제 요청 실패.';
+        if (removeBtn) removeBtn.disabled = false;
+      });
+  }
+
   function doVersionsRemove() {
-    var container = el('versions-list-container');
-    var statusEl = el('versions-status');
-    var removeBtn = el('versions-remove-btn');
+    var container = el('self-versions-list-container');
+    var statusEl = el('self-versions-status');
+    var removeBtn = el('self-versions-remove-btn');
     if (!container || !removeBtn || removeBtn.disabled) return;
     var checked = container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
     if (checked.length === 0) return;
@@ -926,9 +1283,6 @@
   el('apply-update-btn').addEventListener('click', doApplyUpdate);
   el('reset-selection-btn').addEventListener('click', resetUploadForm);
   el('remove-upload-btn').addEventListener('click', doRemoveUpload);
-  el('update-log-refresh-btn').addEventListener('click', fetchUpdateLog);
-  if (el('versions-list-refresh-btn')) el('versions-list-refresh-btn').addEventListener('click', fetchVersionsList);
-  if (el('versions-remove-btn')) el('versions-remove-btn').addEventListener('click', doVersionsRemove);
   el('upload-mol').addEventListener('change', updateUploadButtonState);
   el('upload-config').addEventListener('change', function () {
     var configInput = el('upload-config');
@@ -943,6 +1297,4 @@
   fetchUpdateStatus();
   updateAllHostApplyButtons();
   loadSelf();
-  fetchUpdateLog();
-  fetchVersionsList();
 })();

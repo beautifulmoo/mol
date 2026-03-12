@@ -21,7 +21,7 @@ main {
   display: flex;
   gap: 1.5rem;
   align-items: flex-start;
-  max-width: 1100px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 1rem;
 }
@@ -38,7 +38,7 @@ main section {
 }
 .host-column .self-section,
 .host-column .discovery-section {
-  max-width: 620px;
+  max-width: 744px;
   margin-left: auto;
   margin-right: auto;
   width: 100%;
@@ -127,11 +127,7 @@ h3 {
   flex: 1;
   min-width: 0;
 }
-/* 상단 항목(버튼과 같은 줄)만 오른쪽 여백, 서비스 상태 창은 카드 끝까지 넓게 */
-.host-details > dt,
-.host-details > dd:not(.service-status-dd) {
-  padding-right: 8rem;
-}
+/* 로컬/원격 동일 레이아웃: 오른쪽 컬럼이 있으므로 host-details는 flex로 공간 분할 */
 .host-details dt {
   font-size: 0.75rem;
   color: #71717a;
@@ -142,27 +138,8 @@ h3 {
   margin: 0;
   font-size: 0.9rem;
 }
-.service-status-dd {
-  margin-top: 0.35rem;
-}
 .service-status-block {
   font-size: 0.9rem;
-}
-/* 버튼은 카드 오른쪽 위에 고정 (호스트 아이콘 상단과 맞춤) */
-.service-control {
-  position: absolute;
-  top: 1.35rem;
-  right: 1rem;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  align-items: flex-end;
-}
-/* 원격 카드: 시작·중지 버튼 숨김 (업데이트 적용이 맨 위로) */
-.host-card:not(.self-card) .host-control-start,
-.host-card:not(.self-card) .service-stop {
-  display: none;
 }
 .service-status-header {
   cursor: pointer;
@@ -199,6 +176,137 @@ h3 {
 .service-status-block.expanded .service-status-output {
   display: block;
 }
+
+/* 로컬 카드: 상단(기본정보|오른쪽컬럼) + 하단(서비스 상태 전체 너비) */
+.host-card.self-card {
+  flex-wrap: wrap;
+}
+.self-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+}
+.self-status-row {
+  width: 100%;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #3f3f46;
+}
+.host-card.self-card .self-status-row {
+  border-top-color: rgba(59, 130, 246, 0.2);
+}
+/* systemctl status 라인 오른쪽 끝에 상태 새로고침 버튼 */
+.service-status-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.service-status-header-row .service-status-header {
+  flex: 1;
+  min-width: 0;
+}
+.service-status-header-row .service-status-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.service-status-header-row .status-refresh-btn,
+.service-status-header-row .service-restart-btn {
+  flex-shrink: 0;
+}
+
+/* 로컬 카드: 업데이트 기록·설치된 버전을 고정 너비 오른쪽 컬럼에 세로 배치 (왼쪽 CPU UUID와 상단 정렬) */
+.self-card-right-column {
+  width: 320px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-top: 1em;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+.host-card .card-right-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #a1a1aa;
+  margin: 0 0 0.5rem;
+}
+.card-right-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.card-right-log .update-rollback-warning {
+  margin-bottom: 0;
+}
+.card-right-log-output,
+.host-card .card-right-log .update-log-output {
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  background: #18181b;
+  border-radius: 4px;
+  border: 1px solid #3f3f46;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  height: 7.5em;
+  min-height: 7.5em;
+  max-height: 7.5em;
+}
+.card-right-config {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.card-right-config .config-editor,
+.card-right-config-editor {
+  font-size: 0.75rem;
+  min-height: 6em;
+  max-height: 10em;
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+}
+.card-right-config-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.card-right-config-actions .discovery-status {
+  font-size: 0.8rem;
+}
+.card-right-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.card-right-versions .card-versions-desc {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+}
+.card-right-versions .versions-list-container {
+  margin: 0.35rem 0;
+  min-height: 2rem;
+  max-height: 7em;
+  overflow-y: auto;
+}
+.card-right-versions .versions-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.25rem;
+}
+
 .service-btn {
   padding: 0.35rem 0.75rem;
   font-size: 0.85rem;

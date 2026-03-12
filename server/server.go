@@ -175,6 +175,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/update-status", s.handleUpdateStatus)
 	mux.HandleFunc(s.apiPrefix+"/apply-update", s.handleApplyUpdate)
 	mux.HandleFunc(s.apiPrefix+"/update-log", s.handleUpdateLog)
+	mux.HandleFunc(s.apiPrefix+"/current-config", s.handleCurrentConfig)
 	mux.HandleFunc(s.apiPrefix+"/versions/list", s.handleVersionsList)
 	mux.HandleFunc(s.apiPrefix+"/versions/remove", s.handleVersionsRemove)
 	// Web (static)
@@ -329,7 +330,7 @@ func (s *Server) handleServiceStatus(w http.ResponseWriter, r *http.Request) {
 // serviceControlRequest is the JSON body for POST /api/v1/service-control.
 type serviceControlRequest struct {
 	IP     string `json:"ip"`
-	Action string `json:"action"` // "start" or "stop"
+	Action string `json:"action"` // "start", "stop", or "restart"
 }
 
 func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
@@ -344,8 +345,8 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := strings.TrimSpace(req.IP)
 	action := strings.TrimSpace(strings.ToLower(req.Action))
-	if action != "start" && action != "stop" {
-		s.send(w, "fail", "action must be start or stop", http.StatusBadRequest)
+	if action != "start" && action != "stop" && action != "restart" {
+		s.send(w, "fail", "action must be start, stop, or restart", http.StatusBadRequest)
 		return
 	}
 	svcName := s.systemctlServiceName
@@ -353,7 +354,32 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 		svcName = "mol.service"
 	}
 	if ip != "" && ip != "self" {
-		// 원격: API가 아닌 SSH로 systemctl 실행 (서비스가 중지되면 API 호출 불가)
+		if action == "restart" {
+			// 재시작만 원격 mol API 호출로 처리 (SSH 키 불필요). 원격에서 systemctl restart 수행.
+			port := s.servicePort
+			if port <= 0 {
+				port = 8888
+			}
+			baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/service-control"
+			payload, _ := json.Marshal(map[string]string{"ip": "self", "action": "restart"})
+			req, _ := http.NewRequest(http.MethodPost, baseURL, bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := remoteHTTPClient.Do(req)
+			if err != nil {
+				s.send(w, "fail", "원격 재시작 요청 실패: "+err.Error(), http.StatusOK)
+				return
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			var out APIResponse
+			if json.Unmarshal(body, &out) != nil {
+				s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+				return
+			}
+			s.send(w, out.Status, out.Data, http.StatusOK)
+			return
+		}
+		// 시작/중지는 SSH로 실행 (서비스 중지 시 API 호출 불가)
 		sshPort := s.sshPort
 		if sshPort <= 0 {
 			sshPort = 22
@@ -371,10 +397,13 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	if action == "start" {
+	switch action {
+	case "start":
 		err = svcstatus.StartLocal(svcName)
-	} else {
+	case "stop":
 		err = svcstatus.StopLocal(svcName)
+	default:
+		err = svcstatus.RestartLocal(svcName)
 	}
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
@@ -993,6 +1022,28 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip != "" && ip != "self" {
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/versions/list"
+		resp, err := remoteHTTPClient.Get(baseURL)
+		if err != nil {
+			s.send(w, "fail", "원격 versions 목록 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var out APIResponse
+		if json.Unmarshal(body, &out) != nil {
+			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
+		return
+	}
 	base := s.versionsBase()
 	versionsParent := filepath.Join(base, "versions")
 	entries, err := os.ReadDir(versionsParent)
@@ -1058,9 +1109,35 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Versions []string `json:"versions"`
+		IP       string   `json:"ip"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.send(w, "fail", "invalid body", http.StatusBadRequest)
+		return
+	}
+	ip := strings.TrimSpace(req.IP)
+	if ip != "" && ip != "self" {
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/versions/remove"
+		payload, _ := json.Marshal(map[string]interface{}{"versions": req.Versions})
+		hr, _ := http.NewRequest(http.MethodPost, baseURL, bytes.NewReader(payload))
+		hr.Header.Set("Content-Type", "application/json")
+		resp, err := remoteHTTPClient.Do(hr)
+		if err != nil {
+			s.send(w, "fail", "원격 버전 삭제 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var out APIResponse
+		if json.Unmarshal(body, &out) != nil {
+			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
 		return
 	}
 	base := s.versionsBase()
@@ -1131,6 +1208,28 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip != "" && ip != "self" {
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		url := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/update-log"
+		resp, err := remoteHTTPClient.Get(url)
+		if err != nil {
+			s.send(w, "fail", "원격 업데이트 로그 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var out APIResponse
+		if json.Unmarshal(body, &out) != nil {
+			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
+		return
+	}
 	base := s.deployBase
 	if base == "" {
 		base = "/opt/mol"
@@ -1170,6 +1269,116 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 		recentRollback = false
 	}
 	s.send(w, "success", map[string]interface{}{"output": output, "recent_rollback": recentRollback}, http.StatusOK)
+}
+
+// currentConfigPath returns the path to deploy_base/current/config.yaml (current symlink resolved), or "" if not available.
+func (s *Server) currentConfigPath() string {
+	base := s.deployBase
+	if base == "" {
+		base = "/opt/mol"
+	}
+	linkPath := filepath.Join(base, "current")
+	resolved, err := filepath.EvalSymlinks(linkPath)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(resolved, "config.yaml")
+}
+
+func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	var postContent string
+	if r.Method == http.MethodPost {
+		var reqBody struct {
+			IP      string `json:"ip"`
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			s.send(w, "fail", "invalid body", http.StatusBadRequest)
+			return
+		}
+		postContent = reqBody.Content
+		if strings.TrimSpace(reqBody.IP) != "" {
+			ip = strings.TrimSpace(reqBody.IP)
+		}
+	}
+	if ip != "" && ip != "self" {
+		port := s.servicePort
+		if port <= 0 {
+			port = 8888
+		}
+		baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/current-config"
+		if r.Method == http.MethodGet {
+			resp, err := remoteHTTPClient.Get(baseURL)
+			if err != nil {
+				s.send(w, "fail", "원격 config 요청 실패: "+err.Error(), http.StatusOK)
+				return
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			var out APIResponse
+			if json.Unmarshal(body, &out) != nil {
+				s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+				return
+			}
+			s.send(w, out.Status, out.Data, http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodPost {
+			payload, _ := json.Marshal(map[string]string{"content": postContent})
+			req, _ := http.NewRequest(http.MethodPost, baseURL, bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := remoteHTTPClient.Do(req)
+			if err != nil {
+				s.send(w, "fail", "원격 config 저장 요청 실패: "+err.Error(), http.StatusOK)
+				return
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			var out APIResponse
+			if json.Unmarshal(body, &out) != nil {
+				s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+				return
+			}
+			s.send(w, out.Status, out.Data, http.StatusOK)
+			return
+		}
+	}
+	configPath := s.currentConfigPath()
+	if configPath == "" {
+		s.send(w, "fail", "current 버전을 찾을 수 없습니다", http.StatusOK)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				s.send(w, "success", map[string]interface{}{"content": ""}, http.StatusOK)
+				return
+			}
+			s.send(w, "fail", "config.yaml 읽기 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		s.send(w, "success", map[string]interface{}{"content": string(data)}, http.StatusOK)
+		return
+	case http.MethodPost:
+		content := strings.TrimSpace(postContent)
+		if content != "" {
+			if _, err := config.LoadFromBytes([]byte(content)); err != nil {
+				s.send(w, "fail", err.Error(), http.StatusOK)
+				return
+			}
+		}
+		if err := os.WriteFile(configPath, []byte(postContent), 0644); err != nil {
+			s.send(w, "fail", "config.yaml 저장 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		s.send(w, "success", nil, http.StatusOK)
+		return
+	default:
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) send(w http.ResponseWriter, status string, data interface{}, code int) {

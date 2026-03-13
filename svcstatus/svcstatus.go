@@ -60,6 +60,21 @@ func StopLocal(serviceName string) error {
 	return nil
 }
 
+// RestartLocal runs `systemctl restart <serviceName>` on the local host.
+func RestartLocal(serviceName string) error {
+	if serviceName == "" {
+		serviceName = "mol.service"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), localTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", "restart", serviceName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 // RunRemote runs `systemctl start|stop <serviceName>` on the remote host via SSH.
 // Used when the remote mol service is stopped and thus its API is unreachable.
 // port is the SSH port (use 22 if 0). user is the SSH user (e.g. "root").
@@ -73,8 +88,8 @@ func RunRemote(host, user string, port int, serviceName, action string) error {
 	if user == "" {
 		user = "root"
 	}
-	if action != "start" && action != "stop" {
-		return fmt.Errorf("action must be start or stop")
+	if action != "start" && action != "stop" && action != "restart" {
+		return fmt.Errorf("action must be start, stop, or restart")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -85,6 +100,7 @@ func RunRemote(host, user string, port int, serviceName, action string) error {
 		"-p", fmt.Sprintf("%d", port),
 		user+"@"+host,
 		"systemctl", action, serviceName)
+	// systemctl accepts start, stop, restart
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ssh: %s: %w", strings.TrimSpace(string(out)), err)

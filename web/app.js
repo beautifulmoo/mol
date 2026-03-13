@@ -253,11 +253,12 @@
         var restartIp = isSelf ? 'self' : ip;
         function afterRestartMaybeRefresh() {
           if (summary) summary.textContent = '재시작되었습니다. 잠시 후 상태를 불러옵니다.';
-          if (!isSelf && ip) {
-            setTimeout(function () { fetchServiceStatus(cardEl, ip); }, 3500);
-          } else if (isSelf) {
-            setTimeout(function () { fetchServiceStatus(cardEl, ''); }, 2000);
-          }
+          var delay = isSelf ? 2000 : 3500;
+          var targetIp = isSelf ? '' : ip;
+          setTimeout(function () {
+            refreshHostCardDetails(cardEl, targetIp);
+            fetchServiceStatus(cardEl, targetIp);
+          }, delay);
         }
         function isRestartInProgressError(msg) {
           if (!msg || typeof msg !== 'string') return false;
@@ -284,8 +285,12 @@
           })
           .catch(function () {
             if (summary) summary.textContent = '재시작 요청을 보냈습니다. 잠시 후 상태를 불러옵니다.';
-            if (!isSelf && ip) setTimeout(function () { fetchServiceStatus(cardEl, ip); }, 3500);
-            else if (isSelf) setTimeout(function () { fetchServiceStatus(cardEl, ''); }, 2000);
+            var delay = isSelf ? 2000 : 3500;
+            var targetIp = isSelf ? '' : ip;
+            setTimeout(function () {
+              refreshHostCardDetails(cardEl, targetIp);
+              fetchServiceStatus(cardEl, targetIp);
+            }, delay);
           });
       });
     }
@@ -589,6 +594,20 @@
     }
     var row = cardEl.closest && cardEl.closest('.host-row');
     if (row) updateHostRowLabel(row, host, cardEl.classList.contains('self-card'));
+  }
+
+  function refreshHostCardDetails(cardEl, ip) {
+    if (!cardEl) return;
+    var url = (ip === '') ? (API_BASE + '/self') : (API_BASE + '/host-info?ip=' + encodeURIComponent(ip));
+    fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status === 'success' && body.data) {
+          updateHostCardDetails(cardEl, body.data);
+          if (ip !== '') updateAllHostApplyButtons();
+        }
+      })
+      .catch(function () {});
   }
 
   function loadSelf() {

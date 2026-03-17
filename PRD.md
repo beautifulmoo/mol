@@ -23,7 +23,7 @@
 
 ### 3.1 흐름
 
-- **요청**: 한 호스트(A)가 지정된 broadcast 주소(단일 `discovery_broadcast_address` 또는 복수 `discovery_broadcast_addresses`)의 **UDP 9999** 번 포트로 Discovery 요청을 보낸다. 복수 주소가 설정되면 **각 주소마다** 한 번씩 요청을 전송하여 여러 서브넷(예: 172.29.236.x, 172.29.244.x)을 모두 탐색한다.
+- **요청**: 한 호스트(A)가 **Discovery에 사용할 broadcast 주소**의 **UDP 9999** 번 포트로 Discovery 요청을 보낸다. 브로드캐스트 주소는 **물리 NIC의 IPv4 brd 주소를 자동 수집**하여 사용한다(/sys/class/net/…/device가 있는 인터페이스에 대해 `ip -o -4 addr show`로 brd 추출, 중복 제거). 수집 결과가 없을 때만 설정 `discovery_broadcast_address`(단일)를 fallback으로 사용하며, 없으면 255.255.255.255. **각 brd 주소마다** 한 번씩 요청을 전송하여 여러 서브넷을 탐색한다.
 - **응답**: broadcast를 수신한 각 호스트는 Discovery 응답을 **요청을 보낸 호스트(A)의 IP:9999** 로 **unicast** 로 보낸다.
 - 즉, 요청·응답 모두 **UDP 포트 9999**를 사용하며, 응답 수신도 A가 UDP 9999에서 listen하여 처리한다.
 - **브로드캐스트 송신**: UDP 소켓에 **SO_BROADCAST** 옵션을 설정하여 broadcast 주소로의 전송을 허용한다.
@@ -110,6 +110,14 @@
 - **백엔드 API prefix**: `{serverUrl}/api/v1` (기본값, 설정에서 변경 가능)
 - **프론트엔드 진입 URL**: `{serverUrl}/web/index.html`
 - prefix는 설정 파일에서 수정할 수 있어야 한다.
+
+### 4.1 CLI (명령줄)
+
+- **옵션 없이 실행**: `mol` — HTTP 서버 및 Discovery를 기동(기본 동작).
+- **`-config <파일>`**: 설정 파일 경로 지정(기본: config.yaml 또는 환경변수 MOL_CONFIG).
+- **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료.
+- **`-version`, `--version`**: 버전 문자열 출력 후 종료.
+- **`--nic-brd`**: 물리 NIC별 IPv4 브로드캐스트(brd) 주소를 `NIC이름 : brd주소` 형식으로 출력(Discovery에 사용되는 주소 확인용) 후 종료.
 
 ---
 
@@ -330,7 +338,7 @@
 | `ssh_port` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `ssh_user` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
 
-- IP 대역(예: broadcast 주소)은 실제 환경에 따라 다를 수 있으므로 `discovery_broadcast_address` 또는 `discovery_broadcast_addresses` 로 설정에서 지정한다. 복수 주소를 쓰면 여러 서브넷(예: 172.29.236.x, 172.29.244.x)에 한 번에 Discovery 요청을 보낼 수 있다.
+- **Discovery 브로드캐스트 주소**: 기본적으로 **물리 NIC**(/sys/class/net/&lt;iface&gt;/device 존재)에 대해 `ip -o -4 addr show`로 brd를 수집하여 사용한다. 설정에서 주소를 넣지 않아도 되며, 호스트마다 NIC가 달라도 자동으로 해당 호스트의 물리 NIC brd만 사용한다. 수집이 실패하거나 빈 경우에만 `discovery_broadcast_address`(단일)를 fallback으로 사용한다.
 - **mol.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 mol의 API(서비스 포트 8888)를 호출하고, 원격 mol이 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 mol이 꺼져 있어도 시작 가능). SSH 포트·사용자는 `ssh_port`, `ssh_user`로 지정하며, 키 기반 인증이 필요하다. 원격 **서비스 재시작**은 SSH를 사용하지 않고, 요청을 받은 서버가 원격 mol의 API로 `POST service-control` (ip: "self", action: "restart")를 호출하며, 원격 mol이 자기 서버에서 `systemctl restart`를 실행한다(SSH 공개키 등록 없이 가능).
 
 ---
@@ -374,7 +382,7 @@
 - [ ] Discovery: UDP broadcast 요청, 응답은 요청자 IP:9999 로 unicast; pending 등록 후 전송, 타임아웃 시 drain
 - [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합
 - [ ] Self 제거: **CPU UUID**로 자기 식별(같으면 제외), CPU UUID 없을 때만 IP+ServicePort 폴백
-- [ ] Discovery 복수 브로드캐스트: `discovery_broadcast_addresses` 지원, 각 주소마다 DISCOVERY_REQUEST 전송
+- [ ] Discovery 브로드캐스트: **물리 NIC brd 자동 수집**으로 주소 결정(각 주소마다 DISCOVERY_REQUEST 전송); fallback은 discovery_broadcast_address 또는 255.255.255.255
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
 - [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, 응답 오는 대로 화면 갱신; 기존 카드 매칭은 **cpu_uuid → IP** 순서만 사용(**hostname 미사용**, 동일 hostname 다른 호스트 병합 방지), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
 - [ ] Discovery 일괄: GET /api/v1/discovery 구현됨, data는 배열(빈 경우 []), null 미사용; **웹 UI에서는 호출하지 않음**(다른 클라이언트용)
@@ -390,7 +398,8 @@
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 mol API. 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 mol API 호출**(SSH 키 불필요)
 - [ ] 원격 API 프록시: update-log·current-config(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 mol 해당 API 호출 후 응답 전달
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
-- [ ] 설정: systemctl_service_name, deploy_base, **install_prefix**(비면 deploy_base, versions·installer용), discovery_broadcast_addresses, ssh_port(기본 22), ssh_user(기본 root) (선택)
+- [ ] 설정: systemctl_service_name, deploy_base, **install_prefix**(비면 deploy_base, versions·installer용), discovery_broadcast_address(fallback만), ssh_port(기본 22), ssh_user(기본 root) (선택)
+- [ ] **CLI**: 옵션 없이 실행 = HTTP 서버 + Discovery; `-h`/`--help` 도움말; `--version`/`-version` 버전 출력; `--nic-brd` 물리 NIC brd 주소 출력(Discovery 확인용); `-config <파일>` 설정 경로
 - [ ] 설치된 버전: GET /api/v1/versions/list, POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] 업데이트: deploy_base, **staging/**(upload API로 저장, 수동 삭제만), versions/(실행 경로), update.sh, rollback.sh; upload API → 스테이징만, **mol 업로드 검증**(ELF 매직 + --version 실행), **config 검증**(config 구조체 파싱, 실패 시 항목/줄·필요 타입 안내); upload/remove → 스테이징 삭제(수동); 적용 시 버전 소스=스테이징 우선 then versions; 로컬 적용 시 스테이징만 있으면 복사 후 update.sh(스테이징 유지); **원격 적용=원격 mol의 upload API(HTTP)·apply-update API 호출**(JSON(version,ip) 또는 multipart(ip,mol,config)); **systemd-run** with `/bin/bash update.sh version`; update.sh/rollback.sh는 BASE=스크립트 디렉터리, HISTORY_LOG=$BASE/update_history.log, **헬스 체크는 GET /version**; update_history.log(맨 앞 추가), update-log API(최근 5건·recent_rollback; **업데이트 진행 중이면 recent_rollback false**), update-status에 **update_in_progress**; **GET /version** (text/plain, mol \<version\>); **시작 로그에 버전 포함**; **적용 후 업데이트 로그 1.5초 폴링·진행 중 롤백 경고 숨김**
 - [ ] 프론트: 업데이트 영역 — 업로드(mol+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 mol·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)

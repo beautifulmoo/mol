@@ -23,17 +23,41 @@ import (
 // Version is set at build time: -ldflags "-X main.Version=1.2.3"
 var Version string
 
+const helpText = `mol — Discovery 및 웹 UI가 있는 mol 서비스
+
+사용법:
+  mol                    옵션 없이 실행 시 HTTP 서버 + Discovery 동작 (기본)
+  mol -config <파일>     설정 파일 경로 지정 (기본: config.yaml 또는 MOL_CONFIG)
+
+옵션:
+  -h, --help             이 도움말 출력
+  -version, --version    버전 출력 후 종료
+  --nic-brd              물리 NIC별 IPv4 브로드캐스트(brd) 주소 출력 (Discovery용 확인) 후 종료
+`
+
 //go:embed web/*
 var webFS embed.FS
 
 func main() {
-	if len(os.Args) >= 2 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
-		v := Version
-		if v == "" {
-			v = "devel"
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "-h", "--help":
+			fmt.Print(helpText)
+			os.Exit(0)
+		case "--version", "-version":
+			v := Version
+			if v == "" {
+				v = "devel"
+			}
+			fmt.Println("mol", v)
+			os.Exit(0)
+		case "--nic-brd":
+			pairs := hostinfo.GetPhysicalNICBrdPairs()
+			for _, p := range pairs {
+				fmt.Printf("%s : %s\n", p.Iface, p.Brd)
+			}
+			os.Exit(0)
 		}
-		fmt.Println("mol", v)
-		os.Exit(0)
 	}
 	cfgPath := ""
 	if len(os.Args) > 1 && os.Args[1] == "-config" && len(os.Args) > 2 {
@@ -110,13 +134,17 @@ func main() {
 			info.MemoryTotalMB, info.MemoryUsedMB, info.MemoryUsagePercent, info.CPUUUID
 	}
 
-	broadcastAddrs := cfg.DiscoveryBroadcastAddresses
+	broadcastAddrs := hostinfo.GetPhysicalNICBroadcastAddresses()
 	if len(broadcastAddrs) == 0 {
 		if cfg.DiscoveryBroadcastAddress != "" {
 			broadcastAddrs = []string{cfg.DiscoveryBroadcastAddress}
+			log.Printf("discovery: no physical NIC brd found, using config fallback: %v", broadcastAddrs)
 		} else {
 			broadcastAddrs = []string{"255.255.255.255"}
+			log.Printf("discovery: no physical NIC brd found, using 255.255.255.255")
 		}
+	} else {
+		log.Printf("discovery: broadcast addresses (physical NIC brd): %v", broadcastAddrs)
 	}
 	discCfg := discovery.Config{
 		ServiceName:                 cfg.ServiceName,

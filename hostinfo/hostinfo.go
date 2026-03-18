@@ -75,29 +75,93 @@ func cpuInfoLinux() (string, error) {
 	return model, nil
 }
 
-// cpuUUIDLinux returns CPU or system UUID from /proc/cpuinfo (Serial) or dmidecode system-uuid.
+// cpuUUIDLinux returns a stable host identifier for discovery/UI.
+// Order: /proc/cpuinfo Serial (if meaningful) → dmidecode → sysfs product_uuid → /etc/machine-id.
+// Minimal installs often lack dmidecode; machine-id exists on typical systemd-based Ubuntu.
 func cpuUUIDLinux() (string, error) {
 	f, err := os.Open("/proc/cpuinfo")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		line := s.Text()
-		if strings.HasPrefix(line, "Serial") {
-			if i := strings.Index(line, ":"); i >= 0 {
-				return strings.TrimSpace(line[i+1:]), nil
+	if err == nil {
+		s := bufio.NewScanner(f)
+		for s.Scan() {
+			line := s.Text()
+			if strings.HasPrefix(line, "Serial") {
+				if i := strings.Index(line, ":"); i >= 0 {
+					v := strings.TrimSpace(line[i+1:])
+					if !uselessHostID(v) {
+						_ = f.Close()
+						return v, nil
+					}
+				}
 			}
 		}
+		_ = f.Close()
 	}
-	// Fallback: system UUID from dmidecode (often works without root on many systems)
+
+	if v := runDmidecodeUUID(); v != "" {
+		return v, nil
+	}
+	if v := readTrimmedFile("/sys/class/dmi/id/product_uuid"); v != "" && !uselessHostID(v) {
+		return v, nil
+	}
+	if v := readTrimmedFile("/etc/machine-id"); v != "" {
+		return v, nil
+	}
+	// dbus machine-id (non-systemd rare; often duplicate of /etc/machine-id)
+	if v := readTrimmedFile("/var/lib/dbus/machine-id"); v != "" {
+		return v, nil
+	}
+	return "", nil
+}
+
+func uselessHostID(s string) bool {
+	s = strings.TrimSpace(strings.Trim(s, "\x00"))
+	if s == "" {
+		return true
+	}
+	low := strings.ToLower(s)
+	if strings.Contains(low, "not set") || strings.Contains(low, "not available") || strings.Contains(low, "to be filled") {
+		return true
+	}
+	if low == "0" {
+		return true
+	}
+	// e.g. 00000000-0000-0000-0000-000000000000
+	alnum := make([]rune, 0, len(low))
+	for _, r := range low {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			alnum = append(alnum, r)
+		}
+	}
+	if len(alnum) >= 8 {
+		for _, r := range alnum {
+			if r != '0' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func readTrimmedFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func runDmidecodeUUID() string {
 	cmd := exec.Command("dmidecode", "-s", "system-uuid")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", nil
+		return ""
 	}
-	return strings.TrimSpace(string(out)), nil
+	v := strings.TrimSpace(string(out))
+	if uselessHostID(v) {
+		return ""
+	}
+	return v
 }
 
 func cpuUsagePercentLinux() (float64, error) {

@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"sort"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -1076,7 +1077,74 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 			IsPrevious: ver == previousVer,
 		})
 	}
+	sort.Slice(list, func(i, j int) bool {
+		return versionsListEntryBefore(list[i], list[j])
+	})
 	s.send(w, "success", map[string]interface{}{"versions": list}, http.StatusOK)
+}
+
+// versionsListEntryBefore defines display order: current → previous → others by semver descending (newest first).
+func versionsListEntryBefore(a, b versionEntry) bool {
+	rank := func(e versionEntry) int {
+		if e.IsCurrent {
+			return 2
+		}
+		if e.IsPrevious {
+			return 1
+		}
+		return 0
+	}
+	ra, rb := rank(a), rank(b)
+	if ra != rb {
+		return ra > rb
+	}
+	return semverDesc(a.Version, b.Version)
+}
+
+// semverDesc returns true if a should appear above b (newer / larger semver first).
+func semverDesc(a, b string) bool {
+	va, vb := parseSemverInts(a), parseSemverInts(b)
+	if va != nil && vb != nil {
+		for k := 0; k < len(va) || k < len(vb); k++ {
+			var na, nb int
+			if k < len(va) {
+				na = va[k]
+			}
+			if k < len(vb) {
+				nb = vb[k]
+			}
+			if na != nb {
+				return na > nb
+			}
+		}
+		return a > b
+	}
+	return a > b
+}
+
+func parseSemverInts(s string) []int {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ".")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		i := 0
+		for i < len(p) && p[i] >= '0' && p[i] <= '9' {
+			i++
+		}
+		if i == 0 {
+			return nil
+		}
+		n, err := strconv.Atoi(p[:i])
+		if err != nil {
+			return nil
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // resolveSymlinkVersion returns the version name (dir under base/versions/) that the symlink base/name points to, or "".

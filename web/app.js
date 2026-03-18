@@ -171,9 +171,7 @@
       '<div class="host-icon">' + serverIconSvg + '</div>' +
       hostDetailsDl +
       (isSelf ? rightColumnSelf : rightColumnRemote);
-    div.innerHTML = isSelf
-      ? ('<div class="self-card-top">' + topContent + '</div>' + statusRowHtml)
-      : ('<div class="self-card-top">' + topContent + '</div>' + statusRowHtml);
+    div.innerHTML = '<div class="self-card-top">' + topContent + '</div>' + statusRowHtml;
     bindStatusToggle(div);
     return div;
   }
@@ -285,12 +283,7 @@
           })
           .catch(function () {
             if (summary) summary.textContent = '재시작 요청을 보냈습니다. 잠시 후 상태를 불러옵니다.';
-            var delay = isSelf ? 2000 : 3500;
-            var targetIp = isSelf ? '' : ip;
-            setTimeout(function () {
-              refreshHostCardDetails(cardEl, targetIp);
-              fetchServiceStatus(cardEl, targetIp);
-            }, delay);
+            afterRestartMaybeRefresh();
           });
       });
     }
@@ -441,6 +434,49 @@
     return '최신 버전입니다';
   }
 
+  /** After apply-update: reload update log, current config, versions list, service status (and local staging state). */
+  function refreshAllPanelsAfterUpdate(cardEl, ip) {
+    if (ip) {
+      if (!cardEl) return;
+      fetchUpdateLogForCard(cardEl, ip);
+      fetchCurrentConfigForCard(cardEl, ip);
+      fetchVersionsListForCard(cardEl, ip);
+      fetchServiceStatus(cardEl, ip);
+    } else {
+      fetchUpdateLog();
+      fetchCurrentConfig();
+      fetchVersionsList();
+      if (cardEl) fetchServiceStatus(cardEl, '');
+    }
+    fetchUpdateStatus();
+  }
+
+  /**
+   * Poll url until JSON returns status success + data, or maxAttempts exhausted.
+   * onGiveUp(networkFailure): networkFailure true if last failure was fetch/parse error.
+   */
+  function pollUntilHostJsonOk(url, maxAttempts, firstDelayMs, retryDelayMs, onOk, onGiveUp) {
+    function step(attempt) {
+      setTimeout(function () {
+        fetch(url)
+          .then(function (res) { return res.json(); })
+          .then(function (body) {
+            if (body.status === 'success' && body.data) {
+              onOk(body);
+              return;
+            }
+            if (attempt + 1 < maxAttempts) step(attempt + 1);
+            else if (onGiveUp) onGiveUp(false);
+          })
+          .catch(function () {
+            if (attempt + 1 < maxAttempts) step(attempt + 1);
+            else if (onGiveUp) onGiveUp(true);
+          });
+      }, attempt === 0 ? firstDelayMs : retryDelayMs);
+    }
+    step(0);
+  }
+
   function scheduleRefreshAfterApply(cardEl, ip, summary, successMessage, appliedVersion) {
     if (summary) summary.textContent = successMessage || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
     if (appliedVersion && cardEl) {
@@ -449,31 +485,17 @@
       if (dds && dds.length >= 8) dds[1].textContent = appliedVersion;
       updateAllHostApplyButtons();
     }
-    if (!ip) fetchServiceStatus(cardEl, ip);
-    function tryFetchHostInfo(attempt) {
-      var maxAttempts = 4;
-      var delayMs = attempt === 0 ? 5000 : 2000;
-      setTimeout(function () {
-        fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
-          .then(function (res) { return res.json(); })
-          .then(function (body) {
-            if (body.status === 'success' && body.data) {
-              updateHostCardDetails(cardEl, body.data);
-              updateAllHostApplyButtons();
-              fetchServiceStatus(cardEl, ip);
-              showCardUpdating(cardEl, false);
-              return;
-            }
-            if (attempt + 1 < maxAttempts) tryFetchHostInfo(attempt + 1);
-            else { fetchServiceStatus(cardEl, ip); showCardUpdating(cardEl, false); }
-          })
-          .catch(function () {
-            if (attempt + 1 < maxAttempts) tryFetchHostInfo(attempt + 1);
-            else { fetchServiceStatus(cardEl, ip); showCardUpdating(cardEl, false); }
-          });
-      }, delayMs);
-    }
-    tryFetchHostInfo(0);
+    var url = API_BASE + '/host-info?ip=' + encodeURIComponent(ip);
+    pollUntilHostJsonOk(url, 8, 5000, 2000, function (body) {
+      updateHostCardDetails(cardEl, body.data);
+      updateAllHostApplyButtons();
+      refreshAllPanelsAfterUpdate(cardEl, ip);
+      if (summary) summary.textContent = successMessage || '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
+      showCardUpdating(cardEl, false);
+    }, function () {
+      refreshAllPanelsAfterUpdate(cardEl, ip);
+      showCardUpdating(cardEl, false);
+    });
   }
 
   function updateAllHostApplyButtons() {
@@ -546,6 +568,20 @@
     const t = document.createElement('div');
     t.textContent = s;
     return t.innerHTML;
+  }
+
+  var UPDATE_LOG_ROLLBACK_WARNING_HTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
+
+  function applyUpdateLogResponse(pre, warningEl, body) {
+    if (body.status === 'success' && body.data) {
+      pre.textContent = body.data.output !== undefined ? body.data.output : '(비어 있음)';
+      if (warningEl && body.data.recent_rollback) {
+        warningEl.hidden = false;
+        warningEl.innerHTML = UPDATE_LOG_ROLLBACK_WARNING_HTML;
+      }
+    } else {
+      pre.textContent = body.data || '로그를 불러올 수 없습니다.';
+    }
   }
 
   function formatMemory(host) {
@@ -658,15 +694,6 @@
       if (c.getAttribute('data-host-ip') === ip) return c;
       var ips = (c.getAttribute('data-host-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
       if (ips.indexOf(ip) !== -1) return c;
-    }
-    return null;
-  }
-
-  function findHostCardByHostname(container, hostname) {
-    if (!container || !hostname) return null;
-    var cards = container.querySelectorAll('.host-card[data-hostname]');
-    for (var i = 0; i < cards.length; i++) {
-      if (cards[i].getAttribute('data-hostname') === hostname) return cards[i];
     }
     return null;
   }
@@ -811,10 +838,6 @@
     return !!(molHas && configHas);
   }
 
-  function canApplyToRemote() {
-    return !!lastUploadedVersion || hasUploadableSelection();
-  }
-
   function updateUploadButtonState() {
     var uploadBtn = el('upload-btn');
     if (!uploadBtn) return;
@@ -908,22 +931,31 @@
       .then(function (res) { return res.json(); })
       .then(function (body) {
         if (body.status === 'success') {
-          fetchUpdateLog();
           fetchUpdateStatus();
-          var sec = 10;
-          status.textContent = '업데이트 적용이 요청되었습니다. 서버가 재시작됩니다. ' + sec + '초 후 자동 새로고침…';
-          var logPoll = setInterval(function () { fetchUpdateLog(true); }, 1500);
-          var t = setInterval(function () {
-            sec -= 1;
-            if (sec <= 0) {
-              clearInterval(t);
-              clearInterval(logPoll);
-              status.textContent = '새로고침 중…';
-              location.reload();
-              return;
+          if (status) status.textContent = '업데이트 적용 중… 재시작 후 정보를 자동으로 불러옵니다.';
+          var logPoll = setInterval(function () { fetchUpdateLog(true); }, 2000);
+          function finishPoll() {
+            clearInterval(logPoll);
+          }
+          pollUntilHostJsonOk(API_BASE + '/self', 15, 4000, 2000, function (body2) {
+            finishPoll();
+            if (selfCard) updateHostCardDetails(selfCard, body2.data);
+            refreshAllPanelsAfterUpdate(selfCard, '');
+            updateAllHostApplyButtons();
+            if (selfCard) showCardUpdating(selfCard, false);
+            if (status) status.textContent = '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
+            if (applyBtn) fetchUpdateStatus();
+          }, function (networkFailure) {
+            finishPoll();
+            if (selfCard) refreshAllPanelsAfterUpdate(selfCard, '');
+            showCardUpdating(selfCard, false);
+            if (status) {
+              status.textContent = networkFailure
+                ? '연결 실패. 페이지를 새로고침해 보세요.'
+                : '서버 응답이 지연됩니다. 잠시 후 새로고침하세요.';
             }
-            status.textContent = '업데이트 적용이 요청되었습니다. 서버가 재시작됩니다. ' + sec + '초 후 자동 새로고침…';
-          }, 1000);
+            if (applyBtn) fetchUpdateStatus();
+          });
         } else {
           status.textContent = body.data || '적용 실패.';
           showCardUpdating(selfCard, false);
@@ -987,24 +1019,11 @@
     var pre = el('self-update-log-output');
     var warningEl = el('self-update-rollback-warning');
     if (!pre) return;
-    if (!silent) {
-      pre.textContent = '불러오는 중…';
-    }
+    if (!silent) pre.textContent = '불러오는 중…';
     if (warningEl) warningEl.hidden = true;
     fetch(API_BASE + '/update-log')
       .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success' && body.data) {
-          var output = body.data.output !== undefined ? body.data.output : '(비어 있음)';
-          pre.textContent = output;
-          if (warningEl && body.data.recent_rollback) {
-            warningEl.hidden = false;
-            warningEl.innerHTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
-          }
-        } else {
-          pre.textContent = body.data || '로그를 불러올 수 없습니다.';
-        }
-      })
+      .then(function (body) { applyUpdateLogResponse(pre, warningEl, body); })
       .catch(function () {
         pre.textContent = '로그를 불러올 수 없습니다.';
       });
@@ -1030,66 +1049,33 @@
           container.innerHTML = '<div class="versions-loading">설치된 버전이 없습니다.</div>';
           return;
         }
-        var mid = Math.ceil(versions.length / 2);
-        var col0 = versions.slice(0, mid);
-        var col1 = versions.slice(mid);
-        function makeList(part, offset) {
-          var ul = document.createElement('ul');
-          ul.className = 'versions-list';
-          for (var i = 0; i < part.length; i++) {
-            var v = part[i];
-            var idx = offset + i;
-            var li = document.createElement('li');
-            var canDelete = !v.is_current && !v.is_previous;
-            var cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.id = 'versions-cb-' + idx;
-            cb.setAttribute('data-version', v.version);
-            cb.disabled = !canDelete;
-            var label = document.createElement('label');
-            label.htmlFor = cb.id;
-            label.textContent = v.version;
-            var badge = document.createElement('span');
-            badge.className = 'version-badge';
-            if (v.is_current) badge.className += ' is-current';
-            else if (v.is_previous) badge.className += ' is-previous';
-            badge.textContent = v.is_current ? '현재' : (v.is_previous ? '이전' : '');
-            li.appendChild(cb);
-            li.appendChild(badge);
-            li.appendChild(label);
-            ul.appendChild(li);
-          }
-          return ul;
+        renderVersionsListIntoContainer(container, versions, null);
+        var wrapper = container.querySelector('.versions-list-wrapper');
+        if (wrapper) {
+          wrapper.addEventListener('change', updateVersionsRemoveButtonState);
+          updateVersionsRemoveButtonState();
         }
-        var wrapper = document.createElement('div');
-        wrapper.className = 'versions-list-wrapper';
-        wrapper.appendChild(makeList(col0, 0));
-        wrapper.appendChild(makeList(col1, mid));
-        container.innerHTML = '';
-        container.appendChild(wrapper);
-        wrapper.addEventListener('change', updateVersionsRemoveButtonState);
-        updateVersionsRemoveButtonState();
       })
       .catch(function () {
         container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
       });
   }
 
-  function updateVersionsRemoveButtonState() {
-    var removeBtn = el('self-versions-remove-btn');
-    if (!removeBtn) return;
-    var container = el('self-versions-list-container');
-    var checked = container ? container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked') : [];
+  function syncVersionsRemoveButton(removeBtn, listContainer) {
+    if (!removeBtn || !listContainer) return;
+    var checked = listContainer.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
     removeBtn.disabled = checked.length === 0;
+  }
+
+  function updateVersionsRemoveButtonState() {
+    syncVersionsRemoveButton(el('self-versions-remove-btn'), el('self-versions-list-container'));
   }
 
   function updateVersionsRemoveButtonStateForCard(cardEl) {
     if (!cardEl) return;
-    var removeBtn = cardEl.querySelector('.card-versions-remove-btn');
-    var container = cardEl.querySelector('.card-right-versions-list-container');
-    if (!removeBtn) return;
-    var checked = container ? container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked') : [];
-    removeBtn.disabled = checked.length === 0;
+    syncVersionsRemoveButton(
+      cardEl.querySelector('.card-versions-remove-btn'),
+      cardEl.querySelector('.card-right-versions-list-container'));
   }
 
   function fetchUpdateLogForCard(cardEl, ip) {
@@ -1101,18 +1087,7 @@
     if (warningEl) warningEl.hidden = true;
     fetch(API_BASE + '/update-log?ip=' + encodeURIComponent(ip))
       .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success' && body.data) {
-          var output = body.data.output !== undefined ? body.data.output : '(비어 있음)';
-          pre.textContent = output;
-          if (warningEl && body.data.recent_rollback) {
-            warningEl.hidden = false;
-            warningEl.innerHTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
-          }
-        } else {
-          pre.textContent = body.data || '로그를 불러올 수 없습니다.';
-        }
-      })
+      .then(function (body) { applyUpdateLogResponse(pre, warningEl, body); })
       .catch(function () {
         pre.textContent = '로그를 불러올 수 없습니다.';
       });

@@ -56,11 +56,20 @@ go build -o mol -ldflags "-X main.Version=1.0.0" .
 
 ```bash
 ./mol
-# 또는 설정 파일 지정
+# 설정 파일 지정
 ./mol -config /path/to/config.yaml
-# 또는 환경변수
+# 환경변수
 MOL_CONFIG=/path/to/config.yaml ./mol
 ```
+
+**CLI**
+
+| 옵션 | 설명 |
+|------|------|
+| (인자 없음) | HTTP 서버 + UDP Discovery 기동 |
+| `-h`, `--help` | 사용법 출력 |
+| `--version`, `-version` | 빌드 버전 한 줄 출력 후 종료 |
+| `--nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
 
 ## 접속
 
@@ -69,24 +78,26 @@ MOL_CONFIG=/path/to/config.yaml ./mol
 
 ## 설정
 
-`config.yaml` (또는 `MOL_CONFIG`로 지정한 경로). 항목은 PRD §7 참고.
+`config.yaml` (또는 `MOL_CONFIG`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
 
-- `discovery_broadcast_address`: broadcast IP (예: 192.168.0.255)
-- `discovery_udp_port`: 9999
-- `http_port`: 8888
-- `discovery_timeout_seconds`: 10
-- `discovery_deduplicate`: true
-- `version`: 비우면 빌드 시 ldflags 값 사용
-- `systemctl_service_name`: (선택) 서비스 상태 조회용, 기본 `mol.service`
-- `ssh_user`: (선택) 발견된 호스트 SSH 사용자, 기본 `kt`
+- **Discovery 브로드캐스트**: 기본은 **NIC에서 brd 자동 수집**(bonding·bridge·vlan 등 포함, `mol --nic-brd`로 확인). 수집이 비어 있을 때만 `discovery_broadcast_address`(단일) 사용, 그다음 `255.255.255.255`. `discovery_broadcast_addresses` 복수 설정은 사용하지 않음.
+- `discovery_udp_port`: 9999 · `http_port`: 8888 · `discovery_timeout_seconds` · `discovery_deduplicate`
+- `deploy_base` / `install_prefix`(비우면 deploy_base): 스테이징·versions·update.sh 경로
+- `version`: 비우면 ldflags 빌드 버전
+- `systemctl_service_name`: 기본 `mol.service`
+- **SSH** (`ssh_port` 기본 22, `ssh_user` 기본 **root**): 원격 호스트의 **서비스 시작/중지**만 SSH. **상태 조회·재시작**은 원격 mol **HTTP API**(8888)를 통해 처리한다.
 
-### 웹에서 systemctl status 표시내 정보·발견된 호스트 카드에 `systemctl status mol.service` 결과를 표시한다.  
-원격 호스트는 `ssh <ssh_user>@<host_ip> "systemctl status <systemctl_service_name>"` 로 조회한다. mol.service는 root로 실행되므로 sudo를 사용하지 않으며, 원격에서 비밀번호 없이 동작하려면 SSH 공개키 인증만 설정하면 된다.
+### 웹에서 systemctl status
 
-**Permission denied (publickey) 가 나올 때**  
-mol을 systemd 서비스로 돌리면 **실행 사용자**가 터미널의 kt와 다를 수 있다(예: root).  
-그러면 ssh가 `kt` 의 `~/.ssh/` 키를 찾지 못해 공개키 인증에 실패한다.
+로컬·원격 호스트 카드에 `systemctl status` 결과를 표시한다.
 
-- **방법 1**: 서비스 유닛에서 **User=kt** 로 실행하도록 설정. (kt 의 홈·키를 그대로 사용.)
-- **방법 2**: 서비스를 root 등 다른 사용자로 유지할 경우, `config.yaml` 에 **ssh_identity_file** 을 둔다.  
-  예: `ssh_identity_file: "/home/kt/.ssh/id_rsa"` (root가 읽을 수 있게 권한 조정) 또는 전용 키를 `/etc/mol/id_rsa` 등에 두고 그 공개키를 원격의 `authorized_keys` 에 등록한 뒤 `ssh_identity_file: "/etc/mol/id_rsa"` 로 지정.
+- **로컬**: mol이 직접 `systemctl status`(sudo 없음, 보통 root 서비스).
+- **원격 상태**: 중앙 mol이 **원격 mol의 API**로 조회한다. SSH 불필요.
+- **원격 시작/중지**: `ssh -p <ssh_port> <ssh_user>@<host_ip> systemctl start|stop …` — 키 기반 인증 필요.
+
+**SSH Permission denied (publickey)**  
+mol 프로세스 사용자(예: root)의 `~/.ssh`(또는 해당 사용자로 `ssh`가 쓸 수 있는 키)가 원격 `authorized_keys`와 맞아야 한다. 서비스를 특정 사용자로 돌리면 그 사용자 홈의 SSH 키가 사용된다.
+
+---
+
+자세한 동작(Discovery 메시지, 업데이트 API, 웹 UI 흐름 등)은 **PRD.md** 를 본다.

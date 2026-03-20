@@ -55,21 +55,37 @@ go build -o mol -ldflags "-X main.Version=1.0.0" .
 ## 실행
 
 ```bash
-./mol
-# 설정 파일 지정
+# 서비스 기동(설정 파일 필수)
 ./mol -config /path/to/config.yaml
-# 환경변수
-MOL_CONFIG=/path/to/config.yaml ./mol
+# 또는 systemd 등에서
+./mol -config /opt/mol/config.yaml
 ```
+
+인자 없이 `./mol`만 실행하면 버전과 `-config` 안내가 출력되고 **서비스는 시작하지 않습니다.**
 
 **CLI**
 
 | 옵션 | 설명 |
 |------|------|
-| (인자 없음) | HTTP 서버 + UDP Discovery 기동 |
+| `-config <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동 |
+| (인자 없음) | 버전·`-config` 안내 출력 후 종료 |
 | `-h`, `--help` | 사용법 출력 |
 | `--version`, `-version` | 빌드 버전 한 줄 출력 후 종료 |
 | `--nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
+| `--discovery` | 설정 파일 없이 UDP Discovery만 수행. `mol --discovery -h` 로 플래그 확인 |
+
+**`--discovery` 예** (로컬 mol 서비스 없이 원격만 탐색):
+
+```bash
+mol --discovery --dest-port=9999 --src-port=9998 --timeout=10
+```
+
+- 시작 시 **브로드캐스트(brd) 주소**를 모두 출력합니다. **다중 NIC**에서는 서비스 mol과 같이 **인터페이스별로 `로컬IP:src-port` UDP 소켓**을 열어 각 brd로 보냅니다(단일 `0.0.0.0`만 쓸 때보다 src≠dest·다중 서브넷에서 안정적).
+- 브로드캐스트 **목적지**는 `dest-port`(원격 mol의 Discovery listen 포트)입니다. 요청 JSON에 **`reply_udp_port`**(로컬 바인드 포트)를 넣어, 원격 mol은 응답을 **그 포트**로 보냅니다. (구버전 mol은 `reply_udp_port`를 무시하고 패킷의 소스 포트만 쓰므로, 그 경우 원격도 최신 바이너리로 맞추는 것이 좋습니다.)
+- 결과 한 줄의 `[...]`에는 **응답한 IP**만 넣습니다(각 UDP 패킷의 실제 발신지 = `responded_from_ip`). 원격의 모든 NIC 주소(`host_ips`)는 포함하지 않으며, mol/웹 접속에 쓸 수 있는 주소와 맞춥니다.
+- 각 줄 앞에 **`[Local]`** / **`[Remote]`** 를 붙입니다. (1) 로컬 `hostinfo`의 **CPU UUID**와 응답 `cpu_uuid`가 같으면(대소문자 무시) Local. (2) 그렇지 않아도 **응답한 IP** 중 하나가 이 머신의 IPv4와 같으면 Local(서비스 프로세스와 CLI의 UUID 수집 차이 등에 대한 보조).
+- `src-port`가 이미 사용 중이면 바인딩 오류로 종료합니다.
+- 방화벽이 **들어오는 UDP**(원격 mol의 응답)를 `src-port`로 허용하는지 확인하세요. 응답이 타임아웃 직전에 도착하는 경우를 위해 수신은 카운트다운 종료 후 잠시 더 열어 둡니다.
 
 ## 접속
 
@@ -101,3 +117,5 @@ mol 프로세스 사용자(예: root)의 `~/.ssh`(또는 해당 사용자로 `ss
 ---
 
 자세한 동작(Discovery 메시지, 업데이트 API, 웹 UI 흐름 등)은 **PRD.md** 를 본다.
+
+Discovery CLI·프로토콜 변경 요약은 **[CHANGELOG.md](CHANGELOG.md)** 를 본다.

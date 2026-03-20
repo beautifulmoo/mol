@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-// newRequestID returns a UUID-like string (e.g. "uuid-1234" style) for request_id.
-func newRequestID() string {
+// NewRequestID returns a UUID-like string (e.g. "uuid-1234" style) for request_id.
+func NewRequestID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return fmt.Sprintf("req-%d", b[0])

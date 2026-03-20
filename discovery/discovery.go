@@ -100,9 +100,21 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 	if req.Service != d.cfg.ServiceName {
 		return
 	}
-	log.Printf("discovery: received DISCOVERY_REQUEST from %s", from)
+	log.Printf("discovery: received DISCOVERY_REQUEST from %s (reply_udp_port=%d)", from, req.ReplyUDPPort)
 	hostname, hostIP, cpuInfo, cpuUsage, memTotalMB, memUsedMB, memUsagePct, cpuUUID := d.getter()
-	to := &net.UDPAddr{IP: from.IP, Port: d.cfg.DiscoveryUDPPort}
+	// Prefer explicit reply_udp_port from JSON (CLI and fixed-port clients); else UDP source port; else discovery port.
+	replyPort := from.Port
+	if req.ReplyUDPPort > 0 {
+		replyPort = req.ReplyUDPPort
+	}
+	if replyPort == 0 {
+		replyPort = d.cfg.DiscoveryUDPPort
+	}
+	replyIP := from.IP
+	if v4 := replyIP.To4(); v4 != nil {
+		replyIP = v4
+	}
+	to := &net.UDPAddr{IP: replyIP, Port: replyPort}
 	// Prefer sending from the local IP that is in the same subnet as the requester, so the response has the expected source IP (e.g. .236 when replying to .236, .237 when replying to .237).
 	sendFrom := localIPInSameSubnetAs(from.IP)
 	if sendFrom != nil {
@@ -113,7 +125,8 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 			hostIP = out
 		}
 	}
-	// Send only host_ip (this response's source / outbound IP). Requester aggregates IPs from multiple responses (same host, different interfaces).
+	// HostIP is this reply path only. Do not send HostIPs over UDP — clients use UDP source
+	// (responded_from_ip) as the reachable addresses; full NIC lists belong in HTTP /self only.
 	resp := DiscoveryResponse{
 		Type:               "DISCOVERY_RESPONSE",
 		Service:            d.cfg.ServiceName,
@@ -149,7 +162,11 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 		}
 	}
 	log.Printf("discovery: sending DISCOVERY_RESPONSE to %s (hostname=%s)", to, hostname)
-	connOut, err := net.DialUDP("udp", nil, to)
+	network := "udp"
+	if to.IP.To4() != nil {
+		network = "udp4"
+	}
+	connOut, err := net.DialUDP(network, nil, to)
 	if err != nil {
 		log.Printf("discovery: failed to DialUDP to %s: %v", to, err)
 		return
@@ -228,12 +245,12 @@ func localIPInSameSubnetAs(remote net.IP) net.IP {
 	return first
 }
 
-// localIPsInSubnet returns local IPv4 addresses that belong to the same subnet as the given broadcast IP.
+// LocalIPsInSubnet returns local IPv4 addresses that belong to the same subnet as the given broadcast IP.
 // It checks both /24 and /23 so that:
 //   - /24: e.g. broadcast 172.29.236.255 → local 172.29.236.x (other system may be 172.29.236.0/24)
 //   - /23: e.g. broadcast 172.29.237.255 → local 172.29.236.x and 172.29.237.x (same /23)
 // A local IP is included if it matches the broadcast in /24 or in /23, so both network sizes work.
-func localIPsInSubnet(broadcast net.IP) []net.IP {
+func LocalIPsInSubnet(broadcast net.IP) []net.IP {
 	broadcast = broadcast.To4()
 	if broadcast == nil {
 		return nil
@@ -281,6 +298,7 @@ func (d *Discovery) sendDiscoveryRequest(data []byte, addr *net.UDPAddr, localIP
 			continue
 		}
 		seen[key] = true
+		sent := false
 		for _, conn := range d.conns {
 			la, ok := conn.LocalAddr().(*net.UDPAddr)
 			if !ok || la == nil || !la.IP.Equal(lip) {
@@ -289,7 +307,13 @@ func (d *Discovery) sendDiscoveryRequest(data []byte, addr *net.UDPAddr, localIP
 			if _, err := conn.WriteToUDP(data, addr); err != nil {
 				log.Printf("discovery: send from %s to %s: %v", lip, addr, err)
 			}
+			sent = true
 			break
+		}
+		if !sent {
+			if _, err := d.conns[0].WriteToUDP(data, addr); err != nil {
+				log.Printf("discovery: fallback send to %s: %v", addr, err)
+			}
 		}
 	}
 	return nil
@@ -319,11 +343,12 @@ func (d *Discovery) handleResponse(raw []byte, from *net.UDPAddr, recvOn string)
 
 // DoDiscovery sends a DISCOVERY_REQUEST to each configured broadcast address and collects responses until timeout. Deduplicates by host_ip:service_port if configured.
 func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
-	requestID := newRequestID()
+	requestID := NewRequestID()
 	req := DiscoveryRequest{
-		Type:      "DISCOVERY_REQUEST",
-		Service:   d.cfg.ServiceName,
-		RequestID: requestID,
+		Type:         "DISCOVERY_REQUEST",
+		Service:      d.cfg.ServiceName,
+		RequestID:    requestID,
+		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -352,7 +377,7 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 		close(ch)
 	}()
 	for _, addr := range addrs {
-		localIPs := localIPsInSubnet(addr.IP)
+		localIPs := LocalIPsInSubnet(addr.IP)
 		if err = d.sendDiscoveryRequest(data, addr, localIPs); err != nil {
 			return nil, err
 		}
@@ -422,11 +447,12 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 
 // DoDiscoveryStream sends a DISCOVERY_REQUEST to each configured broadcast address and yields each response on the returned channel as it arrives (after self-filter and dedup). The channel is closed when the timeout expires. Caller must consume the channel until closed.
 func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
-	requestID := newRequestID()
+	requestID := NewRequestID()
 	req := DiscoveryRequest{
-		Type:      "DISCOVERY_REQUEST",
-		Service:   d.cfg.ServiceName,
-		RequestID: requestID,
+		Type:         "DISCOVERY_REQUEST",
+		Service:      d.cfg.ServiceName,
+		RequestID:    requestID,
+		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -458,7 +484,7 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 		}()
 
 		for _, addr := range addrs {
-			localIPs := localIPsInSubnet(addr.IP)
+			localIPs := LocalIPsInSubnet(addr.IP)
 			if err = d.sendDiscoveryRequest(data, addr, localIPs); err != nil {
 				return
 			}
@@ -545,11 +571,12 @@ func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	requestID := newRequestID()
+	requestID := NewRequestID()
 	req := DiscoveryRequest{
-		Type:      "DISCOVERY_REQUEST",
-		Service:   d.cfg.ServiceName,
-		RequestID: requestID,
+		Type:         "DISCOVERY_REQUEST",
+		Service:      d.cfg.ServiceName,
+		RequestID:    requestID,
+		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {

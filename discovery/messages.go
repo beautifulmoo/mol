@@ -5,14 +5,17 @@ type DiscoveryRequest struct {
 	Type      string `json:"type"` // "DISCOVERY_REQUEST"
 	Service   string `json:"service"`
 	RequestID string `json:"request_id"`
+	// ReplyUDPPort is the UDP port the responder must send DISCOVERY_RESPONSE to (requester's listen port).
+	// When set (>0), it overrides the packet's source port so discovery works even if from.Port is wrong or 0.
+	ReplyUDPPort int `json:"reply_udp_port,omitempty"`
 }
 
-// DiscoveryResponse is sent unicast to requester IP:discovery_port.
+// DiscoveryResponse is sent unicast to requester IP:reply port (UDP source port or reply_udp_port from request).
 type DiscoveryResponse struct {
 	Type                string   `json:"type"` // "DISCOVERY_RESPONSE"
 	Service             string   `json:"service"`
 	HostIP              string   `json:"host_ip"`
-	HostIPs             []string `json:"host_ips,omitempty"` // used by GET /self only; not sent in UDP DISCOVERY_RESPONSE
+	HostIPs             []string `json:"host_ips,omitempty"` // HTTP /self 등에서만 채움; UDP Discovery 응답에는 넣지 않음(접속 가능 IP는 responded_from_ip)
 	Hostname            string   `json:"hostname"`
 	ServicePort         int     `json:"service_port"`
 	Version             string  `json:"version"`

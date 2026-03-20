@@ -26,17 +26,38 @@ var Version string
 const helpText = `mol — Discovery 및 웹 UI가 있는 mol 서비스
 
 사용법:
-  mol                    옵션 없이 실행 시 HTTP 서버 + Discovery 동작 (기본)
-  mol -config <파일>     설정 파일 경로 지정 (기본: config.yaml 또는 MOL_CONFIG)
+  mol -config <파일>     설정 파일을 지정해야 HTTP 서버 + Discovery가 시작됩니다 (필수)
+  mol                    인자 없이 실행 시 버전 안내 후 종료 (서비스는 시작하지 않음)
 
 옵션:
   -h, --help             이 도움말 출력
   -version, --version    버전 출력 후 종료
   --nic-brd              물리 NIC별 IPv4 브로드캐스트(brd) 주소 출력 (Discovery용 확인) 후 종료
+  --discovery [flags]    설정 없이 UDP Discovery만 수행 (mol --discovery -h)
+
 `
 
 //go:embed web/*
 var webFS embed.FS
+
+func molVersionLine() string {
+	v := Version
+	if v == "" {
+		v = "devel"
+	}
+	return "mol " + v
+}
+
+func printMustSpecifyConfig() {
+	fmt.Println(molVersionLine())
+	fmt.Println()
+	fmt.Println("HTTP 서비스와 Discovery를 시작하려면 설정 파일을 지정하세요.")
+	fmt.Println("  mol -config <config.yaml>")
+	fmt.Println()
+	fmt.Println("자세한 옵션은 다음을 실행하세요.")
+	fmt.Println("  mol -h")
+	fmt.Println("  mol --help")
+}
 
 func main() {
 	if len(os.Args) >= 2 {
@@ -45,11 +66,7 @@ func main() {
 			fmt.Print(helpText)
 			os.Exit(0)
 		case "--version", "-version":
-			v := Version
-			if v == "" {
-				v = "devel"
-			}
-			fmt.Println("mol", v)
+			fmt.Println(molVersionLine())
 			os.Exit(0)
 		case "--nic-brd":
 			pairs := hostinfo.GetPhysicalNICBrdPairs()
@@ -57,12 +74,27 @@ func main() {
 				fmt.Printf("%s : %s\n", p.Iface, p.Brd)
 			}
 			os.Exit(0)
+		case "--discovery":
+			runDiscoveryCLI(os.Args[2:])
+			os.Exit(0)
 		}
 	}
-	cfgPath := ""
-	if len(os.Args) > 1 && os.Args[1] == "-config" && len(os.Args) > 2 {
-		cfgPath = os.Args[2]
+
+	if len(os.Args) == 1 {
+		printMustSpecifyConfig()
+		os.Exit(0)
 	}
+	if os.Args[1] != "-config" {
+		fmt.Fprintf(os.Stderr, "알 수 없는 인자: %q\n\n", os.Args[1])
+		printMustSpecifyConfig()
+		os.Exit(1)
+	}
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "mol: -config 다음에 설정 파일 경로가 필요합니다.")
+		fmt.Fprintln(os.Stderr, "예: mol -config /opt/mol/config.yaml")
+		os.Exit(1)
+	}
+	cfgPath := os.Args[2]
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatal("config: ", err)
@@ -86,7 +118,8 @@ func main() {
 		},
 	}
 	ctx := context.Background()
-	pc0, err := lc.ListenPacket(ctx, "udp", portStr)
+	// udp4 keeps IPv4 sockaddr handling consistent with discovery CLI and reply_udp_port handling.
+	pc0, err := lc.ListenPacket(ctx, "udp4", portStr)
 	if err != nil {
 		log.Fatal("listen discovery: ", err)
 	}
@@ -111,7 +144,7 @@ func main() {
 				continue
 			}
 			seenIP[ip] = true
-			pc, err := lc.ListenPacket(ctx, "udp", net.JoinHostPort(ip, strconv.Itoa(cfg.DiscoveryUDPPort)))
+			pc, err := lc.ListenPacket(ctx, "udp4", net.JoinHostPort(ip, strconv.Itoa(cfg.DiscoveryUDPPort)))
 			if err != nil {
 				log.Printf("discovery: bind %s:%d failed: %v (responses to this IP may not be received)", ip, cfg.DiscoveryUDPPort, err)
 				continue

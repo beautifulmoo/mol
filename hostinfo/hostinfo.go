@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,35 @@ func primaryIPv4() string {
 		}
 	}
 	return ""
+}
+
+// AllIPv4Addresses returns all non-loopback IPv4 addresses on up interfaces, sorted.
+func AllIPv4Addresses() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
+				continue
+			}
+			s := ipnet.IP.String()
+			if _, ok := seen[s]; !ok {
+				seen[s] = struct{}{}
+				out = append(out, s)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func cpuInfoLinux() (string, error) {

@@ -24,8 +24,8 @@
 ### 3.1 흐름
 
 - **요청**: 한 호스트(A)가 **Discovery에 사용할 broadcast 주소**의 **UDP 9999** 번 포트로 Discovery 요청을 보낸다. 브로드캐스트 주소는 **인터페이스 자동 수집**(아래 3.1.1)으로 얻은 IPv4 brd를 사용하며, 수집이 비어 있을 때만 설정 `discovery_broadcast_address`(단일)를 fallback, 그것도 없으면 255.255.255.255를 쓴다. **각 brd 주소마다** 한 번씩 요청을 전송하여 여러 서브넷을 탐색한다.
-- **응답**: broadcast를 수신한 각 호스트는 Discovery 응답을 **요청을 보낸 호스트(A)의 IP:9999** 로 **unicast** 로 보낸다.
-- 즉, 요청·응답 모두 **UDP 포트 9999**를 사용하며, 응답 수신도 A가 UDP 9999에서 listen하여 처리한다.
+- **응답**: broadcast를 수신한 각 호스트는 Discovery 응답을 **unicast**로 보낸다. **DISCOVERY_REQUEST** JSON에 **`reply_udp_port`**(요청자가 응답을 받을 UDP 포트)가 있으면 **그 포트**를 우선한다(최신 mol). 없거나 0이면 **UDP 패킷의 소스 포트**, 그것도 0이면 discovery 포트로 보낸다. 이렇게 해서 CLI가 `--src-port`와 `--dest-port`를 다르게 써도, 커널에서 소스 포트가 잘못 보이는 환경에서도 응답이 맞게 간다.
+- **요청**은 브로드캐스트 **목적지 포트** `discovery_udp_port`(기본 9999)로 보낸다. **응답**은 요청자의 **소스 포트**로 온다(수신은 그 포트에서 하면 된다).
 - **브로드캐스트 송신**: UDP 소켓에 **SO_BROADCAST** 옵션을 설정하여 broadcast 주소로의 전송을 허용한다.
 
 ### 3.1.1 Discovery 브로드캐스트 주소 수집 (상세)
@@ -85,9 +85,12 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 {
   "type": "DISCOVERY_REQUEST",
   "service": "mol",
-  "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+  "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "reply_udp_port": 9998
 }
 ```
+
+- `reply_udp_port`(선택, 0이면 생략 가능): 응답을 보낼 **목적지 UDP 포트**. CLI·최신 mol은 로컬 바인드 포트를 넣는다. 응답자는 이 값이 0보다 크면 **UDP 패킷의 소스 포트보다 우선**한다.
 
 **응답 예시** (호스트 정보 포함)
 
@@ -152,11 +155,12 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 4.1 CLI (명령줄)
 
-- **옵션 없이 실행**: `mol` — HTTP 서버 및 Discovery를 기동(기본 동작).
-- **`-config <파일>`**: 설정 파일 경로 지정(기본: config.yaml 또는 환경변수 MOL_CONFIG).
+- **인자 없이 실행**: `mol` — 버전과 `-config <파일>` 필요 안내를 출력하고 종료한다. HTTP 서비스는 **`-config`로 설정 파일을 지정했을 때만** 기동한다.
+- **`-config <파일>`**: 설정 파일 경로(필수 인자). 이 옵션으로만 HTTP·Discovery가 기동한다. systemd 등에서는 `ExecStart=.../mol -config /path/to/config.yaml` 형태로 지정한다.
 - **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료.
 - **`-version`, `--version`**: 버전 문자열 출력 후 종료.
 - **`--nic-brd`**: 물리 NIC별 IPv4 브로드캐스트(brd) 주소를 `NIC이름 : brd주소` 형식으로 출력(Discovery에 사용되는 주소 확인용) 후 종료.
+- **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `mol`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 서비스 mol과 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만]` 형식으로, **`responded_from_ip`**만 취합한다. Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
 
 ---
 
@@ -357,7 +361,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 ## 7. 설정
 
 - **포맷**: **YAML**
-- **위치**: 구현 시 결정 (예: 실행 파일 기준 상대 경로 `config.yaml`, 또는 환경변수 `MOL_CONFIG`로 경로 지정)
+- **위치**: 구현 시 결정. 실행 시 **`mol -config <경로>`** 로 지정한다(인자 없이 기본 `config.yaml` 자동 로드는 하지 않음). 로컬 개발에서 `MOL_CONFIG` 환경변수를 쓰려면 `mol -config "$MOL_CONFIG"` 처럼 명시적으로 넘긴다.
 
 ### 7.1 설정 항목 (최소)
 
@@ -403,7 +407,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **UDP Discovery**: 포트 9999에서 listen, **SO_BROADCAST** 설정 후 broadcast 주소로 Discovery 요청 송신, 응답은 unicast로 수신.
 - **Pending**: 요청 전송 **전에** request_id → 수신 채널을 pending에 등록하여 빠른 응답이 버려지지 않도록 함. 타임아웃 시 반환 전 채널 drain.
 - **Self 제거**: 수집 시 **CPU UUID**로 자기 식별(같으면 제외). CPU UUID 없을 때만 IP+ServicePort 폴백. 응답의 `host_ip`는 요청자 기준 outbound IP로 채움.
-- Discovery 요청 수신 시 자신의 정보를 담은 DISCOVERY_RESPONSE를 요청자 IP:9999로 unicast 전송.
+- Discovery 요청 수신 시 자신의 정보를 담은 DISCOVERY_RESPONSE를 **요청자 IP 및 요청 UDP 패킷의 소스 포트**로 unicast 전송(소스 포트가 0이면 discovery_udp_port로 폴백).
 - **자기 정보 API**: GET /api/v1/self — 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하고, `host_ip`는 그중 첫 번째. 버전, CPU UUID, CPU, 메모리 등 포함.
 - **cpu_uuid(호스트 식별자) 확보 순서(Linux)**: `/proc/cpuinfo`의 `Serial`(전부 0·Not Set 등 무의미하면 스킵) → `dmidecode -s system-uuid` → `/sys/class/dmi/id/product_uuid` → `/etc/machine-id` → `/var/lib/dbus/machine-id`. 최소 설치 등 **dmidecode 미설치**여도 **machine-id**로 대부분 채워진다. VM 템플릿 복제 시 여러 대가 동일 machine-id를 가질 수 있으니 운영 시 주의.
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
@@ -421,7 +425,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - [ ] Go, 소스 경로 `~/work/mol`
 - [ ] 단일 실행 파일, net/http 만 사용
 - [ ] 포트 8888 (HTTP), 9999 (UDP Discovery), UDP SO_BROADCAST 설정
-- [ ] Discovery: UDP broadcast 요청, 응답은 요청자 IP:9999 로 unicast; pending 등록 후 전송, 타임아웃 시 drain
+- [ ] Discovery: UDP broadcast 요청(목적지 포트 discovery_udp_port), 응답은 요청자 IP:**요청 소스 포트**로 unicast; pending 등록 후 전송, 타임아웃 시 drain
 - [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합
 - [ ] Self 제거: **CPU UUID**로 자기 식별(같으면 제외), CPU UUID 없을 때만 IP+ServicePort 폴백
 - [ ] Discovery 브로드캐스트: **3.1.1** 인터페이스 brd 자동 수집(operstate=up, 이름·/virtual/ 필터, bonding·bridge·vlan 포함); 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; `mol --nic-brd`로 확인
@@ -441,7 +445,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - [ ] 원격 API 프록시: update-log·current-config(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 mol 해당 API 호출 후 응답 전달
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
 - [ ] 설정: systemctl_service_name, deploy_base, **install_prefix**(비면 deploy_base, versions·installer용), discovery_broadcast_address(fallback만), ssh_port(기본 22), ssh_user(기본 root) (선택)
-- [ ] **CLI**: 옵션 없이 실행 = HTTP 서버 + Discovery; `-h`/`--help` 도움말; `--version`/`-version` 버전 출력; `--nic-brd` 물리 NIC brd 주소 출력(Discovery 확인용); `-config <파일>` 설정 경로
+- [ ] **CLI**: **`-config <파일>`** 로만 HTTP 서버 + Discovery 기동; 인자 없이 실행 시 안내 후 종료; `-h`/`--help`; `--version`/`-version`; `--nic-brd`; **`--discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`)
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] 업데이트: deploy_base, **staging/**, versions/, update.sh, rollback.sh; mol·config 검증; 로컬 적용 후 **페이지 전체 새로고침 없이** `/self` 폴링 → 업데이트 기록·config·versions·상태·update-status 현행화; 원격 적용 후 host-info 폴링(최대 8회) → 동일 패널 현행화; 로그 폴링 2초 간격; **GET /version** 헬스; recent_rollback·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(mol+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 mol·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)

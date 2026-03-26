@@ -1,5 +1,9 @@
 # 변경 이력 (mol)
 
+## 레이아웃
+
+- **`maintenance/`**: `discovery`, `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. Go import는 `mol/maintenance/<패키지>` 형태.
+
 ## Discovery / CLI (최근)
 
 ### `mol --discovery` (설정 파일 없이 UDP Discovery만)

@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"mol/config"
-	"mol/discovery"
-	"mol/hostinfo"
-	"mol/server"
+	"mol/maintenance/discovery"
+	"mol/maintenance/hostinfo"
+	"mol/maintenance/server"
 )
 
 // Version is set at build time: -ldflags "-X main.Version=1.2.3"
@@ -37,7 +37,7 @@ const helpText = `mol — Discovery 및 웹 UI가 있는 mol 서비스
 
 `
 
-//go:embed web/*
+//go:embed maintenance/web/*
 var webFS embed.FS
 
 func molVersionLine() string {
@@ -191,13 +191,13 @@ func main() {
 	disc := discovery.New(discCfg, conns, getter)
 	go disc.Run()
 
-	// Web FS: embed embeds "web/*" at build time; no web/ dir needed at runtime.
-	fsys, err := fs.Sub(webFS, "web")
+	// Web FS: embed embeds "maintenance/web/*" at build time; no separate web/ at runtime.
+	fsys, err := fs.Sub(webFS, "maintenance/web")
 	if err != nil {
 		log.Fatal("web: embedded FS: ", err)
 	}
 	if _, err := fsys.Open("index.html"); err != nil {
-		log.Fatal("web: index.html not in binary (build from repo root with web/ present)")
+		log.Fatal("web: index.html not in binary (build from repo root with maintenance/web/ present)")
 	}
 	getHostInfo := func() (hostinfo.Info, error) {
 		info, err := hostinfo.Get()

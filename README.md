@@ -9,7 +9,7 @@
 
 ## 빌드
 
-**웹 페이지(web/)는 빌드 시 바이너리에 포함(embed)됩니다.** 배포 시 실행 파일과 config.yaml만 옮기면 됩니다.
+**웹 정적 파일(`maintenance/web/`)은 빌드 시 바이너리에 포함(embed)됩니다.** 배포 시 실행 파일과 config.yaml만 옮기면 됩니다.
 
 **소스 수정 후**: 저장만으로는 자동 빌드되지 않습니다. 터미널에서 아래 중 하나를 실행하세요.
 
@@ -25,13 +25,13 @@ cd ~/work/mol
 go build -o mol -ldflags "-X main.Version=1.0.0" .
 ```
 
-- 반드시 **web/ 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `web/index.html`, `web/app.js`, `web/style.css` 가 바이너리에 들어갑니다.
+- 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
 - 버전을 넣어 빌드하려면: `make build VERSION=0.0.2` 또는 `go build -o mol -ldflags "-X main.Version=0.0.2" .`
 
 ## 배포
 
 - **mol** 실행 파일 + **config.yaml** 만 대상 호스트로 복사하면 됨.
-- web/ 디렉터리는 필요 없음 (이미 바이너리 안에 포함됨).
+- 배포 시 `maintenance/web/` 디렉터리는 필요 없음 (이미 바이너리 안에 포함됨).
 
 ### 업데이트·롤백 스크립트 (update.sh, rollback.sh)
 

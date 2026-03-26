@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"mol/discovery"
-	"mol/hostinfo"
+	"mol/maintenance/discovery"
+	"mol/maintenance/hostinfo"
 )
 
 // runDiscoveryCLI runs standalone UDP discovery (no config file, no HTTP server).

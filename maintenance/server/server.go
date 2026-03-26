@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"mol/config"
-	"mol/discovery"
-	"mol/hostinfo"
-	"mol/svcstatus"
+	"mol/maintenance/discovery"
+	"mol/maintenance/hostinfo"
+	"mol/maintenance/svcstatus"
 )
 
 // elfMagic is the first 4 bytes of an ELF executable.

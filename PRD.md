@@ -6,7 +6,7 @@
 - **언어**: Go
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
-- **소스 레이아웃**: Discovery·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지(`discovery`, `hostinfo`, `server`, `svcstatus`, `web`)로 구성된다. 루트 `main.go`는 `mol/maintenance/...` 를 import한다.
+- **소스 레이아웃**: Discovery·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지(`discovery`, `hostinfo`, `server`, `svcstatus`, `web`)로 구성된다. 루트 `main.go`는 `mol/maintenance/...` 를 import한다. **설정(YAML)** 은 **`internal/config`** 패키지(`configFile2.go` 등)에서 로드한다.
 - **웹 서버**: Go 표준 라이브러리 **net/http** 만 사용 (외부 웹 프레임워크 미사용)
 
 ---

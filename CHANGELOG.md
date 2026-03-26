@@ -3,6 +3,7 @@
 ## 레이아웃
 
 - **`maintenance/`**: `discovery`, `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. Go import는 `mol/maintenance/<패키지>` 형태.
+- **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `mol/internal/config`.
 
 ## Discovery / CLI (최근)
 

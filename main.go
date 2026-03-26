@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"mol/config"
+	"mol/internal/config"
 	"mol/maintenance/discovery"
 	"mol/maintenance/hostinfo"
 	"mol/maintenance/server"

@@ -6,7 +6,8 @@
 - **언어**: Go
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
-- **소스 레이아웃**: Discovery·Discovery CLI(`discoverycli`)·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지로 구성된다. 루트 `main.go`는 `mol/maintenance/...` 를 import한다. **설정(YAML)** 은 **`internal/config`** 에서 로드한다. **업데이트/롤백 셸**은 루트 `update.sh`·`rollback.sh` 를 소스로 하여 **`internal/updatescripts/`** 에 복사 후 **`//go:embed`** 로 바이너리에 포함한다(`Makefile`이 빌드 전 동기화).
+- **소스 레이아웃**: Discovery·Discovery CLI(`discoverycli`)·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지로 구성된다. 루트 `main.go`는 `mol/maintenance` 만 import한다. **설정(YAML)** 은 **`internal/config`** 에서 로드한다. **업데이트/롤백 셸**은 루트 `update.sh`·`rollback.sh` 를 소스로 하여 **`internal/updatescripts/`** 에 복사 후 **`//go:embed`** 로 바이너리에 포함한다(`Makefile`이 빌드 전 동기화).
+- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.Version`**(ldflags `-X main.Version=…`)과 **`main()`** 만 두고, **`maintenance.Run(main.Version, os.Args)`** 의 반환값으로 **`os.Exit`** 한다. **`maintenance.Run(binVersion, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며 `os.Args`를 직접 읽지 않고, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`-config` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 `mol --discovery` 경로에서 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
 - **소스 트리와 테스트**: 배포용 저장소에는 Go **`*_test.go`** 단위 테스트 파일을 두지 않는다(단일 바이너리 산출물에는 원래 테스트가 포함되지 않으며, 소스 정책상 별도 테스트 파일 없이 유지한다). 회귀 검증이 필요하면 `go test`용 파일을 로컬·CI에서만 두거나 이력에서 복구한다.
 - **웹 서버**: Go 표준 라이브러리 **net/http** 만 사용 (외부 웹 프레임워크 미사용)
 
@@ -450,7 +451,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 ## 11. 요약 체크리스트
 
 - [ ] Go, 소스 경로 `~/work/mol`
-- [ ] 단일 실행 파일, net/http 만 사용
+- [ ] 단일 실행 파일, net/http 만 사용; **진입·종료**: 루트 `main.go`는 `maintenance.Run(main.Version, os.Args)` 반환값으로 `os.Exit`만 수행; `maintenance.Run`은 명령줄을 `args`로 받고 **0/1**만 반환(`maintenance`·`discoverycli`에서 `os.Exit` 없음)
 - [ ] 포트 8888 (HTTP), 9999 (UDP Discovery), UDP SO_BROADCAST 설정
 - [ ] Discovery: UDP broadcast 요청(목적지 포트 discovery_udp_port), 응답은 요청자 IP:**요청 소스 포트**로 unicast; pending 등록 후 전송, 타임아웃 시 drain
 - [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합

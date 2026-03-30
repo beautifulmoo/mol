@@ -2,7 +2,7 @@
 
 ## 레이아웃
 
-- **`maintenance/`**: `discovery`, `discoverycli`(`Run`: `--discovery` CLI), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. Go import는 `mol/maintenance/<패키지>` 형태.
+- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`Run`: `--discovery` CLI, 반환 코드), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `mol/maintenance/<패키지>` 형태.
 - **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `mol/internal/config`.
 
 ## Discovery / CLI (최근)

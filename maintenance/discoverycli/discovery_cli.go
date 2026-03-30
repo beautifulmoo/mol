@@ -19,8 +19,10 @@ import (
 
 // Run runs standalone UDP discovery (no config file, no HTTP server).
 // mol --discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name]
-func Run(args []string) {
-	fs := flag.NewFlagSet("discovery", flag.ExitOnError)
+// Returns 0 on success, 1 on error.
+func Run(args []string) int {
+	fs := flag.NewFlagSet("discovery", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	destPort := fs.Int("dest-port", 9999, "destination UDP port (mol listeners on remote)")
 	srcPort := fs.Int("src-port", 9998, "local UDP port to bind (responses arrive here)")
 	timeoutSec := fs.Int("timeout", 10, "discovery duration in seconds")
@@ -33,23 +35,23 @@ func Run(args []string) {
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
 			fs.Usage()
-			os.Exit(0)
+			return 0
 		}
 	}
 	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
+		return 1
 	}
 	if *destPort <= 0 || *destPort > 65535 {
 		fmt.Fprintln(os.Stderr, "mol: --dest-port must be 1..65535")
-		os.Exit(1)
+		return 1
 	}
 	if *srcPort <= 0 || *srcPort > 65535 {
 		fmt.Fprintln(os.Stderr, "mol: --src-port must be 1..65535")
-		os.Exit(1)
+		return 1
 	}
 	if *timeoutSec <= 0 {
 		fmt.Fprintln(os.Stderr, "mol: --timeout must be positive")
-		os.Exit(1)
+		return 1
 	}
 	svc := strings.TrimSpace(*serviceName)
 	if svc == "" {
@@ -68,7 +70,7 @@ func Run(args []string) {
 	conns, err := discovery.OpenDiscoveryClientUDP(*srcPort, broadcastAddrs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mol: UDP bind for discovery failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		for _, c := range conns {
@@ -90,16 +92,16 @@ func Run(args []string) {
 	payload, err := json.Marshal(req)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mol:", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := discovery.ValidateDiscoveryRequestPayload(payload); err != nil {
 		fmt.Fprintln(os.Stderr, "mol:", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if err := discovery.SendDiscoveryClientBroadcast(conns, payload, *destPort, broadcastAddrs); err != nil {
 		fmt.Fprintf(os.Stderr, "mol: discovery broadcast send: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	recvGrace := 500 * time.Millisecond
@@ -178,6 +180,7 @@ func Run(args []string) {
 	for _, line := range lines {
 		fmt.Println(line)
 	}
+	return 0
 }
 
 func formatResults(list []discovery.DiscoveryResponse) []string {

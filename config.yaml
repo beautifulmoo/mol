@@ -1,7 +1,7 @@
 # mol configuration (YAML)
 # Override with MOL_CONFIG env or -config flag if needed.
 
-service_name: "mol"
+discovery_service_name: "mol"
 # Fallback when no physical NIC broadcast addrs are found (물리 NIC brd 자동 수집 시 사용 안 함):
 # discovery_broadcast_address: "172.29.236.255"
 # discovery_broadcast_addresses:  # 주석: 물리 NIC의 brd 주소를 자동 수집하여 discovery에 사용
@@ -13,6 +13,7 @@ api_prefix: "/api/v1"
 discovery_timeout_seconds: 10
 discovery_deduplicate: true
 version: "0.4.0"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
+patch_version: 0   # non-negative; combined key is "<version>_<patch_version>" for update compare / dirs
 # systemctl_service_name: "mol.service"   # for service-status API (self + discovered hosts)
 # deploy_base: "/opt/mol"   # base for staging/, update.sh
 # install_prefix: "/opt/mol"   # mol 설치 경로 prefix (versions 목록·삭제, installer). 비면 deploy_base 사용

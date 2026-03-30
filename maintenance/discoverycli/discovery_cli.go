@@ -1,4 +1,4 @@
-package main
+package discoverycli
 
 import (
 	"context"
@@ -17,9 +17,9 @@ import (
 	"mol/maintenance/hostinfo"
 )
 
-// runDiscoveryCLI runs standalone UDP discovery (no config file, no HTTP server).
+// Run runs standalone UDP discovery (no config file, no HTTP server).
 // mol --discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name]
-func runDiscoveryCLI(args []string) {
+func Run(args []string) {
 	fs := flag.NewFlagSet("discovery", flag.ExitOnError)
 	destPort := fs.Int("dest-port", 9999, "destination UDP port (mol listeners on remote)")
 	srcPort := fs.Int("src-port", 9998, "local UDP port to bind (responses arrive here)")
@@ -92,14 +92,16 @@ func runDiscoveryCLI(args []string) {
 		fmt.Fprintln(os.Stderr, "mol:", err)
 		os.Exit(1)
 	}
+	if err := discovery.ValidateDiscoveryRequestPayload(payload); err != nil {
+		fmt.Fprintln(os.Stderr, "mol:", err)
+		os.Exit(1)
+	}
 
 	if err := discovery.SendDiscoveryClientBroadcast(conns, payload, *destPort, broadcastAddrs); err != nil {
 		fmt.Fprintf(os.Stderr, "mol: discovery broadcast send: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Recv must outlive the countdown slightly: if the context expires exactly when
-	// the last second ends, the reader can exit before packets that arrive at the deadline.
 	recvGrace := 500 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second+recvGrace)
 	defer cancel()
@@ -134,7 +136,6 @@ func runDiscoveryCLI(args []string) {
 		go readLoop(c)
 	}
 
-	// Same-line countdown (\r); then full-width "Discovery Done." so trailing digits are cleared
 	nw := len(strconv.Itoa(*timeoutSec))
 	if nw < 2 {
 		nw = 2
@@ -149,12 +150,10 @@ func runDiscoveryCLI(args []string) {
 		doneLine = doneLine + strings.Repeat(" ", maxLineLen-len(doneLine))
 	}
 	fmt.Printf("\r%s\n", doneLine)
-	// Keep recv running briefly after UI: responses often land at timeout boundary.
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 	time.Sleep(50 * time.Millisecond)
 
-	// Drain sockets in case anything arrived after goroutines exited (best-effort).
 	drainBuf := make([]byte, 8192)
 	for _, conn := range conns {
 		_ = conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
@@ -175,13 +174,13 @@ func runDiscoveryCLI(args []string) {
 	list := append([]discovery.DiscoveryResponse(nil), responses...)
 	mu.Unlock()
 
-	lines := formatDiscoveryCLIResults(list)
+	lines := formatResults(list)
 	for _, line := range lines {
 		fmt.Println(line)
 	}
 }
 
-func formatDiscoveryCLIResults(list []discovery.DiscoveryResponse) []string {
+func formatResults(list []discovery.DiscoveryResponse) []string {
 	if len(list) == 0 {
 		return []string{"(발견된 호스트 없음)"}
 	}
@@ -233,7 +232,6 @@ func formatDiscoveryCLIResults(list []discovery.DiscoveryResponse) []string {
 				g.cpuUUID = u
 			}
 		}
-		// Only "응답한 IP" (UDP packet source as seen by this host) — reachable for mol/HTTP.
 		if r.RespondedFromIP != "" {
 			g.ips[r.RespondedFromIP] = struct{}{}
 			if g.hostIP == "" {
@@ -254,16 +252,13 @@ func formatDiscoveryCLIResults(list []discovery.DiscoveryResponse) []string {
 		if primary == "" && len(ipList) > 0 {
 			primary = ipList[0]
 		}
-		tag := discoveryCLILocalTag(selfUUID, strings.TrimSpace(g.cpuUUID), g.ips, localIPSet)
+		tag := localTag(selfUUID, strings.TrimSpace(g.cpuUUID), g.ips, localIPSet)
 		out = append(out, fmt.Sprintf("%s %s - %s : [%s]", tag, g.hostname, primary, strings.Join(ipList, ", ")))
 	}
 	return out
 }
 
-// discoveryCLILocalTag returns "[Local]" if this group is the machine running the CLI:
-// 1) cpu_uuid matches local hostinfo (case-insensitive), or
-// 2) any responded-from IP is one of this host's IPv4 addresses (fallback when UUID paths differ).
-func discoveryCLILocalTag(selfUUID, groupUUID string, responded map[string]struct{}, localIPs map[string]struct{}) string {
+func localTag(selfUUID, groupUUID string, responded map[string]struct{}, localIPs map[string]struct{}) string {
 	if selfUUID != "" && groupUUID != "" && strings.EqualFold(selfUUID, groupUUID) {
 		return "[Local]"
 	}

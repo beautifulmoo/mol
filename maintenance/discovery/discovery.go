@@ -17,13 +17,13 @@ type HostInfoGetter func() (hostname, hostIP, cpuInfo string, cpuUsage float64, 
 // Config holds discovery-related config.
 // DiscoveryBroadcastAddresses must have at least one element.
 type Config struct {
-	ServiceName                string
+	DiscoveryServiceName        string
 	DiscoveryBroadcastAddresses []string // one or more broadcast addresses to send DISCOVERY_REQUEST to
-	DiscoveryUDPPort           int
-	DiscoveryTimeoutSeconds    int
-	DiscoveryDeduplicate       bool
-	Version                    string
-	ServicePort                int
+	DiscoveryUDPPort            int
+	DiscoveryTimeoutSeconds     int
+	DiscoveryDeduplicate        bool
+	Version                     string
+	ServicePort                 int
 }
 
 // Discovery handles UDP discovery (listen + respond, and run discovery).
@@ -32,8 +32,8 @@ type Discovery struct {
 	conns  []*net.UDPConn // conns[0] = main (:9999), rest = per-localIP (:9999) with SO_REUSEPORT so we can send from each and receive responses on :9999
 	getter HostInfoGetter
 
-	mu       sync.Mutex
-	pending  map[string]chan *DiscoveryResponse
+	mu      sync.Mutex
+	pending map[string]chan *DiscoveryResponse
 }
 
 // New creates a Discovery. Caller passes one or more UDP conns (all bound to discovery port, SO_REUSEPORT). conns[0] is the main listener; additional conns allow sending broadcast from each local IP so responses come back to :9999.
@@ -52,10 +52,10 @@ func New(cfg Config, conns []*net.UDPConn, getter HostInfoGetter) *Discovery {
 // Run starts the read loop: read from all conns, handle DISCOVERY_REQUEST (respond) and DISCOVERY_RESPONSE (forward to pending).
 func (d *Discovery) Run() {
 	type recv struct {
-		data     []byte
-		from     *net.UDPAddr
-		recvOn   string // which conn received (LocalAddr), for debugging SO_REUSEPORT delivery
-		err      error
+		data   []byte
+		from   *net.UDPAddr
+		recvOn string // which conn received (LocalAddr), for debugging SO_REUSEPORT delivery
+		err    error
 	}
 	ch := make(chan recv, 32)
 	for _, c := range d.conns {
@@ -97,7 +97,7 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return
 	}
-	if req.Service != d.cfg.ServiceName {
+	if req.Service != d.cfg.DiscoveryServiceName {
 		return
 	}
 	log.Printf("discovery: received DISCOVERY_REQUEST from %s (reply_udp_port=%d)", from, req.ReplyUDPPort)
@@ -129,7 +129,7 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 	// (responded_from_ip) as the reachable addresses; full NIC lists belong in HTTP /self only.
 	resp := DiscoveryResponse{
 		Type:               "DISCOVERY_RESPONSE",
-		Service:            d.cfg.ServiceName,
+		Service:            d.cfg.DiscoveryServiceName,
 		HostIP:             hostIP,
 		Hostname:           hostname,
 		ServicePort:        d.cfg.ServicePort,
@@ -249,6 +249,7 @@ func localIPInSameSubnetAs(remote net.IP) net.IP {
 // It checks both /24 and /23 so that:
 //   - /24: e.g. broadcast 172.29.236.255 → local 172.29.236.x (other system may be 172.29.236.0/24)
 //   - /23: e.g. broadcast 172.29.237.255 → local 172.29.236.x and 172.29.237.x (same /23)
+//
 // A local IP is included if it matches the broadcast in /24 or in /23, so both network sizes work.
 func LocalIPsInSubnet(broadcast net.IP) []net.IP {
 	broadcast = broadcast.To4()
@@ -346,12 +347,15 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 	requestID := NewRequestID()
 	req := DiscoveryRequest{
 		Type:         "DISCOVERY_REQUEST",
-		Service:      d.cfg.ServiceName,
+		Service:      d.cfg.DiscoveryServiceName,
 		RequestID:    requestID,
 		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
+		return nil, err
+	}
+	if err := ValidateDiscoveryRequestPayload(data); err != nil {
 		return nil, err
 	}
 	if len(d.cfg.DiscoveryBroadcastAddresses) == 0 {
@@ -450,12 +454,15 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 	requestID := NewRequestID()
 	req := DiscoveryRequest{
 		Type:         "DISCOVERY_REQUEST",
-		Service:      d.cfg.ServiceName,
+		Service:      d.cfg.DiscoveryServiceName,
 		RequestID:    requestID,
 		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
+		return nil, err
+	}
+	if err := ValidateDiscoveryRequestPayload(data); err != nil {
 		return nil, err
 	}
 	if len(d.cfg.DiscoveryBroadcastAddresses) == 0 {
@@ -574,12 +581,15 @@ func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 	requestID := NewRequestID()
 	req := DiscoveryRequest{
 		Type:         "DISCOVERY_REQUEST",
-		Service:      d.cfg.ServiceName,
+		Service:      d.cfg.DiscoveryServiceName,
 		RequestID:    requestID,
 		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
+		return nil, err
+	}
+	if err := ValidateDiscoveryRequestPayload(data); err != nil {
 		return nil, err
 	}
 	ch := make(chan *DiscoveryResponse, 1)

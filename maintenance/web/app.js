@@ -392,7 +392,7 @@
             if (body.status === 'success') {
               var ver;
               if (body.data && typeof body.data === 'string') {
-                var m = body.data.match(/버전\s+([\d.]+)\s+적용 완료/);
+                var m = body.data.match(/버전\s+(\S+)\s+적용 완료/);
                 if (m) ver = m[1];
               }
               scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);
@@ -742,7 +742,20 @@
     btn.disabled = true;
     status.textContent = 'Discovery 진행 중… (기존 호스트는 그대로 제어 가능)';
     var count = list.querySelectorAll('.host-card:not(.self-card)').length;
+    var discoveryFailHandled = false;
     var evtSource = new EventSource(API_BASE + '/discovery/stream');
+    evtSource.addEventListener('discoveryfail', function (e) {
+      discoveryFailHandled = true;
+      try {
+        var j = JSON.parse(e.data);
+        status.textContent = 'Discovery 요청 실패: ' + (j.message || e.data);
+      } catch (err) {
+        status.textContent = 'Discovery 요청 실패: ' + (e.data || '');
+      }
+      evtSource.close();
+      btn.disabled = false;
+      updateAllHostApplyButtons();
+    });
     evtSource.onmessage = function (e) {
       try {
         var host = JSON.parse(e.data);
@@ -792,8 +805,12 @@
     evtSource.onerror = function () {
       evtSource.close();
       btn.disabled = false;
+      if (discoveryFailHandled) {
+        updateAllHostApplyButtons();
+        return;
+      }
       if (count === 0) {
-        status.textContent = 'Discovery 요청 실패.';
+        status.textContent = 'Discovery 요청 실패 (서버 연결 오류 또는 스트림 중단). journalctl -u mol.service 로 서버 로그를 확인하세요.';
       } else {
         status.textContent = '호스트 ' + count + '개 발견.';
       }

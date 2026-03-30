@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"mol/internal/config"
 	"mol/maintenance/discovery"
+	"mol/maintenance/discoverycli"
 	"mol/maintenance/hostinfo"
 	"mol/maintenance/server"
 )
@@ -59,6 +61,12 @@ func printMustSpecifyConfig() {
 	fmt.Println("  mol --help")
 }
 
+// setSOReuseport sets SO_REUSEPORT on a socket. mol targets Linux only.
+func setSOReuseport(fd int) error {
+	const soReuseport = 15 // SO_REUSEPORT on Linux (amd64/arm64; not in syscall package as named const)
+	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReuseport, 1)
+}
+
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -75,7 +83,7 @@ func main() {
 			}
 			os.Exit(0)
 		case "--discovery":
-			runDiscoveryCLI(os.Args[2:])
+			discoverycli.Run(os.Args[2:])
 			os.Exit(0)
 		}
 	}
@@ -99,13 +107,14 @@ func main() {
 	if err != nil {
 		log.Fatal("config: ", err)
 	}
-	version := cfg.Version
+	version := strings.TrimSpace(cfg.Version)
 	if version == "" {
 		version = Version
 	}
 	if version == "" {
 		version = "0.0.0"
 	}
+	displayVersion := config.VersionKey(version, cfg.PatchVersion)
 
 	// UDP listener for discovery: one conn on :port (all interfaces) and one per local IPv4 so we can send broadcast from each interface (source port stays 9999 so responses are received).
 	portStr := ":" + strconv.Itoa(cfg.DiscoveryUDPPort)
@@ -153,7 +162,7 @@ func main() {
 			boundIPs = append(boundIPs, ip)
 		}
 	}
-	log.Printf("mol version %s: discovery listening on %s (bound IPs: %v)", version, portStr, boundIPs)
+	log.Printf("mol version %s: discovery listening on %s (bound IPs: %v)", displayVersion, portStr, boundIPs)
 	for i := 1; i < len(conns); i++ {
 		defer conns[i].Close()
 	}
@@ -180,12 +189,12 @@ func main() {
 		log.Printf("discovery: broadcast addresses (physical NIC brd): %v", broadcastAddrs)
 	}
 	discCfg := discovery.Config{
-		ServiceName:                 cfg.ServiceName,
+		DiscoveryServiceName:        cfg.DiscoveryServiceName,
 		DiscoveryBroadcastAddresses:  broadcastAddrs,
 		DiscoveryUDPPort:             cfg.DiscoveryUDPPort,
 		DiscoveryTimeoutSeconds:   cfg.DiscoveryTimeoutSeconds,
 		DiscoveryDeduplicate:      cfg.DiscoveryDeduplicate,
-		Version:                   version,
+		Version:                   displayVersion,
 		ServicePort:               cfg.HTTPPort,
 	}
 	disc := discovery.New(discCfg, conns, getter)
@@ -221,9 +230,9 @@ func main() {
 		WebFS:                fsys,
 		Discovery:            disc,
 		GetHostInfo:          getHostInfo,
-		Version:              version,
+		Version:              displayVersion,
 		ServicePort:          cfg.HTTPPort,
-		ServiceName:          cfg.ServiceName,
+		DiscoveryServiceName: cfg.DiscoveryServiceName,
 		SystemctlServiceName: cfg.SystemctlServiceName,
 		DeployBase:           cfg.DeployBase,
 		InstallPrefix:        cfg.InstallPrefix,

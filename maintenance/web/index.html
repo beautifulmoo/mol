@@ -28,7 +28,7 @@
     </div>
     <aside class="update-section">
       <h2>업데이트</h2>
-      <p class="update-desc">mol 실행 파일과 config.yaml을 업로드하면 config에서 버전을 읽어 <code>/opt/mol/versions/{버전}</code>에 저장됩니다. 「업데이트 적용」을 누르면 <code>systemd-run --unit=mol-update</code> 로 <code>update.sh {버전}</code>이 실행되어 서비스가 재시작됩니다.</p>
+      <p class="update-desc">mol 실행 파일과 config.yaml을 업로드하면 config에서 버전을 읽어 <code>/opt/mol/versions/{버전}</code>에 저장됩니다. 「업데이트 적용」을 누르면 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>를 <code>{deploy_base}/current/</code>에 풀어 쓴 뒤 <code>systemd-run --unit=mol-update</code> 로 <code>current/update.sh {버전}</code>이 실행되어 서비스가 재시작됩니다.</p>
       <div class="update-form">
         <div class="update-fields">
           <div class="update-file-row">

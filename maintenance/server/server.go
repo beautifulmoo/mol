@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"mol/internal/config"
+	"mol/internal/updatescripts"
 	"mol/maintenance/discovery"
 	"mol/maintenance/hostinfo"
 	"mol/maintenance/svcstatus"
@@ -71,7 +72,7 @@ type Server struct {
 	getHostInfo          func() (hostinfo.Info, error)
 	version              string
 	servicePort          int
-	serviceName          string
+	discoveryServiceName string
 	systemctlServiceName string
 	deployBase           string
 	installPrefix        string // mol 설치 경로 prefix (versions/ 기준). 비면 deployBase 사용
@@ -88,7 +89,7 @@ type Config struct {
 	GetHostInfo          func() (hostinfo.Info, error)
 	Version              string
 	ServicePort          int
-	ServiceName          string
+	DiscoveryServiceName string
 	SystemctlServiceName string
 	DeployBase           string
 	InstallPrefix        string // mol 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
@@ -106,7 +107,7 @@ func New(cfg Config) *Server {
 		getHostInfo:          cfg.GetHostInfo,
 		version:              cfg.Version,
 		servicePort:          cfg.ServicePort,
-		serviceName:          cfg.ServiceName,
+		discoveryServiceName: cfg.DiscoveryServiceName,
 		systemctlServiceName: cfg.SystemctlServiceName,
 		deployBase:           strings.TrimSuffix(cfg.DeployBase, "/"),
 		installPrefix:        strings.TrimSuffix(cfg.InstallPrefix, "/"),
@@ -197,7 +198,7 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 	}
 	data := discovery.DiscoveryResponse{
 		Type:                "DISCOVERY_RESPONSE",
-		Service:             s.serviceName,
+		Service:             s.discoveryServiceName,
 		HostIP:              info.HostIP,
 		HostIPs:             info.HostIPs,
 		Hostname:            info.Hostname,
@@ -226,6 +227,7 @@ func (s *Server) handleHostInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.discovery.DoDiscoveryUnicast(ip)
 	if err != nil {
+		log.Printf("discovery: ERROR: DoDiscoveryUnicast(ip=%s) failed: %v", ip, err)
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
@@ -239,6 +241,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.discovery.DoDiscovery()
 	if err != nil {
+		log.Printf("discovery: ERROR: DoDiscovery failed: %v", err)
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -256,7 +259,22 @@ func (s *Server) handleDiscoveryStream(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, err := s.discovery.DoDiscoveryStream()
 	if err != nil {
-		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
+		// EventSource cannot read JSON error bodies on non-2xx; send a one-line SSE error event with 200 OK.
+		log.Printf("discovery: ERROR: DoDiscoveryStream failed: %v", err)
+		w.Header().Set("Content-Type", sseContentType)
+		w.Header().Set("Cache-Control", sseNoCache)
+		w.Header().Set("Connection", sseKeepAlive)
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		payload, _ := json.Marshal(map[string]string{"message": err.Error()})
+		if _, werr := fmt.Fprintf(w, "event: discoveryfail\ndata: %s\n\n", payload); werr != nil {
+			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 		return
 	}
 	w.Header().Set("Content-Type", sseContentType)
@@ -559,24 +577,27 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 		return
 	}
-	if _, err := config.LoadFromBytes(configData); err != nil {
+	cfg, err := config.LoadFromBytes(configData)
+	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
-	version, err := config.ParseVersionFromYAML(configData)
-	if err != nil || version == "" {
+	ver := strings.TrimSpace(cfg.Version)
+	if ver == "" {
 		s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다. version 항목(문자열)이 필요합니다", http.StatusBadRequest)
 		return
 	}
-	for _, c := range version {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
-			continue
-		}
-		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+	if err := config.ValidateSemverField(ver); err != nil {
+		s.send(w, "fail", "version 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
 		return
 	}
-	if version == "" || version == "." || version == ".." {
-		s.send(w, "fail", "version이 비어 있거나 올바르지 않습니다", http.StatusBadRequest)
+	if cfg.PatchVersion < 0 {
+		s.send(w, "fail", "patch_version은 0 이상이어야 합니다", http.StatusBadRequest)
+		return
+	}
+	versionKey := config.VersionKey(ver, cfg.PatchVersion)
+	if err := config.ValidateVersionKeyPath(versionKey); err != nil {
+		s.send(w, "fail", "버전 키에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 		return
 	}
 
@@ -585,7 +606,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		base = "/opt/mol"
 	}
 	s.clearStaging(base)
-	stagingDir, err := s.writeToStaging(base, version, bytes.NewReader(molBytes), configData)
+	stagingDir, err := s.writeToStaging(base, versionKey, bytes.NewReader(molBytes), configData)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
 		return
@@ -596,8 +617,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
-	log.Printf("upload: version %s -> %s (staging)", version, stagingDir)
-	s.send(w, "success", map[string]string{"version": version}, http.StatusOK)
+	log.Printf("upload: version %s -> %s (staging)", versionKey, stagingDir)
+	s.send(w, "success", map[string]string{"version": versionKey}, http.StatusOK)
 }
 
 func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
@@ -617,10 +638,7 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
 		return
 	}
-	for _, c := range version {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
-			continue
-		}
+	if err := config.ValidateVersionKeyPath(version); err != nil {
 		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 		return
 	}
@@ -812,20 +830,27 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 			return
 		}
-		if _, err := config.LoadFromBytes(configData); err != nil {
+		cfg, err := config.LoadFromBytes(configData)
+		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return
 		}
-		version, err := config.ParseVersionFromYAML(configData)
-		if err != nil || version == "" {
+		ver := strings.TrimSpace(cfg.Version)
+		if ver == "" {
 			s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다. version 항목(문자열)이 필요합니다", http.StatusBadRequest)
 			return
 		}
-		for _, c := range version {
-			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
-				continue
-			}
-			s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+		if err := config.ValidateSemverField(ver); err != nil {
+			s.send(w, "fail", "version 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
+			return
+		}
+		if cfg.PatchVersion < 0 {
+			s.send(w, "fail", "patch_version은 0 이상이어야 합니다", http.StatusBadRequest)
+			return
+		}
+		versionKey := config.VersionKey(ver, cfg.PatchVersion)
+		if err := config.ValidateVersionKeyPath(versionKey); err != nil {
+			s.send(w, "fail", "버전 키에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 			return
 		}
 		port := s.servicePort
@@ -839,7 +864,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
-		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version)
+		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, versionKey)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
@@ -852,8 +877,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", msg, http.StatusOK)
 			return
 		}
-		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API)", ip, version)
-		s.send(w, "success", "원격 "+ip+" 에 버전 "+version+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
+		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API)", ip, versionKey)
+		s.send(w, "success", "원격 "+ip+" 에 버전 "+versionKey+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
 		return
 	}
 
@@ -870,10 +895,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
 		return
 	}
-	for _, c := range version {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
-			continue
-		}
+	if err := config.ValidateVersionKeyPath(version); err != nil {
 		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 		return
 	}
@@ -893,9 +915,20 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		updateScript := filepath.Join(base, "update.sh")
-		if _, err := os.Stat(updateScript); err != nil {
-			s.send(w, "fail", "update.sh를 찾을 수 없습니다: "+updateScript, http.StatusOK)
+		currentPath := filepath.Join(base, "current")
+		if _, err := os.Stat(currentPath); err != nil {
+			s.send(w, "fail", "배포 루트에 current가 없습니다. 업데이트를 적용할 수 없습니다: "+currentPath, http.StatusOK)
+			return
+		}
+		updateScript := filepath.Join(currentPath, "update.sh")
+		rollbackScript := filepath.Join(currentPath, "rollback.sh")
+		if err := os.WriteFile(updateScript, []byte(updatescripts.UpdateSh), 0755); err != nil {
+			s.send(w, "fail", "update.sh 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := os.WriteFile(rollbackScript, []byte(updatescripts.RollbackSh), 0755); err != nil {
+			_ = os.Remove(updateScript)
+			s.send(w, "fail", "rollback.sh 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		exec.Command("systemctl", "reset-failed", "mol-update.service").Run()
@@ -909,19 +942,23 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			cmd.Stderr = io.Discard
 			if err := cmd.Run(); err != nil {
 				log.Printf("apply-update: systemd-run failed: %v", err)
+				_ = os.Remove(updateScript)
+				_ = os.Remove(rollbackScript)
+				return
 			}
 			// 스테이징은 자동 삭제하지 않음. 원격 업데이트에 재사용할 수 있도록 남겨 두고, 사용자가 「업로드된 버전 삭제」로 수동 삭제.
+			// update.sh / rollback.sh 는 스크립트 종료 시 스스로 삭제한다.
 		}()
 		log.Printf("apply-update: systemd-run --unit=mol-update /bin/bash %s %s", updateScript, version)
 		s.send(w, "success", "업데이트를 적용 중입니다. 잠시 후 서버가 재시작됩니다. 아래 로그를 새로고침하세요.", http.StatusOK)
 		return
 	}
 
-	s.doRemoteUpdate(w, ip, version, base, versionDir)
+	s.doRemoteUpdate(w, ip, version, versionDir)
 }
 
 // doRemoteUpdate sends files to the remote mol's upload API (staging), then calls the remote's apply-update API (no SSH/SCP).
-func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, base, versionDir string) {
+func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir string) {
 	port := s.servicePort
 	if port <= 0 {
 		port = 8888
@@ -982,18 +1019,21 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	sort.Slice(stagingVersions, func(i, j int) bool {
+		return config.CompareVersionKeys(stagingVersions[i], stagingVersions[j]) > 0
+	})
 	var applyVersion, removeVersion string
 	canApply := false
 	for _, v := range stagingVersions {
-		if v != currentVersion {
+		if config.StagingUpdateAvailable(v, currentVersion) {
 			canApply = true
 			if applyVersion == "" {
 				applyVersion = v
 			}
 		}
-		if removeVersion == "" {
-			removeVersion = v
-		}
+	}
+	if len(stagingVersions) > 0 {
+		removeVersion = stagingVersions[len(stagingVersions)-1]
 	}
 	s.send(w, "success", map[string]interface{}{
 		"current_version":     currentVersion,
@@ -1098,53 +1138,7 @@ func versionsListEntryBefore(a, b versionEntry) bool {
 	if ra != rb {
 		return ra > rb
 	}
-	return semverDesc(a.Version, b.Version)
-}
-
-// semverDesc returns true if a should appear above b (newer / larger semver first).
-func semverDesc(a, b string) bool {
-	va, vb := parseSemverInts(a), parseSemverInts(b)
-	if va != nil && vb != nil {
-		for k := 0; k < len(va) || k < len(vb); k++ {
-			var na, nb int
-			if k < len(va) {
-				na = va[k]
-			}
-			if k < len(vb) {
-				nb = vb[k]
-			}
-			if na != nb {
-				return na > nb
-			}
-		}
-		return a > b
-	}
-	return a > b
-}
-
-func parseSemverInts(s string) []int {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ".")
-	out := make([]int, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		i := 0
-		for i < len(p) && p[i] >= '0' && p[i] <= '9' {
-			i++
-		}
-		if i == 0 {
-			return nil
-		}
-		n, err := strconv.Atoi(p[:i])
-		if err != nil {
-			return nil
-		}
-		out = append(out, n)
-	}
-	return out
+	return config.CompareVersionKeys(a.Version, b.Version) > 0
 }
 
 // resolveSymlinkVersion returns the version name (dir under base/versions/) that the symlink base/name points to, or "".

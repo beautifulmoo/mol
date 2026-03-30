@@ -11,7 +11,7 @@ import (
 
 // Config holds application configuration (YAML).
 type Config struct {
-	ServiceName                 string   `yaml:"service_name"`
+	DiscoveryServiceName       string   `yaml:"discovery_service_name"`
 	DiscoveryBroadcastAddress string `yaml:"discovery_broadcast_address"` // fallback when no physical NIC broadcast addrs found
 	// DiscoveryBroadcastAddresses []string `yaml:"discovery_broadcast_addresses"` // 주석: 물리 NIC brd 자동 수집 사용
 	DiscoveryUDPPort            int      `yaml:"discovery_udp_port"`
@@ -21,6 +21,7 @@ type Config struct {
 	DiscoveryTimeoutSeconds    int    `yaml:"discovery_timeout_seconds"`
 	DiscoveryDeduplicate       bool   `yaml:"discovery_deduplicate"`
 	Version                    string `yaml:"version"`
+	PatchVersion               int    `yaml:"patch_version"` // numeric patch; combined key version_patch for dirs / compare
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"systemctl_service_name"` // e.g. "mol.service"
 	DeployBase           string `yaml:"deploy_base"`             // e.g. "/opt/mol" for staging/, update.sh
@@ -33,7 +34,7 @@ type Config struct {
 // Default returns default configuration values.
 func Default() Config {
 	return Config{
-		ServiceName:               "mol",
+		DiscoveryServiceName:      "mol",
 		DiscoveryBroadcastAddress: "192.168.0.255",
 		DiscoveryUDPPort:          9999,
 		HTTPPort:                  8888,
@@ -42,6 +43,7 @@ func Default() Config {
 		DiscoveryTimeoutSeconds:   10,
 		DiscoveryDeduplicate:      true,
 		Version:                   "",
+		PatchVersion:              0,
 		SystemctlServiceName:      "mol.service",
 		DeployBase:                "/opt/mol",
 		SSHPort:                   22,
@@ -49,7 +51,7 @@ func Default() Config {
 	}
 }
 
-// ParseVersionFromYAML extracts the "version" field from YAML bytes (e.g. uploaded config.yaml).
+// ParseVersionFromYAML extracts the "version" field from YAML bytes (semver only, no patch suffix).
 func ParseVersionFromYAML(data []byte) (string, error) {
 	var v struct {
 		Version string `yaml:"version"`
@@ -97,7 +99,7 @@ func configValidationError(err error) error {
 		for _, e := range yerr.Errors {
 			msgs = append(msgs, describeYAMLUnmarshalError(e))
 		}
-		return fmt.Errorf("%s%s. 필요한 항목 및 타입: service_name(문자열), discovery_udp_port(숫자), http_port(숫자), discovery_timeout_seconds(숫자), version(문자열) 등", prefix, strings.Join(msgs, "; "))
+		return fmt.Errorf("%s%s. 필요한 항목 및 타입: discovery_service_name(문자열), discovery_udp_port(숫자), http_port(숫자), discovery_timeout_seconds(숫자), version(문자열), patch_version(숫자) 등", prefix, strings.Join(msgs, "; "))
 	}
 	// Syntax error (e.g. invalid indentation)
 	if strings.Contains(err.Error(), "yaml:") {

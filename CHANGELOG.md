@@ -2,7 +2,7 @@
 
 ## 레이아웃
 
-- **`maintenance/`**: `discovery`, `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. Go import는 `mol/maintenance/<패키지>` 형태.
+- **`maintenance/`**: `discovery`, `discoverycli`(`Run`: `--discovery` CLI), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. Go import는 `mol/maintenance/<패키지>` 형태.
 - **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `mol/internal/config`.
 
 ## Discovery / CLI (최근)
@@ -21,5 +21,13 @@
 - Discovery UDP listen을 **`udp4`**로 통일(IPv4 sockaddr 일관성).
 - **`LocalIPsInSubnet`** export, 브로드캐스트 송신 시 매칭 소켓 없으면 `conns[0]` 폴백.
 - UDP **`DISCOVERY_RESPONSE`에는 `host_ips` 배열을 넣지 않음**(HTTP `/self` 등에서만).
+
+### 웹·로그·배포 (최근)
+
+- **SSE** `event: discoveryfail` + `data.message`, 실패 시 **`discovery: ERROR:`** 한 줄 로그(`journalctl` 검색).
+- **DISCOVERY_REQUEST** JSON은 마샬 후 **1300바이트 미만** 검증(UDP·MTU).
+- **`internal/updatescripts/`** 에 `update.sh`·`rollback.sh` 임베드(`Makefile` 동기화), 배포는 `{base}/current/` 스크립트 실행.
+- 설정 **`discovery_service_name`**, 스테이징/업데이트용 **`patch_version`**·버전키(`version_patch` 등) 비교.
+- 저장소 정책: Go **`*_test.go`** 는 트리에 두지 않음(상세는 PRD §1).
 
 상세 스펙은 **[PRD.md](PRD.md)** §3, CLI 사용은 **[README.md](README.md)** 를 참고한다.

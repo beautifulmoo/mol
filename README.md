@@ -97,7 +97,7 @@ mol --discovery --dest-port=9999 --src-port=9998 --timeout=10
 `config.yaml` (또는 `MOL_CONFIG`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
 
 - **Discovery 브로드캐스트**: 기본은 **NIC에서 brd 자동 수집**(bonding·bridge·vlan 등 포함, `mol --nic-brd`로 확인). 수집이 비어 있을 때만 `discovery_broadcast_address`(단일) 사용, 그다음 `255.255.255.255`. `discovery_broadcast_addresses` 복수 설정은 사용하지 않음.
-- `discovery_udp_port`: 9999 · `http_port`: 8888 · `discovery_timeout_seconds` · `discovery_deduplicate`
+- `discovery_service_name`: Discovery JSON의 `service` 값(기본 `mol`) · `discovery_udp_port`: 9999 · `http_port`: 8888 · `discovery_timeout_seconds` · `discovery_deduplicate`
 - `deploy_base` / `install_prefix`(비우면 deploy_base): 스테이징·versions·update.sh 경로
 - `version`: 비우면 ldflags 빌드 버전
 - `systemctl_service_name`: 기본 `mol.service`

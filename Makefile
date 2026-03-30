@@ -5,8 +5,15 @@
 VERSION ?= 0.0.0
 
 .PHONY: build
-build:
+build: internal/updatescripts/update.sh internal/updatescripts/rollback.sh
 	go build -o mol -ldflags "-X main.Version=$(VERSION)" .
+
+# 바이너리에 내장되는 스크립트 — 루트의 update.sh / rollback.sh 와 동기화됨
+internal/updatescripts/update.sh: update.sh
+	cp -f $< $@
+
+internal/updatescripts/rollback.sh: rollback.sh
+	cp -f $< $@
 
 # make 만 입력해도 build 가 실행됨
 .DEFAULT_GOAL := build

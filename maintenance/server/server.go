@@ -72,6 +72,7 @@ type Server struct {
 	getHostInfo          func() (hostinfo.Info, error)
 	version              string
 	servicePort          int
+	remoteProxyPort      int
 	discoveryServiceName string
 	systemctlServiceName string
 	deployBase           string
@@ -89,6 +90,7 @@ type Config struct {
 	GetHostInfo          func() (hostinfo.Info, error)
 	Version              string
 	ServicePort          int
+	RemoteProxyPort      int // external proxy port (Gin). Sourced from Server.HTTPPort.
 	DiscoveryServiceName string
 	SystemctlServiceName string
 	DeployBase           string
@@ -107,6 +109,7 @@ func New(cfg Config) *Server {
 		getHostInfo:          cfg.GetHostInfo,
 		version:              cfg.Version,
 		servicePort:          cfg.ServicePort,
+		remoteProxyPort:      cfg.RemoteProxyPort,
 		discoveryServiceName: cfg.DiscoveryServiceName,
 		systemctlServiceName: cfg.SystemctlServiceName,
 		deployBase:           strings.TrimSuffix(cfg.DeployBase, "/"),
@@ -118,6 +121,14 @@ func New(cfg Config) *Server {
 		s.installPrefix = s.deployBase
 	}
 	return s
+}
+
+func (s *Server) remoteBaseURL(ip string) (string, error) {
+	port := s.remoteProxyPort
+	if port <= 0 || port > 65535 {
+		return "", fmt.Errorf("RemoteProxyPort must be 1..65535")
+	}
+	return "http://" + ip + ":" + strconv.Itoa(port), nil
 }
 
 // looksLikeBrowser returns true if the request is likely from a browser (e.g. Accept: text/html or User-Agent: Mozilla/...).
@@ -318,11 +329,12 @@ func (s *Server) handleServiceStatus(w http.ResponseWriter, r *http.Request) {
 		svcName = "mol.service"
 	}
 	if ip != "" && ip != "self" {
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 상태 요청 실패: "+err.Error(), http.StatusOK)
+			return
 		}
-		url := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/service-status"
+		url := baseURL + s.apiPrefix + "/service-status"
 		resp, err := remoteHTTPClient.Get(url)
 		if err != nil {
 			s.send(w, "fail", "원격 상태 요청 실패: "+err.Error(), http.StatusOK)
@@ -375,11 +387,12 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	if ip != "" && ip != "self" {
 		if action == "restart" {
 			// 재시작만 원격 mol API 호출로 처리 (SSH 키 불필요). 원격에서 systemctl restart 수행.
-			port := s.servicePort
-			if port <= 0 {
-				port = 8888
+			baseURL, err := s.remoteBaseURL(ip)
+			if err != nil {
+				s.send(w, "fail", "원격 재시작 요청 실패: "+err.Error(), http.StatusOK)
+				return
 			}
-			baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/service-control"
+			baseURL = baseURL + s.apiPrefix + "/service-control"
 			payload, _ := json.Marshal(map[string]string{"ip": "self", "action": "restart"})
 			req, _ := http.NewRequest(http.MethodPost, baseURL, bytes.NewReader(payload))
 			req.Header.Set("Content-Type", "application/json")
@@ -582,17 +595,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
-	ver := strings.TrimSpace(cfg.Version)
+	ver := strings.TrimSpace(cfg.AgentVersion)
 	if ver == "" {
-		s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다. version 항목(문자열)이 필요합니다", http.StatusBadRequest)
+		s.send(w, "fail", "config.yaml에서 AgentVersion을 읽을 수 없습니다. AgentVersion 항목(문자열)이 필요합니다", http.StatusBadRequest)
 		return
 	}
 	if err := config.ValidateSemverField(ver); err != nil {
-		s.send(w, "fail", "version 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
+		s.send(w, "fail", "AgentVersion 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
 		return
 	}
 	if cfg.PatchVersion < 0 {
-		s.send(w, "fail", "patch_version은 0 이상이어야 합니다", http.StatusBadRequest)
+		s.send(w, "fail", "PatchVersion은 0 이상이어야 합니다", http.StatusBadRequest)
 		return
 	}
 	versionKey := config.VersionKey(ver, cfg.PatchVersion)
@@ -835,17 +848,17 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return
 		}
-		ver := strings.TrimSpace(cfg.Version)
+		ver := strings.TrimSpace(cfg.AgentVersion)
 		if ver == "" {
-			s.send(w, "fail", "config.yaml에서 version을 읽을 수 없습니다. version 항목(문자열)이 필요합니다", http.StatusBadRequest)
+			s.send(w, "fail", "config.yaml에서 AgentVersion을 읽을 수 없습니다. AgentVersion 항목(문자열)이 필요합니다", http.StatusBadRequest)
 			return
 		}
 		if err := config.ValidateSemverField(ver); err != nil {
-			s.send(w, "fail", "version 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
+			s.send(w, "fail", "AgentVersion 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
 			return
 		}
 		if cfg.PatchVersion < 0 {
-			s.send(w, "fail", "patch_version은 0 이상이어야 합니다", http.StatusBadRequest)
+			s.send(w, "fail", "PatchVersion은 0 이상이어야 합니다", http.StatusBadRequest)
 			return
 		}
 		versionKey := config.VersionKey(ver, cfg.PatchVersion)
@@ -853,11 +866,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "버전 키에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 			return
 		}
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 적용 실패: "+err.Error(), http.StatusOK)
+			return
 		}
-		baseURL := "http://" + ip + ":" + strconv.Itoa(port)
 		ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 		defer cancel()
 		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, bytes.NewReader(molBytes), configData); err != nil {
@@ -959,11 +972,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 // doRemoteUpdate sends files to the remote mol's upload API (staging), then calls the remote's apply-update API (no SSH/SCP).
 func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir string) {
-	port := s.servicePort
-	if port <= 0 {
-		port = 8888
+	baseURL, err := s.remoteBaseURL(ip)
+	if err != nil {
+		s.send(w, "fail", "원격 적용 실패: "+err.Error(), http.StatusOK)
+		return
 	}
-	baseURL := "http://" + ip + ":" + strconv.Itoa(port)
 	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 	defer cancel()
 
@@ -1065,11 +1078,12 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if ip != "" && ip != "self" {
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 versions 목록 요청 실패: "+err.Error(), http.StatusOK)
+			return
 		}
-		baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/versions/list"
+		baseURL = baseURL + s.apiPrefix + "/versions/list"
 		resp, err := remoteHTTPClient.Get(baseURL)
 		if err != nil {
 			s.send(w, "fail", "원격 versions 목록 요청 실패: "+err.Error(), http.StatusOK)
@@ -1179,11 +1193,12 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := strings.TrimSpace(req.IP)
 	if ip != "" && ip != "self" {
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 버전 삭제 요청 실패: "+err.Error(), http.StatusOK)
+			return
 		}
-		baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/versions/remove"
+		baseURL = baseURL + s.apiPrefix + "/versions/remove"
 		payload, _ := json.Marshal(map[string]interface{}{"versions": req.Versions})
 		hr, _ := http.NewRequest(http.MethodPost, baseURL, bytes.NewReader(payload))
 		hr.Header.Set("Content-Type", "application/json")
@@ -1272,11 +1287,12 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if ip != "" && ip != "self" {
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 업데이트 로그 요청 실패: "+err.Error(), http.StatusOK)
+			return
 		}
-		url := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/update-log"
+		url := baseURL + s.apiPrefix + "/update-log"
 		resp, err := remoteHTTPClient.Get(url)
 		if err != nil {
 			s.send(w, "fail", "원격 업데이트 로그 요청 실패: "+err.Error(), http.StatusOK)
@@ -1365,11 +1381,12 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if ip != "" && ip != "self" {
-		port := s.servicePort
-		if port <= 0 {
-			port = 8888
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 config 요청 실패: "+err.Error(), http.StatusOK)
+			return
 		}
-		baseURL := "http://" + ip + ":" + strconv.Itoa(port) + s.apiPrefix + "/current-config"
+		baseURL = baseURL + s.apiPrefix + "/current-config"
 		if r.Method == http.MethodGet {
 			resp, err := remoteHTTPClient.Get(baseURL)
 			if err != nil {

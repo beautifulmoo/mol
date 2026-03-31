@@ -40,12 +40,18 @@ NEW_BIN="$NEW_DIR/mol"
 
 # 2. 적용할 버전의 config.yaml에서 설정 읽기 (mol과 중복 제거). 실패해도 기본값 유지.
 SERVICE=mol.service
-HTTP_PORT=8888
+HTTP_PORT=
 if [ -f "$NEW_DIR/config.yaml" ]; then
-    v=$(grep -E '^http_port:[[:space:]]*[0-9]+' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' 2>/dev/null) || true
+    v=$(grep -E '^[[:space:]]*MaintenancePort:[[:space:]]*[0-9]+' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' 2>/dev/null) || true
     [ -n "$v" ] && HTTP_PORT=$v
-    v=$(grep -E '^systemctl_service_name:' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
+    v=$(grep -E '^[[:space:]]*SystemctlServiceName:' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
     [ -n "$v" ] && SERVICE=$v
+fi
+if [ -z "${HTTP_PORT:-}" ]; then
+    prepend_history "update $NEW_VERSION failed: MaintenancePort not found in config.yaml"
+    echo "MaintenancePort not found in config.yaml"
+    cleanup_scripts
+    exit 1
 fi
 
 prepend_history "update $NEW_VERSION started"

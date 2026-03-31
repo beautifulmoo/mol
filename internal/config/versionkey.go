@@ -141,23 +141,20 @@ func parseSemverInts(s string) []int {
 	return out
 }
 
-// ParseVersionKeyFromYAML reads version and patch_version from YAML and returns the combined key.
+// ParseVersionKeyFromYAML reads AgentVersion and PatchVersion from YAML and returns the combined key.
 func ParseVersionKeyFromYAML(data []byte) (string, error) {
-	var tmp struct {
-		Version      string `yaml:"version"`
-		PatchVersion int    `yaml:"patch_version"`
-	}
-	if err := yaml.Unmarshal(data, &tmp); err != nil {
+	var f FileConfig
+	if err := yaml.Unmarshal(data, &f); err != nil {
 		return "", err
 	}
-	v := strings.TrimSpace(tmp.Version)
+	v := strings.TrimSpace(f.Maintenance.AgentVersion)
 	if v == "" {
-		return "", fmt.Errorf("empty version")
+		return "", fmt.Errorf("empty AgentVersion")
 	}
-	if tmp.PatchVersion < 0 {
-		return "", fmt.Errorf("patch_version must be >= 0")
+	if f.Maintenance.PatchVersion < 0 {
+		return "", fmt.Errorf("PatchVersion must be >= 0")
 	}
-	return VersionKey(v, tmp.PatchVersion), nil
+	return VersionKey(v, f.Maintenance.PatchVersion), nil
 }
 
 // ValidateSemverField returns an error if s contains a character not allowed in the YAML version field.

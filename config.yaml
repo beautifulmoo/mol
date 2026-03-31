@@ -1,21 +1,31 @@
 # mol configuration (YAML)
 # Override with MOL_CONFIG env or -config flag if needed.
 
-discovery_service_name: "mol"
-# Fallback when no physical NIC broadcast addrs are found (물리 NIC brd 자동 수집 시 사용 안 함):
-# discovery_broadcast_address: "172.29.236.255"
-# discovery_broadcast_addresses:  # 주석: 물리 NIC의 brd 주소를 자동 수집하여 discovery에 사용
-#   - "172.29.237.255"
-discovery_udp_port: 9999
-http_port: 8888
-web_prefix: "/web"
-api_prefix: "/api/v1"
-discovery_timeout_seconds: 10
-discovery_deduplicate: true
-version: "0.4.0"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
-patch_version: 0   # non-negative; combined key is "<version>_<patch_version>" for update compare / dirs
-# systemctl_service_name: "mol.service"   # for service-status API (self + discovered hosts)
-# deploy_base: "/opt/mol"   # base for staging/, update.sh
-# install_prefix: "/opt/mol"   # mol 설치 경로 prefix (versions 목록·삭제, installer). 비면 deploy_base 사용
-# ssh_port: 22   # SSH port for remote service start/stop (default 22)
-# ssh_user: "root"   # SSH user for remote start/stop (default "root")
+Server:
+  RunMode: debug
+  HTTPContextPath: /c-agent/service
+  HTTPServerIP: 0.0.0.0
+  HTTPPort: 8888
+  ReadTimeout: 60
+  WriteTimeout: 60
+  
+Maintenance:
+  DiscoveryServiceName: "mol"
+  # Fallback when no physical NIC broadcast addrs are found (물리 NIC brd 자동 수집 시 사용 안 함):
+  # DiscoveryBroadcastAddress: "172.29.236.255"
+  # DiscoveryBroadcastAddresses:  # 주석: 물리 NIC의 brd 주소를 자동 수집하여 discovery에 사용
+  #   - "172.29.237.255"
+  DiscoveryUDPPort: 9999
+  MaintenanceListenAddress: "127.0.0.1" # use "0.0.0.0" to expose maintenance port
+  MaintenancePort: 8889
+  WebPrefix: "/web"
+  APIPrefix: "/api/v1"
+  DiscoveryTimeoutSeconds: 10
+  DiscoveryDeduplicate: true
+  AgentVersion: "0.4.4"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
+  PatchVersion: 10   # non-negative; combined key is "<AgentVersion>_<PatchVersion>" for update compare / dirs
+  # SystemctlServiceName: "mol.service"   # for service-status API (self + discovered hosts)
+  # DeployBase: "/opt/mol"   # base for staging/, update.sh
+  # InstallPrefix: "/opt/mol"   # mol 설치 경로 prefix (versions 목록·삭제, installer). 비면 DeployBase 사용
+  # SSHPort: 22   # SSH port for remote service start/stop (default 22)
+  # SSHUser: "root"   # SSH user for remote start/stop (default "root")

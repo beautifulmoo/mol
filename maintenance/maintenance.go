@@ -105,7 +105,20 @@ func Run(binVersion string, args []string) int {
 		log.Printf("config: %v", err)
 		return 1
 	}
-	version := strings.TrimSpace(cfg.Version)
+	if cfg.MaintenancePort <= 0 || cfg.MaintenancePort > 65535 {
+		log.Printf("config: MaintenancePort must be 1..65535 (got %d)", cfg.MaintenancePort)
+		return 1
+	}
+	if cfg.ServerHTTPPort <= 0 || cfg.ServerHTTPPort > 65535 {
+		log.Printf("config: Server.HTTPPort must be 1..65535 (got %d)", cfg.ServerHTTPPort)
+		return 1
+	}
+	listenHost := strings.TrimSpace(cfg.MaintenanceListenAddress)
+	if listenHost == "" {
+		log.Printf("config: MaintenanceListenAddress is required (e.g. 127.0.0.1 or 0.0.0.0)")
+		return 1
+	}
+	version := strings.TrimSpace(cfg.AgentVersion)
 	if version == "" {
 		version = binVersion
 	}
@@ -194,7 +207,7 @@ func Run(binVersion string, args []string) int {
 		DiscoveryTimeoutSeconds:       cfg.DiscoveryTimeoutSeconds,
 		DiscoveryDeduplicate:        cfg.DiscoveryDeduplicate,
 		Version:                     displayVersion,
-		ServicePort:                 cfg.HTTPPort,
+		ServicePort:                 cfg.MaintenancePort,
 	}
 	disc := discovery.New(discCfg, conns, getter)
 	go disc.Run()
@@ -232,7 +245,8 @@ func Run(binVersion string, args []string) int {
 		Discovery:            disc,
 		GetHostInfo:          getHostInfo,
 		Version:              displayVersion,
-		ServicePort:          cfg.HTTPPort,
+		ServicePort:          cfg.MaintenancePort,
+		RemoteProxyPort:      cfg.ServerHTTPPort,
 		DiscoveryServiceName: cfg.DiscoveryServiceName,
 		SystemctlServiceName: cfg.SystemctlServiceName,
 		DeployBase:           cfg.DeployBase,
@@ -241,7 +255,8 @@ func Run(binVersion string, args []string) int {
 		SSHUser:              cfg.SSHUser,
 	})
 
-	listenAddr := ":" + strconv.Itoa(cfg.HTTPPort)
+	// maintenance HTTP is typically internal-only; access via Gin(8888) reverse proxy.
+	listenAddr := net.JoinHostPort(listenHost, strconv.Itoa(cfg.MaintenancePort))
 	httpSrv := &http.Server{Addr: listenAddr, Handler: srv.Handler()}
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {

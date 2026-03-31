@@ -11,24 +11,40 @@ import (
 
 // Config holds application configuration (YAML).
 type Config struct {
-	DiscoveryServiceName       string   `yaml:"discovery_service_name"`
-	DiscoveryBroadcastAddress string `yaml:"discovery_broadcast_address"` // fallback when no physical NIC broadcast addrs found
-	// DiscoveryBroadcastAddresses []string `yaml:"discovery_broadcast_addresses"` // 주석: 물리 NIC brd 자동 수집 사용
-	DiscoveryUDPPort            int      `yaml:"discovery_udp_port"`
-	HTTPPort                   int    `yaml:"http_port"`
-	WebPrefix                  string `yaml:"web_prefix"`
-	APIPrefix                  string `yaml:"api_prefix"`
-	DiscoveryTimeoutSeconds    int    `yaml:"discovery_timeout_seconds"`
-	DiscoveryDeduplicate       bool   `yaml:"discovery_deduplicate"`
-	Version                    string `yaml:"version"`
-	PatchVersion               int    `yaml:"patch_version"` // numeric patch; combined key version_patch for dirs / compare
+	DiscoveryServiceName       string `yaml:"DiscoveryServiceName"`
+	DiscoveryBroadcastAddress  string `yaml:"DiscoveryBroadcastAddress"` // fallback when no physical NIC broadcast addrs found
+	// DiscoveryBroadcastAddresses []string `yaml:"DiscoveryBroadcastAddresses"` // 주석: 물리 NIC brd 자동 수집 사용
+	DiscoveryUDPPort           int    `yaml:"DiscoveryUDPPort"`
+	MaintenanceListenAddress   string `yaml:"MaintenanceListenAddress"` // e.g. "127.0.0.1" (internal only) or "0.0.0.0"
+	MaintenancePort            int    `yaml:"MaintenancePort"`
+	ServerHTTPPort             int    `yaml:"-"` // from top-level Server.HTTPPort (Gin). Used for remote calls.
+	WebPrefix                  string `yaml:"WebPrefix"`
+	APIPrefix                  string `yaml:"APIPrefix"`
+	DiscoveryTimeoutSeconds    int    `yaml:"DiscoveryTimeoutSeconds"`
+	DiscoveryDeduplicate       bool   `yaml:"DiscoveryDeduplicate"`
+	AgentVersion               string `yaml:"AgentVersion"`
+	PatchVersion               int    `yaml:"PatchVersion"` // numeric patch; combined key version_patch for dirs / compare
 	// Systemctl service status (self + discovered hosts)
-	SystemctlServiceName string `yaml:"systemctl_service_name"` // e.g. "mol.service"
-	DeployBase           string `yaml:"deploy_base"`             // e.g. "/opt/mol" for staging/, update.sh
-	InstallPrefix        string `yaml:"install_prefix"`          // mol 설치 경로 prefix (versions/ 목록·삭제, installer 등). 비면 deploy_base 사용
+	SystemctlServiceName string `yaml:"SystemctlServiceName"` // e.g. "mol.service"
+	DeployBase           string `yaml:"DeployBase"`           // e.g. "/opt/mol" for staging/, update.sh
+	InstallPrefix        string `yaml:"InstallPrefix"`        // mol 설치 경로 prefix (versions/ 목록·삭제, installer 등). 비면 deploy_base 사용
 	// SSH for remote service start/stop (when remote mol is stopped, API is unreachable)
-	SSHPort int    `yaml:"ssh_port"` // default 22; used for ssh -p when starting/stopping remote mol service
-	SSHUser string `yaml:"ssh_user"` // default "root"; user for ssh to remote host
+	SSHPort int    `yaml:"SSHPort"` // default 22; used for ssh -p when starting/stopping remote mol service
+	SSHUser string `yaml:"SSHUser"` // default "root"; user for ssh to remote host
+}
+
+// FileConfig is the on-disk YAML shape:
+//
+//	Maintenance:
+//	  MaintenancePort: 8889
+//	  ...
+type FileConfig struct {
+	Server      ServerConfig `yaml:"Server"`
+	Maintenance Config       `yaml:"Maintenance"`
+}
+
+type ServerConfig struct {
+	HTTPPort int `yaml:"HTTPPort"`
 }
 
 // Default returns default configuration values.
@@ -37,12 +53,14 @@ func Default() Config {
 		DiscoveryServiceName:      "mol",
 		DiscoveryBroadcastAddress: "192.168.0.255",
 		DiscoveryUDPPort:          9999,
-		HTTPPort:                  8888,
+		MaintenanceListenAddress:  "127.0.0.1",
+		MaintenancePort:           0,
+		ServerHTTPPort:            0,
 		WebPrefix:                 "/web",
 		APIPrefix:                 "/api/v1",
 		DiscoveryTimeoutSeconds:   10,
 		DiscoveryDeduplicate:      true,
-		Version:                   "",
+		AgentVersion:              "",
 		PatchVersion:              0,
 		SystemctlServiceName:      "mol.service",
 		DeployBase:                "/opt/mol",
@@ -51,15 +69,13 @@ func Default() Config {
 	}
 }
 
-// ParseVersionFromYAML extracts the "version" field from YAML bytes (semver only, no patch suffix).
+// ParseVersionFromYAML extracts the "AgentVersion" field from YAML bytes (semver only, no patch suffix).
 func ParseVersionFromYAML(data []byte) (string, error) {
-	var v struct {
-		Version string `yaml:"version"`
-	}
-	if err := yaml.Unmarshal(data, &v); err != nil {
+	var f FileConfig
+	if err := yaml.Unmarshal(data, &f); err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(v.Version), nil
+	return strings.TrimSpace(f.Maintenance.AgentVersion), nil
 }
 
 // Load reads config from path. If path is empty, env MOL_CONFIG is used; else "config.yaml".
@@ -80,11 +96,12 @@ func Load(path string) (*Config, error) {
 // LoadFromBytes parses config from YAML bytes. Used for upload validation.
 // Returns a descriptive error (which field/line caused the error, what type is expected) when parsing fails.
 func LoadFromBytes(data []byte) (*Config, error) {
-	c := Default()
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	f := FileConfig{Maintenance: Default()}
+	if err := yaml.Unmarshal(data, &f); err != nil {
 		return nil, configValidationError(err)
 	}
-	return &c, nil
+	f.Maintenance.ServerHTTPPort = f.Server.HTTPPort
+	return &f.Maintenance, nil
 }
 
 // configValidationError turns a YAML unmarshal error into a user-friendly message in Korean.
@@ -99,7 +116,7 @@ func configValidationError(err error) error {
 		for _, e := range yerr.Errors {
 			msgs = append(msgs, describeYAMLUnmarshalError(e))
 		}
-		return fmt.Errorf("%s%s. 필요한 항목 및 타입: discovery_service_name(문자열), discovery_udp_port(숫자), http_port(숫자), discovery_timeout_seconds(숫자), version(문자열), patch_version(숫자) 등", prefix, strings.Join(msgs, "; "))
+		return fmt.Errorf("%s%s. 필요한 항목 및 타입: Server.HTTPPort(숫자), DiscoveryServiceName(문자열), DiscoveryUDPPort(숫자), MaintenancePort(숫자), DiscoveryTimeoutSeconds(숫자), AgentVersion(문자열), PatchVersion(숫자) 등", prefix, strings.Join(msgs, "; "))
 	}
 	// Syntax error (e.g. invalid indentation)
 	if strings.Contains(err.Error(), "yaml:") {
@@ -113,9 +130,9 @@ func describeYAMLUnmarshalError(s string) string {
 	// Typical: "line 5: cannot unmarshal !!str `hello` into int"
 	if strings.Contains(s, "cannot unmarshal !!str") && strings.Contains(s, "into int") {
 		if line := extractLine(s); line != "" {
-			return line + " 숫자 항목에 문자열이 들어갔습니다 (discovery_udp_port, http_port, discovery_timeout_seconds 등은 숫자여야 함)"
+			return line + " 숫자 항목에 문자열이 들어갔습니다 (DiscoveryUDPPort, MaintenancePort, DiscoveryTimeoutSeconds 등은 숫자여야 함)"
 		}
-		return "숫자 항목에 문자열이 들어갔습니다 (discovery_udp_port, http_port, discovery_timeout_seconds 등은 숫자여야 함)"
+		return "숫자 항목에 문자열이 들어갔습니다 (DiscoveryUDPPort, MaintenancePort, DiscoveryTimeoutSeconds 등은 숫자여야 함)"
 	}
 	if strings.Contains(s, "cannot unmarshal !!int") && strings.Contains(s, "into string") {
 		if line := extractLine(s); line != "" {

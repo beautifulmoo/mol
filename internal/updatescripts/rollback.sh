@@ -8,7 +8,7 @@ BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
 HISTORY_LOG="$BASE/update_history.log"
 SERVICE=mol.service
 if [ -L "$BASE/previous" ] && [ -f "$BASE/previous/config.yaml" ]; then
-    v=$(grep -E '^systemctl_service_name:' "$BASE/previous/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
+    v=$(grep -E '^[[:space:]]*SystemctlServiceName:' "$BASE/previous/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
     [ -n "$v" ] && SERVICE=$v
 fi
 

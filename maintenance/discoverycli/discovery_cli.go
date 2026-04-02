@@ -13,22 +13,24 @@ import (
 	"sync"
 	"time"
 
-	"mol/maintenance/discovery"
-	"mol/maintenance/hostinfo"
+	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/maintenance/discovery"
+	"contrabass-agent/maintenance/hostinfo"
 )
 
 // Run runs standalone UDP discovery (no config file, no HTTP server).
-// mol --discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name]
+// Invoked as: <binary> --discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name] (binary name is appmeta.BinaryName).
 // Returns 0 on success, 1 on error.
 func Run(args []string) int {
 	fs := flag.NewFlagSet("discovery", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	destPort := fs.Int("dest-port", 9999, "destination UDP port (mol listeners on remote)")
+	destPort := fs.Int("dest-port", 9999, "destination UDP port (remote agents listen here)")
 	srcPort := fs.Int("src-port", 9998, "local UDP port to bind (responses arrive here)")
 	timeoutSec := fs.Int("timeout", 10, "discovery duration in seconds")
-	serviceName := fs.String("service", "mol", "service name in DISCOVERY_REQUEST")
+	serviceName := fs.String("service", config.DefaultDiscoveryServiceName, "service name in DISCOVERY_REQUEST")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mol --discovery [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s --discovery [flags]\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n\n")
 		fs.PrintDefaults()
 	}
@@ -42,20 +44,20 @@ func Run(args []string) int {
 		return 1
 	}
 	if *destPort <= 0 || *destPort > 65535 {
-		fmt.Fprintln(os.Stderr, "mol: --dest-port must be 1..65535")
+		fmt.Fprintf(os.Stderr, "%s: --dest-port must be 1..65535\n", appmeta.BinaryName)
 		return 1
 	}
 	if *srcPort <= 0 || *srcPort > 65535 {
-		fmt.Fprintln(os.Stderr, "mol: --src-port must be 1..65535")
+		fmt.Fprintf(os.Stderr, "%s: --src-port must be 1..65535\n", appmeta.BinaryName)
 		return 1
 	}
 	if *timeoutSec <= 0 {
-		fmt.Fprintln(os.Stderr, "mol: --timeout must be positive")
+		fmt.Fprintf(os.Stderr, "%s: --timeout must be positive\n", appmeta.BinaryName)
 		return 1
 	}
 	svc := strings.TrimSpace(*serviceName)
 	if svc == "" {
-		svc = "mol"
+		svc = config.DefaultDiscoveryServiceName
 	}
 
 	broadcastAddrs := hostinfo.GetPhysicalNICBroadcastAddresses()
@@ -69,7 +71,7 @@ func Run(args []string) int {
 
 	conns, err := discovery.OpenDiscoveryClientUDP(*srcPort, broadcastAddrs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mol: UDP bind for discovery failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: UDP bind for discovery failed: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 	defer func() {
@@ -91,16 +93,16 @@ func Run(args []string) int {
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "mol:", err)
+		fmt.Fprintln(os.Stderr, appmeta.BinaryName+":", err)
 		return 1
 	}
 	if err := discovery.ValidateDiscoveryRequestPayload(payload); err != nil {
-		fmt.Fprintln(os.Stderr, "mol:", err)
+		fmt.Fprintln(os.Stderr, appmeta.BinaryName+":", err)
 		return 1
 	}
 
 	if err := discovery.SendDiscoveryClientBroadcast(conns, payload, *destPort, broadcastAddrs); err != nil {
-		fmt.Fprintf(os.Stderr, "mol: discovery broadcast send: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: discovery broadcast send: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 

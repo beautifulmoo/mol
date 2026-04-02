@@ -18,12 +18,29 @@ import (
 	"strings"
 	"time"
 
-	"mol/internal/config"
-	"mol/internal/updatescripts"
-	"mol/maintenance/discovery"
-	"mol/maintenance/hostinfo"
-	"mol/maintenance/svcstatus"
+	"contrabass-agent/internal/config"
+	"contrabass-agent/internal/updatescripts"
+	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/maintenance/discovery"
+	"contrabass-agent/maintenance/hostinfo"
+	"contrabass-agent/maintenance/svcstatus"
 )
+
+// uploadBinaryField is the multipart form field name for the agent executable (must match maintenance/web/app.js).
+const uploadBinaryField = "agent"
+
+func dirHasAgentBinary(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, appmeta.BinaryName))
+	return err == nil
+}
+
+func firstAgentBinaryPath(dir string) string {
+	p := filepath.Join(dir, appmeta.BinaryName)
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
 
 // elfMagic is the first 4 bytes of an ELF executable.
 var elfMagic = []byte{0x7f, 'E', 'L', 'F'}
@@ -32,21 +49,22 @@ func isELFExecutable(header []byte) bool {
 	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
 }
 
-// validateMolBinary runs molPath --version with a short timeout and checks that output starts with "mol " and exit code is 0.
-func validateMolBinary(molPath string) error {
+// validateAgentBinary runs binPath --version with a short timeout and checks that output starts with "<BinaryName> " and exit code is 0.
+func validateAgentBinary(binPath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, molPath, "--version")
+	cmd := exec.CommandContext(ctx, binPath, "--version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("mol 실행 파일 검증 시간 초과 (--version이 5초 내에 끝나지 않음)")
+			return fmt.Errorf("실행 파일 검증 시간 초과 (--version이 5초 내에 끝나지 않음)")
 		}
-		return fmt.Errorf("mol 실행 파일이 아닌 것 같습니다 (--version 실패): %w", err)
+		return fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 실패): %w", err)
 	}
 	line := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(line, "mol ") {
-		return fmt.Errorf("mol 실행 파일이 아닌 것 같습니다 (출력: %q)", line)
+	want := appmeta.BinaryName + " "
+	if !strings.HasPrefix(line, want) {
+		return fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 출력 접두사 기대 %q, 실제: %q)", want, line)
 	}
 	return nil
 }
@@ -76,7 +94,7 @@ type Server struct {
 	discoveryServiceName string
 	systemctlServiceName string
 	deployBase           string
-	installPrefix        string // mol 설치 경로 prefix (versions/ 기준). 비면 deployBase 사용
+	installPrefix        string // contrabass-moleU 설치 경로 prefix (versions/ 기준). 비면 deployBase 사용
 	sshPort              int
 	sshUser              string
 }
@@ -90,11 +108,11 @@ type Config struct {
 	GetHostInfo          func() (hostinfo.Info, error)
 	Version              string
 	ServicePort          int
-	RemoteProxyPort      int // external proxy port (Gin). Sourced from Server.HTTPPort.
+	RemoteProxyPort      int // external proxy port (Gin). should be Server.HTTPPort
 	DiscoveryServiceName string
 	SystemctlServiceName string
 	DeployBase           string
-	InstallPrefix        string // mol 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
+	InstallPrefix        string // contrabass-moleU 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
 	SSHPort              int    // for remote service start/stop via SSH (default 22)
 	SSHUser              string // SSH user for remote (default "root")
 }
@@ -126,7 +144,7 @@ func New(cfg Config) *Server {
 func (s *Server) remoteBaseURL(ip string) (string, error) {
 	port := s.remoteProxyPort
 	if port <= 0 || port > 65535 {
-		return "", fmt.Errorf("RemoteProxyPort must be 1..65535")
+		return "", fmt.Errorf("Server.HTTPPort must be 1..65535")
 	}
 	return "http://" + ip + ":" + strconv.Itoa(port), nil
 }
@@ -168,7 +186,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("mol " + v))
+	w.Write([]byte(appmeta.BinaryName + " " + v))
 }
 
 // Handler returns http.Handler that serves web and API.
@@ -326,7 +344,7 @@ func (s *Server) handleServiceStatus(w http.ResponseWriter, r *http.Request) {
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	svcName := s.systemctlServiceName
 	if svcName == "" {
-		svcName = "mol.service"
+		svcName = "contrabass-mole.service"
 	}
 	if ip != "" && ip != "self" {
 		baseURL, err := s.remoteBaseURL(ip)
@@ -382,11 +400,11 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	}
 	svcName := s.systemctlServiceName
 	if svcName == "" {
-		svcName = "mol.service"
+		svcName = "contrabass-mole.service"
 	}
 	if ip != "" && ip != "self" {
 		if action == "restart" {
-			// 재시작만 원격 mol API 호출로 처리 (SSH 키 불필요). 원격에서 systemctl restart 수행.
+			// 재시작만 원격 에이전트 API 호출로 처리 (SSH 키 불필요). 원격에서 systemctl restart 수행.
 			baseURL, err := s.remoteBaseURL(ip)
 			if err != nil {
 				s.send(w, "fail", "원격 재시작 요청 실패: "+err.Error(), http.StatusOK)
@@ -444,7 +462,7 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", nil, http.StatusOK)
 }
 
-const maxUploadBytes = 64 << 20 // 64MB for mol binary + config
+const maxUploadBytes = 64 << 20 // 64MB for agent binary + config
 
 // stagingDir returns deploy_base/staging/<version>. Staging is never the running path, so no "text file busy".
 func (s *Server) stagingDir(base, version string) string {
@@ -469,81 +487,83 @@ func (s *Server) versionsBase() string {
 		base = s.deployBase
 	}
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 	return base
 }
 
-// writeToStaging writes mol (from reader) and configData to base/staging/version/. Returns the staging dir path.
-func (s *Server) writeToStaging(base, version string, molFile io.Reader, configData []byte) (string, error) {
+// writeToStaging writes the agent binary from execReader and configData to base/staging/version/. Returns the staging dir path.
+func (s *Server) writeToStaging(base, version string, execReader io.Reader, configData []byte) (string, error) {
 	stagingDir := s.stagingDir(base, version)
 	if err := os.MkdirAll(stagingDir, 0755); err != nil {
 		return "", fmt.Errorf("스테이징 디렉터리 생성 실패: %w", err)
 	}
-	molPath := filepath.Join(stagingDir, "mol")
+	binName := appmeta.BinaryName
+	binPath := filepath.Join(stagingDir, binName)
 	configPath := filepath.Join(stagingDir, "config.yaml")
-	molOut, err := os.Create(molPath)
+	binOut, err := os.Create(binPath)
 	if err != nil {
-		return "", fmt.Errorf("mol 파일 저장 실패: %w", err)
+		return "", fmt.Errorf("%s 파일 저장 실패: %w", binName, err)
 	}
-	_, err = io.Copy(molOut, molFile)
-	molOut.Close()
+	_, err = io.Copy(binOut, execReader)
+	binOut.Close()
 	if err != nil {
-		os.Remove(molPath)
-		return "", fmt.Errorf("mol 쓰기 실패: %w", err)
+		os.Remove(binPath)
+		return "", fmt.Errorf("%s 쓰기 실패: %w", binName, err)
 	}
-	if err := os.Chmod(molPath, 0755); err != nil {
-		log.Printf("chmod %s: %v", molPath, err)
+	if err := os.Chmod(binPath, 0755); err != nil {
+		log.Printf("chmod %s: %v", binPath, err)
 	}
 	if err := os.WriteFile(configPath, configData, 0644); err != nil {
-		os.Remove(molPath)
+		os.Remove(binPath)
 		return "", fmt.Errorf("config.yaml 저장 실패: %w", err)
 	}
 	return stagingDir, nil
 }
 
-// copyStagingToVersions copies base/staging/version/ to base/versions/version/ (mol + config.yaml, chmod mol).
+// copyStagingToVersions copies base/staging/version/ to base/versions/version/ (binary + config.yaml, chmod binary).
 func (s *Server) copyStagingToVersions(base, version string) error {
 	stg := s.stagingDir(base, version)
 	ver := s.versionsDir(base, version)
 	if err := os.MkdirAll(ver, 0755); err != nil {
 		return err
 	}
-	molSrc := filepath.Join(stg, "mol")
-	molDst := filepath.Join(ver, "mol")
+	binName := appmeta.BinaryName
+	binSrc := filepath.Join(stg, binName)
+	binDst := filepath.Join(ver, binName)
 	configSrc := filepath.Join(stg, "config.yaml")
 	configDst := filepath.Join(ver, "config.yaml")
-	data, err := os.ReadFile(molSrc)
+	data, err := os.ReadFile(binSrc)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(molDst, data, 0644); err != nil {
+	if err := os.WriteFile(binDst, data, 0644); err != nil {
 		return err
 	}
-	if err := os.Chmod(molDst, 0755); err != nil {
-		os.Remove(molDst)
+	if err := os.Chmod(binDst, 0755); err != nil {
+		os.Remove(binDst)
 		return err
 	}
 	data, err = os.ReadFile(configSrc)
 	if err != nil {
-		os.Remove(molDst)
+		os.Remove(binDst)
 		return err
 	}
 	if err := os.WriteFile(configDst, data, 0644); err != nil {
-		os.Remove(molDst)
+		os.Remove(binDst)
 		return err
 	}
 	return nil
 }
 
-// resolveVersionDir returns the directory that contains mol+config for this version: staging first, then versions.
+// resolveVersionDir returns the directory that contains the agent binary + config for this version: staging first, then versions.
 func (s *Server) resolveVersionDir(base, version string) (string, bool) {
 	stg := s.stagingDir(base, version)
-	if _, err := os.Stat(filepath.Join(stg, "mol")); err == nil {
+	if dirHasAgentBinary(stg) {
 		return stg, true // from staging
 	}
 	ver := s.versionsDir(base, version)
-	if _, err := os.Stat(filepath.Join(ver, "mol")); err == nil {
+	if dirHasAgentBinary(ver) {
 		return ver, false // from versions
 	}
 	return "", false
@@ -559,23 +579,23 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "요청 크기 초과 또는 multipart 파싱 실패", http.StatusBadRequest)
 		return
 	}
-	molFile, _, err := r.FormFile("mol")
+	execFile, _, err := r.FormFile(uploadBinaryField)
 	if err != nil {
-		s.send(w, "fail", "mol 파일이 필요합니다", http.StatusBadRequest)
+		s.send(w, "fail", "실행 파일이 필요합니다 (multipart 필드 \""+uploadBinaryField+"\")", http.StatusBadRequest)
 		return
 	}
-	defer molFile.Close()
-	molBytes, err := io.ReadAll(molFile)
+	defer execFile.Close()
+	execBytes, err := io.ReadAll(execFile)
 	if err != nil {
-		s.send(w, "fail", "mol 파일 읽기 실패", http.StatusInternalServerError)
+		s.send(w, "fail", "실행 파일 읽기 실패", http.StatusInternalServerError)
 		return
 	}
-	if len(molBytes) < 4 {
+	if len(execBytes) < 4 {
 		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
 		return
 	}
-	if !isELFExecutable(molBytes[:4]) {
-		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). mol 실행 파일을 선택하세요.", http.StatusBadRequest)
+	if !isELFExecutable(execBytes[:4]) {
+		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). "+appmeta.BinaryName+" 실행 파일을 선택하세요.", http.StatusBadRequest)
 		return
 	}
 	configFile, _, err := r.FormFile("config")
@@ -616,16 +636,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	base := s.deployBase
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 	s.clearStaging(base)
-	stagingDir, err := s.writeToStaging(base, versionKey, bytes.NewReader(molBytes), configData)
+	stagingDir, err := s.writeToStaging(base, versionKey, bytes.NewReader(execBytes), configData)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
 		return
 	}
-	molPath := filepath.Join(stagingDir, "mol")
-	if err := validateMolBinary(molPath); err != nil {
+	binPath := filepath.Join(stagingDir, appmeta.BinaryName)
+	if err := validateAgentBinary(binPath); err != nil {
 		os.RemoveAll(stagingDir)
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
@@ -657,7 +677,7 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.deployBase
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 	stagingParent := filepath.Join(base, "staging")
 	stagingVersionDir := filepath.Join(stagingParent, version)
@@ -675,32 +695,32 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", "버전 "+version+" 이 스테이징에서 삭제되었습니다.", http.StatusOK)
 }
 
-// remoteHTTPClient is used to call another mol instance's upload/apply APIs (no SSH/SCP).
+// remoteHTTPClient is used to call another agent's upload/apply APIs (no SSH/SCP).
 var remoteHTTPClient = &http.Client{Timeout: 120 * time.Second}
 
-// postUploadToTarget sends mol and config from local paths to target mol's upload API (staging).
-func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, molPath, configPath string) error {
-	molFile, err := os.Open(molPath)
+// postUploadToTarget sends the agent binary and config from local paths to the target upload API (staging).
+func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, binPath, configPath string) error {
+	binFile, err := os.Open(binPath)
 	if err != nil {
-		return fmt.Errorf("mol 파일 열기: %w", err)
+		return fmt.Errorf("실행 파일 열기: %w", err)
 	}
-	defer molFile.Close()
+	defer binFile.Close()
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("config 읽기: %w", err)
 	}
-	return s.postUploadToTargetWithReader(ctx, baseURL, apiPrefix, molFile, configData)
+	return s.postUploadToTargetWithReader(ctx, baseURL, apiPrefix, binFile, configData)
 }
 
-// postUploadToTargetWithReader sends mol (from reader) and configData to target mol's upload API (staging).
-func (s *Server) postUploadToTargetWithReader(ctx context.Context, baseURL, apiPrefix string, molReader io.Reader, configData []byte) error {
+// postUploadToTargetWithReader sends the agent binary and configData to the target upload API (staging).
+func (s *Server) postUploadToTargetWithReader(ctx context.Context, baseURL, apiPrefix string, binReader io.Reader, configData []byte) error {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
-	molPart, err := w.CreateFormFile("mol", "mol")
+	binPart, err := w.CreateFormFile(uploadBinaryField, appmeta.BinaryName)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(molPart, molReader); err != nil {
+	if _, err := io.Copy(binPart, binReader); err != nil {
 		return err
 	}
 	configPart, err := w.CreateFormFile("config", "config.yaml")
@@ -740,7 +760,7 @@ func (s *Server) postUploadToTargetWithReader(ctx context.Context, baseURL, apiP
 	return nil
 }
 
-// postApplyUpdateToTarget tells target mol to apply the given version from its staging (ip=self).
+// postApplyUpdateToTarget tells the target agent to apply the given version from its staging (ip=self).
 func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version string) (status string, data interface{}, err error) {
 	applyURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/apply-update"
 	payload, err := json.Marshal(map[string]string{"version": version, "ip": "self"})
@@ -773,10 +793,10 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.deployBase
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 
-	// 원격 전용: multipart(mol+config+ip) → 원격 mol 업로드 API로 전송 후 원격 apply-update API 호출 (로컬 스테이징·SCP 미사용)
+	// 원격 전용: multipart(실행 파일+config+ip) → 원격 업로드 API로 전송 후 원격 apply-update API 호출 (로컬 스테이징·SCP 미사용)
 	if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 		if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
@@ -788,47 +808,47 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "원격 적용 시 ip가 필요합니다", http.StatusBadRequest)
 			return
 		}
-		molFile, _, err := r.FormFile("mol")
+		execFile, _, err := r.FormFile(uploadBinaryField)
 		if err != nil {
-			s.send(w, "fail", "mol 파일이 필요합니다", http.StatusBadRequest)
+			s.send(w, "fail", "실행 파일이 필요합니다 (multipart 필드 \""+uploadBinaryField+"\")", http.StatusBadRequest)
 			return
 		}
-		molBytes, err := io.ReadAll(molFile)
-		molFile.Close()
+		execBytes, err := io.ReadAll(execFile)
+		execFile.Close()
 		if err != nil {
-			s.send(w, "fail", "mol 파일 읽기 실패", http.StatusInternalServerError)
+			s.send(w, "fail", "실행 파일 읽기 실패", http.StatusInternalServerError)
 			return
 		}
-		if len(molBytes) < 4 {
+		if len(execBytes) < 4 {
 			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
 			return
 		}
-		if !isELFExecutable(molBytes[:4]) {
-			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). mol 실행 파일을 선택하세요.", http.StatusBadRequest)
+		if !isELFExecutable(execBytes[:4]) {
+			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). "+appmeta.BinaryName+" 실행 파일을 선택하세요.", http.StatusBadRequest)
 			return
 		}
-		tmp, err := os.CreateTemp("", "mol-validate-*")
+		tmp, err := os.CreateTemp("", "agent-validate-*")
 		if err != nil {
 			s.send(w, "fail", "임시 파일 생성 실패", http.StatusInternalServerError)
 			return
 		}
 		tmpPath := tmp.Name()
 		defer os.Remove(tmpPath)
-		if _, err := tmp.Write(molBytes); err != nil {
+		if _, err := tmp.Write(execBytes); err != nil {
 			tmp.Close()
-			s.send(w, "fail", "mol 검증용 임시 쓰기 실패", http.StatusInternalServerError)
+			s.send(w, "fail", "실행 파일 검증용 임시 쓰기 실패", http.StatusInternalServerError)
 			return
 		}
 		if err := tmp.Chmod(0755); err != nil {
 			tmp.Close()
-			s.send(w, "fail", "mol 검증 실패", http.StatusInternalServerError)
+			s.send(w, "fail", "실행 파일 검증 실패", http.StatusInternalServerError)
 			return
 		}
 		if err := tmp.Close(); err != nil {
-			s.send(w, "fail", "mol 검증 실패", http.StatusInternalServerError)
+			s.send(w, "fail", "실행 파일 검증 실패", http.StatusInternalServerError)
 			return
 		}
-		if err := validateMolBinary(tmpPath); err != nil {
+		if err := validateAgentBinary(tmpPath); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -873,7 +893,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 		defer cancel()
-		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, bytes.NewReader(molBytes), configData); err != nil {
+		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, bytes.NewReader(execBytes), configData); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
@@ -944,11 +964,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "rollback.sh 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		exec.Command("systemctl", "reset-failed", "mol-update.service").Run()
-		exec.Command("systemctl", "stop", "mol-update.service").Run()
+		exec.Command("systemctl", "reset-failed", appmeta.UpdateTransientUnit).Run()
+		exec.Command("systemctl", "stop", appmeta.UpdateTransientUnit).Run()
 		go func() {
 			cmd := exec.Command("systemd-run",
-				"--unit=mol-update",
+				"--unit="+appmeta.UpdateTransientUnitStem,
 				"--property=RemainAfterExit=yes",
 				"/bin/bash", updateScript, version)
 			cmd.Stdout = io.Discard
@@ -962,7 +982,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			// 스테이징은 자동 삭제하지 않음. 원격 업데이트에 재사용할 수 있도록 남겨 두고, 사용자가 「업로드된 버전 삭제」로 수동 삭제.
 			// update.sh / rollback.sh 는 스크립트 종료 시 스스로 삭제한다.
 		}()
-		log.Printf("apply-update: systemd-run --unit=mol-update /bin/bash %s %s", updateScript, version)
+		log.Printf("apply-update: systemd-run --unit=%s /bin/bash %s %s", appmeta.UpdateTransientUnitStem, updateScript, version)
 		s.send(w, "success", "업데이트를 적용 중입니다. 잠시 후 서버가 재시작됩니다. 아래 로그를 새로고침하세요.", http.StatusOK)
 		return
 	}
@@ -970,7 +990,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	s.doRemoteUpdate(w, ip, version, versionDir)
 }
 
-// doRemoteUpdate sends files to the remote mol's upload API (staging), then calls the remote's apply-update API (no SSH/SCP).
+// doRemoteUpdate sends files to the remote upload API (staging), then calls the remote apply-update API (no SSH/SCP).
 func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir string) {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
@@ -980,9 +1000,13 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir s
 	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 	defer cancel()
 
-	molPath := filepath.Join(versionDir, "mol")
+	binPath := firstAgentBinaryPath(versionDir)
+	if binPath == "" {
+		s.send(w, "fail", "버전 디렉터리에 실행 파일 "+appmeta.BinaryName+" 이 없습니다: "+versionDir, http.StatusOK)
+		return
+	}
 	configPath := filepath.Join(versionDir, "config.yaml")
-	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, molPath, configPath); err != nil {
+	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, binPath, configPath); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
@@ -1010,7 +1034,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.deployBase
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 	currentVersion := ""
 	currentLink := filepath.Join(base, "current")
@@ -1026,8 +1050,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			v := e.Name()
-			molPath := filepath.Join(stagingParent, v, "mol")
-			if _, err := os.Stat(molPath); err == nil {
+			if dirHasAgentBinary(filepath.Join(stagingParent, v)) {
 				stagingVersions = append(stagingVersions, v)
 			}
 		}
@@ -1054,13 +1077,13 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		"can_apply":           canApply,
 		"apply_version":       applyVersion,
 		"remove_version":      removeVersion,
-		"update_in_progress":  isMolUpdateActive(),
+		"update_in_progress":  isUpdateUnitActive(),
 	}, http.StatusOK)
 }
 
-// isMolUpdateActive returns true if mol-update.service is active (update script running).
-func isMolUpdateActive() bool {
-	out, err := exec.Command("systemctl", "is-active", "mol-update.service").Output()
+// isUpdateUnitActive returns true while the transient update unit (UpdateTransientUnit) is active.
+func isUpdateUnitActive() bool {
+	out, err := exec.Command("systemctl", "is-active", appmeta.UpdateTransientUnit).Output()
 	return err == nil && strings.TrimSpace(string(out)) == "active"
 }
 
@@ -1121,8 +1144,7 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 		if ver == "." || ver == ".." {
 			continue
 		}
-		molPath := filepath.Join(versionsParent, ver, "mol")
-		if _, err := os.Stat(molPath); err != nil {
+		if !dirHasAgentBinary(filepath.Join(versionsParent, ver)) {
 			continue
 		}
 		list = append(list, versionEntry{
@@ -1310,7 +1332,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.deployBase
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 	historyPath := filepath.Join(base, "update_history.log")
 	data, err := os.ReadFile(historyPath)
@@ -1343,7 +1365,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 		recentRollback = strings.Contains(first, "rollback") || strings.Contains(first, "failed")
 	}
 	// 업데이트 진행 중에는 롤백 경고 숨김 (이전 실패 기록이 새 적용과 혼동되지 않도록)
-	if recentRollback && isMolUpdateActive() {
+	if recentRollback && isUpdateUnitActive() {
 		recentRollback = false
 	}
 	s.send(w, "success", map[string]interface{}{"output": output, "recent_rollback": recentRollback}, http.StatusOK)
@@ -1353,7 +1375,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) currentConfigPath() string {
 	base := s.deployBase
 	if base == "" {
-		base = "/opt/mol"
+		base = "/var/lib/contrabass/mole"
 	}
 	linkPath := filepath.Join(base, "current")
 	resolved, err := filepath.EvalSymlinks(linkPath)

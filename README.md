@@ -37,38 +37,38 @@ go build -o mol -ldflags "-X main.Version=1.0.0" .
 
 프로젝트 루트에 **update.sh**, **rollback.sh** 가 참고용으로 포함되어 있다. 웹 UI의 “업데이트 적용” 기능을 쓰려면 이 스크립트들을 **배포 베이스 디렉터리**에 두어야 한다.
 
-- **위치**: 설정 `DeployBase`(기본값 `/opt/mol`) 아래에 두 파일을 복사한다.
+- **위치**: 설정 `DeployBase`(기본값 `/var/lib/contrabass/mole`) 아래에 두 파일을 복사한다.
   - `{DeployBase}/update.sh`
   - `{DeployBase}/rollback.sh`
-- 예: `/opt/mol` 를 쓰는 경우
-  - `/opt/mol/update.sh`, `/opt/mol/rollback.sh` 로 복사 후 실행 권한 부여 (`chmod +x`).
-- 스크립트 안의 `BASE`(또는 경로)가 실제 배포 경로와 같아야 한다. 기본값은 `/opt/mol` 이다. `DeployBase` 를 다르게 쓰면 스크립트 내부 경로를 그에 맞게 수정해야 한다.
+- 예: `/var/lib/contrabass/mole` 를 쓰는 경우
+  - `/var/lib/contrabass/mole/update.sh`, `/var/lib/contrabass/mole/rollback.sh` 로 복사 후 실행 권한 부여 (`chmod +x`).
+- 스크립트 안의 `BASE`(또는 경로)가 실제 배포 경로와 같아야 한다. 기본값은 `/var/lib/contrabass/mole` 이다. `DeployBase` 를 다르게 쓰면 스크립트 내부 경로를 그에 맞게 수정해야 한다.
 
 **사용 방법**
 
-- **update.sh**: 웹 UI에서 “업데이트 적용” 시 mol 이 `systemd-run ... {DeployBase}/update.sh {버전}` (mol.service는 root 실행, sudo 없음) 형태로 실행한다. 인자로 **버전 하나**를 받으며, 실행 시점에 `{DeployBase}/versions/{버전}/mol` 이 있어야 한다.  
+- **update.sh**: 웹 UI에서 “업데이트 적용” 시 mol 이 `systemd-run ... {DeployBase}/update.sh {버전}` (contrabass-mole.service는 root 실행, sudo 없음) 형태로 실행한다. 인자로 **버전 하나**를 받으며, 실행 시점에 `{DeployBase}/versions/{버전}/mol` 이 있어야 한다.  
   업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다(실행 중인 경로를 덮어쓰지 않아 text file busy 를 피함). 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않고 남겨 두어 같은 버전으로 원격 업데이트를 할 수 있게 하며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
-  - 예: `/opt/mol/rollback.sh` (root 또는 동일 권한으로 실행)
+  - 예: `/var/lib/contrabass/mole/rollback.sh` (root 또는 동일 권한으로 실행)
 - `{DeployBase}/previous` 심볼릭 링크가 있어야 하며(최소 한 번 업데이트가 된 뒤에만 유효), 없으면 “no previous version”으로 종료된다.
 
 ## 실행
 
 ```bash
 # 서비스 기동(설정 파일 필수)
-./mol -config /path/to/config.yaml
+./mol -cfg /path/to/config.yaml
 # 또는 systemd 등에서
-./mol -config /opt/mol/config.yaml
+./mol -cfg /var/lib/contrabass/mole/config.yaml
 ```
 
-인자 없이 `./mol`만 실행하면 버전과 `-config` 안내가 출력되고 **서비스는 시작하지 않습니다.**
+인자 없이 `./mol`만 실행하면 버전과 `-cfg` 안내가 출력되고 **서비스는 시작하지 않습니다.**
 
 **CLI**
 
 | 옵션 | 설명 |
 |------|------|
-| `-config <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동 |
-| (인자 없음) | 버전·`-config` 안내 출력 후 종료 |
+| `-cfg <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동 |
+| (인자 없음) | 버전·`-cfg` 안내 출력 후 종료 |
 | `-h`, `--help` | 사용법 출력 |
 | `--version`, `-version` | 빌드 버전 한 줄 출력 후 종료 |
 | `--nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
@@ -94,7 +94,7 @@ mol --discovery --dest-port=9999 --src-port=9998 --timeout=10
 
 ## 설정
 
-`config.yaml` (또는 `MOL_CONFIG`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
+설정 파일 경로는 실행 시 **`-cfg <파일>`** 로 지정한다(예: `config.yaml`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
 
 - 모든 설정은 최상위 `Maintenance:` 아래에 둔다.
 
@@ -102,7 +102,7 @@ mol --discovery --dest-port=9999 --src-port=9998 --timeout=10
 # 예시
 Maintenance:
   MaintenancePort: 8889
-  DiscoveryServiceName: "mol"
+  DiscoveryServiceName: "Mole-Discovery"
   DiscoveryUDPPort: 9999
   WebPrefix: "/web"
   APIPrefix: "/api/v1"
@@ -111,10 +111,10 @@ Maintenance:
 ```
 
 - **Discovery 브로드캐스트**: 기본은 **NIC에서 brd 자동 수집**(bonding·bridge·vlan 등 포함, `mol --nic-brd`로 확인). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음.
-- `Maintenance.DiscoveryServiceName`: Discovery JSON의 `service` 값(기본 `mol`) · `Maintenance.DiscoveryUDPPort`: 9999 · `Maintenance.MaintenancePort`: (설정값) · `Maintenance.DiscoveryTimeoutSeconds` · `Maintenance.DiscoveryDeduplicate`
+- `Maintenance.DiscoveryServiceName`: Discovery JSON의 `service` 값(기본 `Mole-Discovery`) · `Maintenance.DiscoveryUDPPort`: 9999 · `Maintenance.MaintenancePort`: (설정값) · `Maintenance.DiscoveryTimeoutSeconds` · `Maintenance.DiscoveryDeduplicate`
 - `Maintenance.DeployBase` / `Maintenance.InstallPrefix`(비우면 DeployBase): 스테이징·versions·update.sh 경로
 - `Maintenance.AgentVersion`: 비우면 ldflags 빌드 버전
-- `Maintenance.SystemctlServiceName`: 기본 `mol.service`
+- `Maintenance.SystemctlServiceName`: 기본 `contrabass-mole.service`
 - **SSH** (`Maintenance.SSHPort` 기본 22, `Maintenance.SSHUser` 기본 **root**): 원격 호스트의 **서비스 시작/중지**만 SSH. **상태 조회·재시작**은 원격 mol **HTTP API**(MaintenancePort)를 통해 처리한다.
 
 ### 웹에서 systemctl status

@@ -6,7 +6,7 @@ export PATH="/usr/bin:/bin:/usr/local/bin:${PATH:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
 HISTORY_LOG="$BASE/update_history.log"
-SERVICE=mol.service
+SERVICE=contrabass-mole.service
 if [ -L "$BASE/previous" ] && [ -f "$BASE/previous/config.yaml" ]; then
     v=$(grep -E '^[[:space:]]*SystemctlServiceName:' "$BASE/previous/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
     [ -n "$v" ] && SERVICE=$v

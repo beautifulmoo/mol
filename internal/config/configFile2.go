@@ -25,11 +25,11 @@ type Config struct {
 	AgentVersion               string `yaml:"AgentVersion"`
 	PatchVersion               int    `yaml:"PatchVersion"` // numeric patch; combined key version_patch for dirs / compare
 	// Systemctl service status (self + discovered hosts)
-	SystemctlServiceName string `yaml:"SystemctlServiceName"` // e.g. "mol.service"
-	DeployBase           string `yaml:"DeployBase"`           // e.g. "/opt/mol" for staging/, update.sh
-	InstallPrefix        string `yaml:"InstallPrefix"`        // mol 설치 경로 prefix (versions/ 목록·삭제, installer 등). 비면 deploy_base 사용
-	// SSH for remote service start/stop (when remote mol is stopped, API is unreachable)
-	SSHPort int    `yaml:"SSHPort"` // default 22; used for ssh -p when starting/stopping remote mol service
+	SystemctlServiceName string `yaml:"SystemctlServiceName"` // e.g. "contrabass-mole.service"
+	DeployBase           string `yaml:"DeployBase"`           // e.g. "/var/lib/contrabass/mole" for staging/, update.sh
+	InstallPrefix        string `yaml:"InstallPrefix"`        // contrabass-moleU 설치 경로 prefix (versions/ 목록·삭제, installer 등). 비면 deploy_base 사용
+	// SSH for remote service start/stop (when remote contrabass-moleU is stopped, API is unreachable)
+	SSHPort int    `yaml:"SSHPort"` // default 22; used for ssh -p when starting/stopping remote contrabass-moleU (systemctl) on the remote host
 	SSHUser string `yaml:"SSHUser"` // default "root"; user for ssh to remote host
 }
 
@@ -47,10 +47,13 @@ type ServerConfig struct {
 	HTTPPort int `yaml:"HTTPPort"`
 }
 
+// DefaultDiscoveryServiceName is the default DISCOVERY_REQUEST `service` value (must match Maintenance.DiscoveryServiceName).
+const DefaultDiscoveryServiceName = "Mole-Discovery"
+
 // Default returns default configuration values.
 func Default() Config {
 	return Config{
-		DiscoveryServiceName:      "mol",
+		DiscoveryServiceName:      DefaultDiscoveryServiceName,
 		DiscoveryBroadcastAddress: "192.168.0.255",
 		DiscoveryUDPPort:          9999,
 		MaintenanceListenAddress:  "127.0.0.1",
@@ -62,8 +65,8 @@ func Default() Config {
 		DiscoveryDeduplicate:      true,
 		AgentVersion:              "",
 		PatchVersion:              0,
-		SystemctlServiceName:      "mol.service",
-		DeployBase:                "/opt/mol",
+		SystemctlServiceName:      "contrabass-mole.service",
+		DeployBase:                "/var/lib/contrabass/mole",
 		SSHPort:                   22,
 		SSHUser:                   "root",
 	}
@@ -78,11 +81,8 @@ func ParseVersionFromYAML(data []byte) (string, error) {
 	return strings.TrimSpace(f.Maintenance.AgentVersion), nil
 }
 
-// Load reads config from path. If path is empty, env MOL_CONFIG is used; else "config.yaml".
+// Load reads config from path. If path is empty, "config.yaml" in the current directory is used.
 func Load(path string) (*Config, error) {
-	if path == "" {
-		path = os.Getenv("MOL_CONFIG")
-	}
 	if path == "" {
 		path = "config.yaml"
 	}

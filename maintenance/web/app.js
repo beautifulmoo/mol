@@ -370,17 +370,17 @@
           doApplyToHost(applicableVersion);
           return;
         }
-        // mol+config 선택된 경우: 로컬에 저장하지 않고 원격으로만 전송 (multipart apply-update)
-        var molInput = el('upload-mol');
+        // 실행 파일+config 선택된 경우: 로컬에 저장하지 않고 원격으로만 전송 (multipart apply-update)
+        var execFileInput = el('upload-exec');
         var configEditor = el('upload-config-editor');
-        if (!molInput || !molInput.files[0] || !configEditor || !configEditor.value.trim()) {
-          if (summary) summary.textContent = 'mol과 config.yaml을 선택하세요.';
+        if (!execFileInput || !execFileInput.files[0] || !configEditor || !configEditor.value.trim()) {
+          if (summary) summary.textContent = '실행 파일과 config.yaml을 선택하세요.';
           recheckApplyButton();
           return;
         }
         var formData = new FormData();
         formData.append('ip', ip);
-        formData.append('mol', molInput.files[0]);
+        formData.append('agent', execFileInput.files[0]);
         formData.append('config', new Blob([configEditor.value], { type: 'text/yaml' }), 'config.yaml');
         showCardUpdating(cardEl, true);
         fetch(API_BASE + '/apply-update', {
@@ -810,7 +810,7 @@
         return;
       }
       if (count === 0) {
-        status.textContent = 'Discovery 요청 실패 (서버 연결 오류 또는 스트림 중단). journalctl -u mol.service 로 서버 로그를 확인하세요.';
+        status.textContent = 'Discovery 요청 실패 (서버 연결 오류 또는 스트림 중단). journalctl -u contrabass-mole.service 로 서버 로그를 확인하세요.';
       } else {
         status.textContent = '호스트 ' + count + '개 발견.';
       }
@@ -849,10 +849,10 @@
   }
 
   function hasUploadableSelection() {
-    var molHas = el('upload-mol') && el('upload-mol').files && el('upload-mol').files[0];
+    var execFileSelected = el('upload-exec') && el('upload-exec').files && el('upload-exec').files[0];
     var configEditor = el('upload-config-editor');
     var configHas = configEditor && configEditor.value.trim();
-    return !!(molHas && configHas);
+    return !!(execFileSelected && configHas);
   }
 
   function updateUploadButtonState() {
@@ -883,9 +883,9 @@
   }
 
   function resetUploadForm() {
-    var molInput = el('upload-mol');
+    var execFileInput = el('upload-exec');
     var configInput = el('upload-config');
-    if (molInput) { molInput.value = ''; }
+    if (execFileInput) { execFileInput.value = ''; }
     if (configInput) { configInput.value = ''; }
     var editor = el('upload-config-editor');
     if (editor) editor.value = '';
@@ -895,12 +895,12 @@
   }
 
   function doUpload() {
-    var molInput = el('upload-mol');
+    var execFileInput = el('upload-exec');
     var configEditor = el('upload-config-editor');
     var status = el('upload-status');
     var applyBtn = el('apply-update-btn');
-    if (!molInput || !molInput.files[0]) {
-      status.textContent = 'mol 실행 파일을 선택하세요.';
+    if (!execFileInput || !execFileInput.files[0]) {
+      status.textContent = '실행 파일을 선택하세요.';
       return;
     }
     if (!configEditor || !configEditor.value.trim()) {
@@ -908,7 +908,7 @@
       return;
     }
     var formData = new FormData();
-    formData.append('mol', molInput.files[0]);
+    formData.append('agent', execFileInput.files[0]);
     formData.append('config', new Blob([configEditor.value], { type: 'text/yaml' }), 'config.yaml');
     status.textContent = '업로드 중…';
     fetch(API_BASE + '/upload', {
@@ -1294,7 +1294,7 @@
   el('apply-update-btn').addEventListener('click', doApplyUpdate);
   el('reset-selection-btn').addEventListener('click', resetUploadForm);
   el('remove-upload-btn').addEventListener('click', doRemoveUpload);
-  el('upload-mol').addEventListener('change', updateUploadButtonState);
+  el('upload-exec').addEventListener('change', updateUploadButtonState);
   el('upload-config').addEventListener('change', function () {
     var configInput = el('upload-config');
     var file = configInput && configInput.files && configInput.files[0];

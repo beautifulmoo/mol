@@ -3,7 +3,7 @@ set -euo pipefail
 # systemd-run 유닛은 PATH가 비어 있을 수 있음. config 읽기(grep/sed) 전에 보강.
 export PATH="/usr/bin:/bin:/usr/local/bin:${PATH:-}"
 
-# 스크립트는 ${deploy_base}/current/ 아래에 두고 실행한다 (바이너리에 내장된 내용을 mol이 풀어 씀).
+# 스크립트는 ${deploy_base}/current/ 아래에 두고 실행한다 (에이전트 바이너리가 내장 스크립트를 이 경로에 풀어 씀).
 # SCRIPT_DIR = versions/<버전>/ 또는 current가 가리키는 디렉터리, BASE = 그 부모 = 배포 루트.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -28,7 +28,8 @@ prepend_history() {
 VERSIONS="$BASE/versions"
 NEW_VERSION="${1:?usage: update.sh <version>}"
 NEW_DIR="$VERSIONS/$NEW_VERSION"
-NEW_BIN="$NEW_DIR/mol"
+# 실행 파일명은 appmeta.BinaryName(contrabass-moleU)와 동일해야 함
+NEW_BIN="$NEW_DIR/contrabass-moleU"
 
 # 1. 사전 체크
 [ -x "$NEW_BIN" ] || {
@@ -38,8 +39,8 @@ NEW_BIN="$NEW_DIR/mol"
     exit 1
 }
 
-# 2. 적용할 버전의 config.yaml에서 설정 읽기 (mol과 중복 제거). 실패해도 기본값 유지.
-SERVICE=mol.service
+# 2. 적용할 버전의 config.yaml에서 설정 읽기. 실패해도 기본값 유지.
+SERVICE=contrabass-mole.service
 HTTP_PORT=
 if [ -f "$NEW_DIR/config.yaml" ]; then
     v=$(grep -E '^[[:space:]]*MaintenancePort:[[:space:]]*[0-9]+' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' 2>/dev/null) || true

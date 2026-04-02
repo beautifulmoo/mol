@@ -1,4 +1,4 @@
-module mol
+module contrabass-agent
 
 go 1.25.0
 

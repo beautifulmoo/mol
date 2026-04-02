@@ -9,7 +9,7 @@ import (
 
 // OpenDiscoveryClientUDP binds UDP port srcPort for outbound discovery (CLI).
 // When broadcast addresses imply multiple local subnets, one socket per local IP is opened
-// (same pattern as the mol service) so each brd is sent from the correct interface.
+// (same pattern as the agent when serving HTTP+discovery) so each brd is sent from the correct interface.
 // If no subnet match is found or per-IP binds fail, falls back to 0.0.0.0:srcPort.
 func OpenDiscoveryClientUDP(srcPort int, broadcastAddrs []string) ([]*net.UDPConn, error) {
 	enableBroadcast := func(c *net.UDPConn) {
@@ -75,7 +75,7 @@ func unionLocalIPsForBroadcastStrings(broadcastAddrs []string) []net.IP {
 }
 
 // SendDiscoveryClientBroadcast sends the same payload to each broadcast:destPort using the same
-// per-interface rules as the mol service (LocalIPsInSubnet + matching conn, else conns[0]).
+// per-interface rules as the agent (LocalIPsInSubnet + matching conn, else conns[0]).
 func SendDiscoveryClientBroadcast(conns []*net.UDPConn, payload []byte, destPort int, broadcastAddrs []string) error {
 	if len(conns) == 0 {
 		return fmt.Errorf("discovery: no UDP sockets")

@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"os"
 
-	"mol/maintenance"
+	"contrabass-agent/maintenance"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -68,7 +68,7 @@ func TestGETWeb(c *gin.Context) {
 }
 
 func main() {
-	// Gin(8888 등): /web 은 maintenance(8889)로 프록시. maintenance 서버는 -config 로 기동.
+	// Gin(8888 등): /web 은 maintenance(8889)로 프록시. maintenance 서버는 -cfg 로 기동.
 	go func() {
 		router := MyGin()
 		// Server listen 주소는 추후 config Server 항목에서 읽도록 할 예정 — 현재 하드코딩.

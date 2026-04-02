@@ -15,56 +15,57 @@ import (
 	"syscall"
 	"time"
 
-	"mol/internal/config"
-	"mol/maintenance/discovery"
-	"mol/maintenance/discoverycli"
-	"mol/maintenance/hostinfo"
-	"mol/maintenance/server"
+	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/discovery"
+	"contrabass-agent/maintenance/discoverycli"
+	"contrabass-agent/maintenance/hostinfo"
+	"contrabass-agent/maintenance/server"
 )
 
-const helpText = `mol — Discovery 및 웹 UI가 있는 mol 서비스
+const helpText = `Contrabass agent — Discovery 및 웹 UI
 
 사용법:
-  mol -config <파일>     설정 파일을 지정해야 HTTP 서버 + Discovery가 시작됩니다 (필수)
-  mol                    인자 없이 실행 시 버전 안내 후 종료 (서비스는 시작하지 않음)
+  <bin> -cfg <파일>     설정 파일을 지정해야 HTTP 서버 + Discovery가 시작됩니다 (필수)
+  <bin>                  인자 없이 실행 시 버전 안내 후 종료 (서비스는 시작하지 않음)
 
 옵션:
   -h, --help             이 도움말 출력
   -version, --version    버전 출력 후 종료
   --nic-brd              물리 NIC별 IPv4 브로드캐스트(brd) 주소 출력 (Discovery용 확인) 후 종료
-  --discovery [flags]    설정 없이 UDP Discovery만 수행 (mol --discovery -h)
+  --discovery [flags]    설정 없이 UDP Discovery만 수행 (<bin> --discovery -h)
 
 `
 
 //go:embed web/*
 var webFS embed.FS
 
-func molVersionLine(binVersion string) string {
+func versionLine(binVersion string) string {
 	v := binVersion
 	if v == "" {
 		v = "devel"
 	}
-	return "mol " + v
+	return appmeta.BinaryName + " " + v
 }
 
 func printMustSpecifyConfig(binVersion string) {
-	fmt.Println(molVersionLine(binVersion))
+	fmt.Println(versionLine(binVersion))
 	fmt.Println()
 	fmt.Println("HTTP 서비스와 Discovery를 시작하려면 설정 파일을 지정하세요.")
-	fmt.Println("  mol -config <config.yaml>")
+	fmt.Printf("  %s -cfg <config.yaml>\n", appmeta.BinaryName)
 	fmt.Println()
 	fmt.Println("자세한 옵션은 다음을 실행하세요.")
-	fmt.Println("  mol -h")
-	fmt.Println("  mol --help")
+	fmt.Printf("  %s -h\n", appmeta.BinaryName)
+	fmt.Printf("  %s --help\n", appmeta.BinaryName)
 }
 
-// setSOReuseport sets SO_REUSEPORT on a socket. mol targets Linux only.
+// setSOReuseport sets SO_REUSEPORT on a socket (Linux only).
 func setSOReuseport(fd int) error {
 	const soReuseport = 15 // SO_REUSEPORT on Linux (amd64/arm64; not in syscall package as named const)
 	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReuseport, 1)
 }
 
-// Run implements mol startup. binVersion is the build-time value from main (ldflags -X main.Version=…).
+// Run starts the maintenance HTTP server and Discovery. binVersion is the build-time value from main (ldflags -X main.Version=…).
 // args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit).
 func Run(binVersion string, args []string) int {
 	if len(args) <= 1 {
@@ -74,10 +75,10 @@ func Run(binVersion string, args []string) int {
 	if len(args) >= 2 {
 		switch args[1] {
 		case "-h", "--help":
-			fmt.Print(helpText)
+			fmt.Print(strings.ReplaceAll(helpText, "<bin>", appmeta.BinaryName))
 			return 0
 		case "--version", "-version":
-			fmt.Println(molVersionLine(binVersion))
+			fmt.Println(versionLine(binVersion))
 			return 0
 		case "--nic-brd":
 			pairs := hostinfo.GetPhysicalNICBrdPairs()
@@ -89,14 +90,14 @@ func Run(binVersion string, args []string) int {
 			return discoverycli.Run(args[2:])
 		}
 	}
-	if args[1] != "-config" {
+	if args[1] != "-cfg" {
 		fmt.Fprintf(os.Stderr, "알 수 없는 인자: %q\n\n", args[1])
 		printMustSpecifyConfig(binVersion)
 		return 1
 	}
 	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "mol: -config 다음에 설정 파일 경로가 필요합니다.")
-		fmt.Fprintln(os.Stderr, "예: mol -config /opt/mol/config.yaml")
+		fmt.Fprintf(os.Stderr, "%s: -cfg 다음에 설정 파일 경로가 필요합니다.\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "예: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
 		return 1
 	}
 	cfgPath := args[2]
@@ -174,7 +175,7 @@ func Run(binVersion string, args []string) int {
 			boundIPs = append(boundIPs, ip)
 		}
 	}
-	log.Printf("mol version %s: discovery listening on %s (bound IPs: %v)", displayVersion, portStr, boundIPs)
+	log.Printf("%s version %s: discovery listening on %s (bound IPs: %v)", appmeta.BinaryName, displayVersion, portStr, boundIPs)
 	for i := 1; i < len(conns); i++ {
 		defer conns[i].Close()
 	}
@@ -280,6 +281,6 @@ func Run(binVersion string, args []string) int {
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown: %v", err)
 	}
-	log.Println("mol stopped")
+	log.Printf("%s stopped", appmeta.BinaryName)
 	return 0
 }

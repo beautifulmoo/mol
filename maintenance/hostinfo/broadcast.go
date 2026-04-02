@@ -149,12 +149,12 @@ func GetPhysicalNICBroadcastAddresses() []string {
 // NicBrdPair is an interface name and one of its IPv4 broadcast addresses.
 type NicBrdPair struct {
 	Iface string
-	Brd  string
+	Brd   string
 }
 
 // GetPhysicalNICBrdPairs returns (interface name, brd address) for each included interface's IPv4 brd.
 // Same inclusion rules as GetPhysicalNICBroadcastAddresses (bonding, bridge, vlan, physical; excludes virtual-only).
-// For CLI: mol --nic-brd.
+// For CLI: contrabass-moleU --nic-brd.
 func GetPhysicalNICBrdPairs() []NicBrdPair {
 	return getInterfaceBrdPairs()
 }

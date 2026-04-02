@@ -2,8 +2,8 @@
 
 ## 레이아웃
 
-- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`Run`: `--discovery` CLI, 반환 코드), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `mol/maintenance/<패키지>` 형태.
-- **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `mol/internal/config`.
+- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`Run`: `--discovery` CLI, 반환 코드), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
+- **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `contrabass-agent/internal/config`.
 
 ## Discovery / CLI (최근)
 
@@ -31,3 +31,11 @@
 - 저장소 정책: Go **`*_test.go`** 는 트리에 두지 않음(상세는 PRD §1).
 
 상세 스펙은 **[PRD.md](PRD.md)** §3, CLI 사용은 **[README.md](README.md)** 를 참고한다.
+
+## 명명·업데이트 유닛 (최근)
+
+- 실행 파일명 **`contrabass-moleU`** (`maintenance/appmeta.BinaryName`), 상시 유닛 **`contrabass-mole.service`**, `systemd-run` 임시 업데이트 유닛 **`contrabass-mole-update.service`** (`appmeta.UpdateTransientUnit*`).
+- 업로드 multipart 필드 **`agent`** / `config`; 레거시 디스크상 `mol` 바이너리명 제거.
+- 설정: **`MOL_CONFIG` 미사용** — `-cfg` 또는 `config.Load("")` 시 `config.yaml`.
+- Discovery 기본 서비스명 **`Mole-Discovery`** (`DefaultDiscoveryServiceName`).
+- PRD **§12** 표에 요약.

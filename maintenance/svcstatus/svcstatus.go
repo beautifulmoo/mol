@@ -10,10 +10,10 @@ import (
 
 const localTimeout = 5 * time.Second
 
-// GetLocal runs `systemctl status <serviceName>` on the local host and returns the combined output. mol.service runs as root so sudo is not used.
+// GetLocal runs `systemctl status <serviceName>` on the local host and returns the combined output. contrabass-mole.service runs as root so sudo is not used.
 func GetLocal(serviceName string) (string, error) {
 	if serviceName == "" {
-		serviceName = "mol.service"
+		serviceName = "contrabass-mole.service"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), localTimeout)
 	defer cancel()
@@ -33,7 +33,7 @@ func GetLocal(serviceName string) (string, error) {
 // StartLocal runs `systemctl start <serviceName>` on the local host.
 func StartLocal(serviceName string) error {
 	if serviceName == "" {
-		serviceName = "mol.service"
+		serviceName = "contrabass-mole.service"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), localTimeout)
 	defer cancel()
@@ -48,7 +48,7 @@ func StartLocal(serviceName string) error {
 // StopLocal runs `systemctl stop <serviceName>` on the local host.
 func StopLocal(serviceName string) error {
 	if serviceName == "" {
-		serviceName = "mol.service"
+		serviceName = "contrabass-mole.service"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), localTimeout)
 	defer cancel()
@@ -63,7 +63,7 @@ func StopLocal(serviceName string) error {
 // RestartLocal runs `systemctl restart <serviceName>` on the local host.
 func RestartLocal(serviceName string) error {
 	if serviceName == "" {
-		serviceName = "mol.service"
+		serviceName = "contrabass-mole.service"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), localTimeout)
 	defer cancel()
@@ -76,11 +76,11 @@ func RestartLocal(serviceName string) error {
 }
 
 // RunRemote runs `systemctl start|stop <serviceName>` on the remote host via SSH.
-// Used when the remote mol service is stopped and thus its API is unreachable.
+// Used when the remote agent service is stopped and thus its API is unreachable.
 // port is the SSH port (use 22 if 0). user is the SSH user (e.g. "root").
 func RunRemote(host, user string, port int, serviceName, action string) error {
 	if serviceName == "" {
-		serviceName = "mol.service"
+		serviceName = "contrabass-mole.service"
 	}
 	if port <= 0 {
 		port = 22

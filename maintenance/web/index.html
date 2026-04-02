@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>mol</title>
+  <title>Contrabass agent</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,12 +28,12 @@
     </div>
     <aside class="update-section">
       <h2>업데이트</h2>
-      <p class="update-desc">mol 실행 파일과 config.yaml을 업로드하면 config에서 버전을 읽어 <code>/opt/mol/versions/{버전}</code>에 저장됩니다. 「업데이트 적용」을 누르면 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>를 <code>{deploy_base}/current/</code>에 풀어 쓴 뒤 <code>systemd-run --unit=mol-update</code> 로 <code>current/update.sh {버전}</code>이 실행되어 서비스가 재시작됩니다.</p>
+      <p class="update-desc">에이전트 실행 파일(contrabass-moleU)과 config.yaml을 업로드하면 config에서 버전을 읽어 <code>/var/lib/contrabass/mole/versions/{버전}</code>에 저장됩니다. 「업데이트 적용」을 누르면 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>를 <code>{deploy_base}/current/</code>에 풀어 쓴 뒤 <code>systemd-run --unit=contrabass-mole-update</code> 로 <code>current/update.sh {버전}</code>이 실행되어 서비스가 재시작됩니다.</p>
       <div class="update-form">
         <div class="update-fields">
           <div class="update-file-row">
-            <label for="upload-mol">mol 실행 파일</label>
-            <input type="file" id="upload-mol" accept="application/octet-stream">
+            <label for="upload-exec">실행 파일 (contrabass-moleU)</label>
+            <input type="file" id="upload-exec" accept="application/octet-stream">
           </div>
           <div class="update-file-row">
             <label for="upload-config">config.yaml</label>
@@ -47,7 +47,7 @@
         <div class="update-actions">
           <button type="button" id="upload-btn" class="service-btn" disabled>업로드</button>
           <button type="button" id="apply-update-btn" class="service-btn service-start" disabled>업데이트 적용</button>
-          <button type="button" id="reset-selection-btn" class="service-btn" title="mol·config 파일 선택과 편집 내용만 초기화합니다">파일 선택 초기화</button>
+          <button type="button" id="reset-selection-btn" class="service-btn" title="실행 파일·config 파일 선택과 편집 내용만 초기화합니다">파일 선택 초기화</button>
           <button type="button" id="remove-upload-btn" class="service-btn" disabled title="서버에만 올라가 있고 아직 호스트에 적용하지 않은 버전을 삭제합니다">업로드된 버전 삭제</button>
           <span id="staging-version-display" class="staging-version-display" aria-live="polite"></span>
         </div>

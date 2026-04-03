@@ -342,8 +342,73 @@ func (d *Discovery) handleResponse(raw []byte, from *net.UDPAddr, recvOn string)
 	}
 }
 
-// DoDiscovery sends a DISCOVERY_REQUEST to each configured broadcast address and collects responses until timeout. Deduplicates by host_ip:service_port if configured.
-func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
+func (d *Discovery) discoveryTimeout() time.Duration {
+	sec := d.cfg.DiscoveryTimeoutSeconds
+	if sec <= 0 {
+		sec = 10
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// effectiveTimeout returns opts.Timeout if positive, otherwise config-based discoveryTimeout().
+func (d *Discovery) effectiveTimeout(opts DiscoveryRunOptions) time.Duration {
+	if opts.Timeout > 0 {
+		return opts.Timeout
+	}
+	return d.discoveryTimeout()
+}
+
+// DiscoveryRunOptions configures one batch or stream discovery run. The zero value means: include self (with "self": true), timeout from config (minimum 10s when config unset).
+type DiscoveryRunOptions struct {
+	ExcludeSelf bool
+	Timeout     time.Duration
+}
+
+// includeInDiscoveryResults applies self handling and dedup. If excludeSelf, drops this host's responses; else includes self with IsSelf=true (same rules as stream when excludeSelf is false).
+func (d *Discovery) includeInDiscoveryResults(r *DiscoveryResponse, addrs []*net.UDPAddr, selfCPUUUID string, seen map[string]struct{}, excludeSelf bool) bool {
+	if excludeSelf {
+		if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
+			return false
+		}
+		if selfCPUUUID == "" {
+			selfHostIP := d.outboundIP(addrs[0].IP)
+			if selfHostIP == "" {
+				_, selfHostIP, _, _, _, _, _, _ = d.getter()
+			}
+			if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
+				return false
+			}
+		}
+	} else {
+		if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
+			r.IsSelf = true
+			return true
+		}
+		if selfCPUUUID == "" {
+			selfHostIP := d.outboundIP(addrs[0].IP)
+			if selfHostIP == "" {
+				_, selfHostIP, _, _, _, _, _, _ = d.getter()
+			}
+			if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
+				return false
+			}
+		}
+	}
+	key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
+	if r.RespondedFromIP != "" {
+		key = key + "@" + r.RespondedFromIP
+	}
+	if d.cfg.DiscoveryDeduplicate {
+		if _, ok := seen[key]; ok {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	return true
+}
+
+// DoDiscovery sends a DISCOVERY_REQUEST to each configured broadcast address and collects responses until timeout. Same inclusion rules as DoDiscoveryStream for the same opts. Deduplicates by host_ip:service_port if configured.
+func (d *Discovery) DoDiscovery(opts DiscoveryRunOptions) ([]DiscoveryResponse, error) {
 	requestID := NewRequestID()
 	req := DiscoveryRequest{
 		Type:         "DISCOVERY_REQUEST",
@@ -391,36 +456,15 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 			log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s", requestID, addr)
 		}
 	}
-	timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
+	timeout := d.effectiveTimeout(opts)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	// Exclude self by CPU UUID so we correctly exclude local host even when it responds with different IPs (e.g. multiple interfaces).
 	_, _, _, _, _, _, _, selfCPUUUID := d.getter()
 	seen := make(map[string]struct{})
 	var list []DiscoveryResponse
 	processResponse := func(r *DiscoveryResponse) {
-		if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
+		if !d.includeInDiscoveryResults(r, addrs, selfCPUUUID, seen, opts.ExcludeSelf) {
 			return
-		}
-		// Fallback when CPU UUID is not available: exclude by IP + service port.
-		if selfCPUUUID == "" {
-			selfHostIP := d.outboundIP(addrs[0].IP)
-			if selfHostIP == "" {
-				_, selfHostIP, _, _, _, _, _, _ = d.getter()
-			}
-			if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
-				return
-			}
-		}
-		key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
-		if r.RespondedFromIP != "" {
-			key = key + "@" + r.RespondedFromIP
-		}
-		if d.cfg.DiscoveryDeduplicate {
-			if _, ok := seen[key]; ok {
-				return
-			}
-			seen[key] = struct{}{}
 		}
 		list = append(list, *r)
 	}
@@ -449,8 +493,8 @@ func (d *Discovery) DoDiscovery() ([]DiscoveryResponse, error) {
 	}
 }
 
-// DoDiscoveryStream sends a DISCOVERY_REQUEST to each configured broadcast address and yields each response on the returned channel as it arrives (after self-filter and dedup). The channel is closed when the timeout expires. Caller must consume the channel until closed.
-func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
+// DoDiscoveryStream sends a DISCOVERY_REQUEST to each configured broadcast address and yields each response on the returned channel as it arrives (same inclusion/dedup rules as DoDiscovery for the same opts). The channel is closed when the timeout expires. Caller must consume the channel until closed.
+func (d *Discovery) DoDiscoveryStream(opts DiscoveryRunOptions) (<-chan DiscoveryResponse, error) {
 	requestID := NewRequestID()
 	req := DiscoveryRequest{
 		Type:         "DISCOVERY_REQUEST",
@@ -482,7 +526,7 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 	d.mu.Unlock()
 
 	out := make(chan DiscoveryResponse, 8)
-	go func() {
+	go func(opts DiscoveryRunOptions) {
 		defer close(out)
 		defer func() {
 			d.mu.Lock()
@@ -502,39 +546,12 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 			}
 		}
 
-		timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
+		timeout := d.effectiveTimeout(opts)
 		timer := time.NewTimer(timeout)
 		defer timer.Stop()
 
 		_, _, _, _, _, _, _, selfCPUUUID := d.getter()
 		seen := make(map[string]struct{})
-
-		processAndMaybeSend := func(r *DiscoveryResponse) bool {
-			if selfCPUUUID != "" && r.CPUUUID != "" && r.CPUUUID == selfCPUUUID {
-				r.IsSelf = true
-				return true
-			}
-			if selfCPUUUID == "" {
-				selfHostIP := d.outboundIP(addrs[0].IP)
-				if selfHostIP == "" {
-					_, selfHostIP, _, _, _, _, _, _ = d.getter()
-				}
-				if selfHostIP != "" && r.ServicePort == d.cfg.ServicePort && r.HostIP == selfHostIP {
-					return false
-				}
-			}
-			key := r.HostIP + ":" + fmt.Sprint(r.ServicePort)
-			if r.RespondedFromIP != "" {
-				key = key + "@" + r.RespondedFromIP
-			}
-			if d.cfg.DiscoveryDeduplicate {
-				if _, ok := seen[key]; ok {
-					return false
-				}
-				seen[key] = struct{}{}
-			}
-			return true
-		}
 
 		for {
 			select {
@@ -542,7 +559,7 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 				if !ok {
 					return
 				}
-				if processAndMaybeSend(r) {
+				if d.includeInDiscoveryResults(r, addrs, selfCPUUUID, seen, opts.ExcludeSelf) {
 					log.Printf("discovery: stream forwarding host %s (hostname=%s) responded_from=%s", r.HostIP, r.Hostname, r.RespondedFromIP)
 					out <- *r
 				}
@@ -553,7 +570,7 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 						if !ok {
 							return
 						}
-						if processAndMaybeSend(r) {
+						if d.includeInDiscoveryResults(r, addrs, selfCPUUUID, seen, opts.ExcludeSelf) {
 							out <- *r
 						}
 					default:
@@ -562,7 +579,7 @@ func (d *Discovery) DoDiscoveryStream() (<-chan DiscoveryResponse, error) {
 				}
 			}
 		}
-	}()
+	}(opts)
 
 	return out, nil
 }
@@ -606,7 +623,7 @@ func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 		return nil, err
 	}
 	log.Printf("discovery: sent DISCOVERY_REQUEST requestID=%s to %s (unicast)", requestID, addr)
-	timeout := time.Duration(d.cfg.DiscoveryTimeoutSeconds) * time.Second
+	timeout := d.discoveryTimeout()
 	if timeout > 5*time.Second {
 		timeout = 5 * time.Second
 	}

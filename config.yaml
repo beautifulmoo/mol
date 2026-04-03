@@ -18,8 +18,8 @@ Maintenance:
   DiscoveryUDPPort: 9999
   MaintenanceListenAddress: "127.0.0.1" # use "0.0.0.0" to expose maintenance port
   MaintenancePort: 8889
-  WebPrefix: "/web"
-  APIPrefix: "/api/v1"
+  WebPrefix: "/maintenance"
+  APIPrefix: "/maintenance/api/v1"
   DiscoveryTimeoutSeconds: 10
   DiscoveryDeduplicate: true
   AgentVersion: "0.4.4"   # leave empty to use build ldflags; set e.g. "1.2.3" to override

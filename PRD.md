@@ -15,7 +15,7 @@
 
 ## 2. 아키텍처 요약
 
-- **서비스 포트(maintenance HTTP)**: 설정 `Maintenance.MaintenancePort` (HTTP — 웹 UI + API). 기본적으로 `Maintenance.MaintenanceListenAddress = "127.0.0.1"` 로 **로컬호스트에만 바인딩**하고, 외부 접근은 상위 서버(예: Gin, 8888)가 **리버스 프록시**로 `/web`, `/api/v1`를 maintenance로 전달한다. 필요 시 `Maintenance.MaintenanceListenAddress = "0.0.0.0"` 로 외부 바인딩도 가능하다.
+- **서비스 포트(maintenance HTTP)**: 설정 `Maintenance.MaintenancePort` (HTTP — 웹 UI + API). 기본적으로 `Maintenance.MaintenanceListenAddress = "127.0.0.1"` 로 **로컬호스트에만 바인딩**하고, 외부 접근은 **루트 `main.go`의 Gin**이 설정 `Server.HTTPPort`로 리슨하며 **`Maintenance.WebPrefix`·`Maintenance.APIPrefix`**(기본 `/web`, `/api/v1`) 경로를 maintenance로 **리버스 프록시**한다. API가 웹 prefix 아래에 중첩된 경우(예: `WebPrefix=/maintenance`, `APIPrefix=/maintenance/api/v1`) Gin 라우터 제약으로 **와일드카드 한 트리**만 등록하고, 백엔드는 동일 URL 경로로 요청을 받는다. 프록시는 전달 전 **`Form`/`PostForm`을 비우고**, `URL.RawQuery`가 비어 있으면 **`RequestURI`의 쿼리**로 복구하여(표준 `ReverseProxy`+선행 파싱으로 쿼리가 유실되는 경우 방지) API **쿼리 파라미터**가 maintenance 핸들러까지 전달되도록 한다. 필요 시 `Maintenance.MaintenanceListenAddress = "0.0.0.0"` 로 외부 바인딩도 가능하다.
 - **원격 호출 포트(Gin)**: 원격 호스트의 업데이트 로그(`update-log`), config(`current-cfg`), versions(list/remove), service-status 등은 **maintenance 포트가 아니라** 설정 `Server.HTTPPort`(외부 노출 포트, Gin)로 호출한다. (maintenance가 loopback-only인 경우 `http://<ip>:<MaintenancePort>`는 연결 거부가 정상이다.)
 - **Discovery 포트**: **9999** (UDP — broadcast 수신·송신 및 응답 수신)
 - 동일한 **contrabass-moleU** 에이전트 바이너리가 여러 서버 호스트에 분산 배포되며, **Discovery**를 통해 서로를 찾는다.
@@ -135,14 +135,14 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 - **중복 제거**: 스트림/일괄 반환 시 동일한 (host_ip:service_port@responded_from_ip) 조합은 한 번만 전달한다. 즉 같은 호스트가 여러 IP로 응답하면 **응답 건수만큼** 이벤트가 나가며, 각 이벤트의 host_ip·responded_from_ip가 다를 수 있다. 설정 `DiscoveryDeduplicate`로 켜/끌 수 있다.
 - **동일 호스트 병합(프론트)**: `cpu_uuid`가 같은 응답은 **한 호스트**로 간주한다. 카드는 하나만 두고, **IP**는 각 응답의 host_ip를 모두 취합해 표시하고, **응답한 IP**는 각 응답의 responded_from_ip를 모두 취합해 표시한다. CPU·메모리는 응답 중 하나만 사용한다. **기존 카드 찾기**는 **cpu_uuid** → **IP**(host_ip / data-host-ips) 순으로만 하며, **hostname으로는 찾지 않는다**. 서로 다른 물리 호스트가 같은 hostname(예: kt-vm)을 쓰면 hostname으로 찾을 경우 한 카드로 잘못 병합되므로 hostname 매칭을 사용하지 않는다.
-- **타임아웃**: 응답 수집 대기 시간은 설정 `DiscoveryTimeoutSeconds`(기본 10초)로 지정한다.
+- **타임아웃**: 응답 수집 대기 시간은 설정 `Maintenance.DiscoveryTimeoutSeconds`로 지정한다. 설정값이 **0 이하**이면 구현상 **10초**를 쓴다. HTTP 일괄·SSE Discovery API에는 쿼리 **`timeout`(초, 1~600)** 로 **한 요청만** 덮어쓸 수 있다(미지정 시 위 설정·기본).
 
 ### 3.6 실시간 Discovery (SSE)
 
 - Discovery 결과를 **타임아웃 만료를 기다리지 않고** 응답이 도착하는 대로 화면에 반영한다.
-- **백엔드**: `GET /api/v1/discovery/stream` 엔드포인트를 두고, **Server-Sent Events(SSE)** 로 스트리밍한다. Discovery 요청을 보낸 뒤, 각 DISCOVERY_RESPONSE가 올 때마다 `data: {JSON}\n\n` 형식으로 한 건씩 전송하고 즉시 flush한다. 타임아웃이 되면 `event: done\ndata: {}\n\n` 를 보내고 스트림을 종료한다. 내부적으로는 **DoDiscoveryStream** 과 같이 요청 시 pending 등록 → 브로드캐스트 전송 → 수신 채널에서 응답을 하나씩 읽어 필터(self 제거·중복 제거) 후 SSE로 내보내는 방식을 사용한다.
+- **백엔드**: `GET {APIPrefix}/discovery/stream` 엔드포인트를 두고, **Server-Sent Events(SSE)** 로 스트리밍한다. Discovery 요청을 보낸 뒤, 각 DISCOVERY_RESPONSE가 올 때마다 `data: {JSON}\n\n` 형식으로 한 건씩 전송하고 즉시 flush한다. 타임아웃이 되면 `event: done\ndata: {}\n\n` 를 보내고 스트림을 종료한다. 내부적으로는 **DoDiscoveryStream** 과 같이 요청 시 pending 등록 → 브로드캐스트 전송 → 수신 채널에서 응답을 하나씩 읽어 **includeInDiscoveryResults**(기본: 자기 응답 포함·`self`: true, **쿼리 `exclude_self`로 자기 제외 가능**)·중복 제거 후 SSE로 내보내는 방식을 사용한다. 쿼리 파라미터는 **§5.3**과 동일.
 - **스트림 시작 전 실패**(예: DISCOVERY_REQUEST JSON 크기 제한 위반, 브로드캐스트 주소 없음 등): 브라우저 **EventSource** 는 HTTP 4xx/5xx 응답 본문을 읽지 못하므로, 서버는 **HTTP 200** 으로 SSE 헤더를 연 뒤 **`event: discoveryfail`** 한 번만 보내고 `data` 에 JSON `{"message":"…"}` 형태로 상세 사유를 실은 다음 스트림을 닫는다. 동일 실패는 **표준 로그**에 `discovery: ERROR: DoDiscoveryStream failed: …` 처럼 남겨 **`journalctl -u contrabass-mole.service`** 등으로 확인할 수 있다.
-- **프론트엔드**: Discovery 버튼 클릭 시 **EventSource** 로 `/api/v1/discovery/stream` 에 연결한다. **`discoveryfail` 이벤트**가 오면 `data.message` 를 읽어 상태 영역에 **「Discovery 요청 실패:」+ 서버 메시지**를 표시하고 스트림을 닫는다. 일반 메시지 이벤트가 올 때마다 수신한 JSON을 파싱해, **같은 CPU UUID**가 이미 있으면 해당 카드에 IP·응답한 IP를 병합·갱신하고, 없으면 **같은 IP**가 있는 카드를 찾아 갱신하고, 그 외에는 **새 카드**를 추가한다. 기존 카드 매칭은 cpu_uuid → IP 순서만 사용하며 hostname은 사용하지 않는다. `discoveryfail` 을 처리한 뒤에는 **onerror** 와 중복 문구가 나오지 않도록 구분한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 연결만 끊기고 사유가 없는 경우에는 **journalctl** 안내 문구를 띄운다. 호스트 카드 상세에서는 **CPU UUID**를 맨 위에, **IP**·**응답한 IP** 순으로 표시한다.
+- **프론트엔드**: Discovery 버튼 클릭 시 **EventSource** 로 `{APIPrefix}/discovery/stream` 에 연결한다(설정 기본은 `/api/v1/discovery/stream`). **`discoveryfail` 이벤트**가 오면 `data.message` 를 읽어 상태 영역에 **「Discovery 요청 실패:」+ 서버 메시지**를 표시하고 스트림을 닫는다. 일반 메시지 이벤트가 올 때마다 수신한 JSON을 파싱해, **같은 CPU UUID**가 이미 있으면 해당 카드에 IP·응답한 IP를 병합·갱신하고, 없으면 **같은 IP**가 있는 카드를 찾아 갱신하고, 그 외에는 **새 카드**를 추가한다. 기존 카드 매칭은 cpu_uuid → IP 순서만 사용하며 hostname은 사용하지 않는다. `discoveryfail` 을 처리한 뒤에는 **onerror** 와 중복 문구가 나오지 않도록 구분한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 연결만 끊기고 사유가 없는 경우에는 **journalctl** 안내 문구를 띄운다. 호스트 카드 상세에서는 **CPU UUID**를 맨 위에, **IP**·**응답한 IP** 순으로 표시한다.
 
 ### 3.7 유니캐스트 Discovery (단일 호스트 조회)
 
@@ -160,10 +160,10 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ## 4. URL 및 라우팅
 
-- **프론트엔드 prefix**: `{serverUrl}/web` (기본값, 설정에서 변경 가능)
-- **백엔드 API prefix**: `{serverUrl}/api/v1` (기본값, 설정에서 변경 가능)
-- **프론트엔드 진입 URL**: `{serverUrl}/web/index.html`
-- prefix는 설정 파일에서 수정할 수 있어야 한다.
+- **프론트엔드 prefix**: `{serverUrl}{WebPrefix}` (기본 `/web`, 설정 `Maintenance.WebPrefix`)
+- **백엔드 API prefix**: `{serverUrl}{APIPrefix}` (기본 `/api/v1`, 설정 `Maintenance.APIPrefix`)
+- **프론트엔드 진입 URL**: `{serverUrl}{WebPrefix}/index.html`
+- prefix는 설정 파일에서 수정할 수 있어야 한다. 브라우저는 하드코딩된 `/api/v1`가 아니라, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)를 먼저 로드한 뒤 `app.js`가 API를 호출한다.
 
 ### 4.1 CLI (명령줄)
 
@@ -202,9 +202,13 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 5.3 Discovery API
 
-- Discovery 요청은 **프론트엔드의 Discovery 버튼**에 의해 트리거되며, **웹 UI는 스트리밍 API만 사용**한다.
-- **실시간 스트리밍 (웹 UI 사용)**: `GET {serverUrl}/api/v1/discovery/stream` — **Server-Sent Events(SSE)**. Content-Type `text/event-stream`. 응답이 올 때마다 `data: {JSON}\n\n` 로 호스트 한 건씩 전송, 타임아웃(설정값) 시 `event: done\ndata: {}\n\n` 후 스트림 종료. **스트림을 열기 전 단계에서 실패**하면(페이로드 검증 등) 위 **§3.6** 과 같이 **`event: discoveryfail`** + `data: {"message":"…"}` 를 보내고 종료한다. 웹 UI는 Discovery 버튼 클릭 시 EventSource로 이 엔드포인트만 호출하며, 응답이 오는 대로 화면에 반영하고 `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 타임아웃 이후 별도의 일괄 API 호출은 하지 않는다.
-- **일괄 반환 (웹 UI 미사용)**: `GET {serverUrl}/api/v1/discovery` — 타임아웃(설정값)까지 수집한 뒤 `status` + `data`(발견된 호스트 배열)를 한 번에 JSON으로 반환. `data`는 배열이며, 결과가 없어도 `[]` 로 반환한다(null 아님). 서버에는 구현되어 있으나 **웹 UI에서는 호출하지 않으며**, 스크립트·다른 클라이언트용으로만 사용할 수 있다.
+- Discovery 요청은 **프론트엔드의 Discovery 버튼**에 의해 트리거되며, **웹 UI는 스트리밍 API만 사용**한다(쿼리 없음 → 기본 동작).
+- **공통 쿼리 (일괄·SSE 모두, `GET …/discovery`, `GET …/discovery/stream`)**  
+  - **`exclude_self`**: `true` / `1` / `yes` / `on` 이면 **이 호스트(자신) 응답을 결과에서 제외**. 생략 또는 그 외 값이면 **포함**하며, 포함 시 JSON에 `"self": true`(해당 시). 별칭 **`exclude-self`** 동일.  
+  - **`timeout`**: 정수 **초**, **1~600**. 한 요청의 수집 대기 시간만 덮어쓴다. 생략 시 `Maintenance.DiscoveryTimeoutSeconds`(0 이하이면 구현상 10초).  
+  - 파싱은 `URL` 쿼리 문자열이 비어 있으면 **`RequestURI`**의 `?` 이후로도 시도한다(프록시·클라이언트 조합 대비).
+- **실시간 스트리밍 (웹 UI 사용)**: `GET {serverUrl}{APIPrefix}/discovery/stream` — **Server-Sent Events(SSE)**. Content-Type `text/event-stream`. 응답이 올 때마다 `data: {JSON}\n\n` 로 호스트 한 건씩 전송, 타임아웃(설정 또는 `timeout` 쿼리) 시 `event: done\ndata: {}\n\n` 후 스트림 종료. **스트림을 열기 전 단계에서 실패**하면(페이로드 검증 등) 위 **§3.6** 과 같이 **`event: discoveryfail`** + `data: {"message":"…"}` 를 보내고 종료한다(쿼리 파싱 오류도 동일 형식으로 안내 가능). 웹 UI는 Discovery 버튼 클릭 시 EventSource로 이 엔드포인트만 호출하며(쿼리 없음), 응답이 오는 대로 화면에 반영하고 `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. 타임아웃 이후 별도의 일괄 API 호출은 하지 않는다.
+- **일괄 반환 (웹 UI 미사용)**: `GET {serverUrl}{APIPrefix}/discovery` — 타임아웃까지 수집한 뒤 `status` + `data`(발견된 호스트 배열)를 한 번에 JSON으로 반환. `data`는 배열이며, 결과가 없어도 `[]` 로 반환한다(null 아님). **웹 UI에서는 호출하지 않으며**, 스크립트·다른 클라이언트용. 스트림과 동일한 **include** 규칙·쿼리(`exclude_self`, `timeout`)를 지원한다.
 
 ### 5.4 서비스 상태·제어 API
 
@@ -450,12 +454,12 @@ Maintenance:
 
 - **UDP Discovery**: 포트 9999에서 listen, **SO_BROADCAST** 설정 후 broadcast 주소로 Discovery 요청 송신, 응답은 unicast로 수신.
 - **Pending**: 요청 전송 **전에** request_id → 수신 채널을 pending에 등록하여 빠른 응답이 버려지지 않도록 함. 타임아웃 시 반환 전 채널 drain.
-- **Self 제거**: 수집 시 **CPU UUID**로 자기 식별(같으면 제외). CPU UUID 없을 때만 IP+ServicePort 폴백. 응답의 `host_ip`는 요청자 기준 outbound IP로 채움.
+- **자기(self) 응답 처리**: 일괄·SSE 수집 시 기본은 **자기 응답을 포함**하고 JSON에 `"self": true`를 둔다(CPU UUID 일치 시). **HTTP 쿼리 `exclude_self`**(또는 `exclude_self=true` 등, §5.3)가 켜지면 **CPU UUID**로 자기 식별해 제외하고, CPU UUID가 없을 때만 IP+ServicePort로 폴백 제외. 응답의 `host_ip`는 요청자 기준 outbound IP로 채움.
 - Discovery 요청 수신 시 자신의 정보를 담은 DISCOVERY_RESPONSE를 **요청자 IP 및 요청 UDP 패킷의 소스 포트**로 unicast 전송(소스 포트가 0이면 discovery_udp_port로 폴백).
 - **자기 정보 API**: GET /api/v1/self — 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하고, `host_ip`는 그중 첫 번째. 버전, CPU UUID, CPU, 메모리 등 포함.
 - **cpu_uuid(호스트 식별자) 확보 순서(Linux)**: `/proc/cpuinfo`의 `Serial`(전부 0·Not Set 등 무의미하면 스킵) → `dmidecode -s system-uuid` → `/sys/class/dmi/id/product_uuid` → `/etc/machine-id` → `/var/lib/dbus/machine-id`. 최소 설치 등 **dmidecode 미설치**여도 **machine-id**로 대부분 채워진다. VM 템플릿 복제 시 여러 대가 동일 machine-id를 가질 수 있으니 운영 시 주의.
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
-- **Discovery API**: GET /api/v1/discovery/stream (SSE, 실시간) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. GET /api/v1/discovery (일괄 반환) — 웹 UI 미사용, 다른 클라이언트용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄 API의 `data`는 배열이며 없을 때 `[]`. **유니캐스트 Discovery**: 특정 IP로 DISCOVERY_REQUEST를 유니캐스트 전송하여 해당 호스트의 DISCOVERY_RESPONSE 한 건만 수신(DoDiscoveryUnicast); 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 타임아웃은 최대 5초.
+- **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, DoDiscoveryUnicast; 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
 - **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에만 저장한다. config에서 `AgentVersion`·`PatchVersion` 으로 **버전 키**를 만들고, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + `--version`, §12)·**config 검증**(구조체 파싱, `DiscoveryServiceName`·`PatchVersion` 등 타입 안내) 후 400 가능. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용**은 원격 에이전트의 upload → apply-update(self) 와 동일 모델. `update-log`·`current-cfg`·`update-status` 의 프록시 동작은 기존과 같다. update 실패 시 rollback 자동.
@@ -471,12 +475,15 @@ Maintenance:
 - [ ] 포트: MaintenancePort(HTTP), DiscoveryUDPPort(UDP Discovery), UDP SO_BROADCAST 설정
 - [ ] Discovery: UDP broadcast 요청(목적지 포트 discovery_udp_port), 응답은 요청자 IP:**요청 소스 포트**로 unicast; pending 등록 후 전송, 타임아웃 시 drain
 - [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합
-- [ ] Self 제거: **CPU UUID**로 자기 식별(같으면 제외), CPU UUID 없을 때만 IP+ServicePort 폴백
+- [ ] Discovery 자기 응답: 기본 **포함**(`"self": true`); 쿼리 **`exclude_self`** 시 CPU UUID(또는 IP+ServicePort 폴백)로 제외
 - [ ] Discovery 브로드캐스트: **3.1.1** 인터페이스 brd 자동 수집(operstate=up, 이름·/virtual/ 필터, bonding·bridge·vlan 포함); 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; **`contrabass-moleU --nic-brd`**로 확인
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
 - [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, **event: discoveryfail** 시 서버 메시지 표시·**journalctl** 안내; 응답 오는 대로 화면 갱신; 기존 카드 매칭은 **cpu_uuid → IP** 순서만 사용(**hostname 미사용**, 동일 hostname 다른 호스트 병합 방지), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
-- [ ] Discovery 일괄: GET /api/v1/discovery 구현됨, data는 배열(빈 경우 []), null 미사용; **웹 UI에서는 호출하지 않음**(다른 클라이언트용)
-- [ ] URL prefix: /web, /api/v1, 설정에서 변경 가능
+- [ ] Discovery 일괄: `GET {APIPrefix}/discovery`, data 배열(빈 경우 []); 쿼리 `exclude_self`·`timeout`; **웹 UI 미호출**
+- [ ] Discovery SSE: `GET {APIPrefix}/discovery/stream`, 동일 쿼리 지원; 웹 UI는 쿼리 없이 기본만 사용
+- [ ] Gin 프록시(루트 main): `Server.HTTPPort`, `WebPrefix`·`APIPrefix`로 maintenance에 프록시; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
+- [ ] 웹: `client-runtime.js`로 `APIPrefix` 주입 후 `app.js` API 호출
+- [ ] URL prefix: `WebPrefix`·`APIPrefix`, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
 - [ ] 호스트 목록: 아코디언(한 줄 요약 + 클릭 시 상세 카드 펼침), 상태 점(파랑=동작 중/빨강=중지/회색=미확인), 로컬은 맨 위·배경/테두리 색으로 구분, 로컬 IP는 Discovery 후 responded_from_ip 반영

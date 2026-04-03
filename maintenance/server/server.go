@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"os/exec"
@@ -189,6 +190,22 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(appmeta.BinaryName + " " + v))
 }
 
+// handleClientRuntime serves a tiny script so the embedded web UI uses Maintenance.APIPrefix (not a hardcoded /api/v1).
+func (s *Server) handleClientRuntime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	quoted, err := json.Marshal(s.apiPrefix)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintf(w, "window.__CONTRABASS_API_PREFIX__=%s;\n", quoted)
+}
+
 // Handler returns http.Handler that serves web and API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -209,7 +226,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/current-config", s.handleCurrentConfig)
 	mux.HandleFunc(s.apiPrefix+"/versions/list", s.handleVersionsList)
 	mux.HandleFunc(s.apiPrefix+"/versions/remove", s.handleVersionsRemove)
-	// Web (static)
+	// Web (static) — register client-runtime before the strip-prefix file server so it is not shadowed.
+	mux.HandleFunc(s.webPrefix+"/client-runtime.js", s.handleClientRuntime)
 	webHandler := http.StripPrefix(s.webPrefix, http.FileServer(http.FS(s.webFS)))
 	mux.Handle(s.webPrefix+"/", webHandler)
 	return mux
@@ -263,12 +281,65 @@ func (s *Server) handleHostInfo(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", resp, http.StatusOK)
 }
 
+// Query params for GET .../discovery and .../discovery/stream:
+//   exclude_self — true/1/yes/on: omit this host from results; omitted or false: include self ("self": true in JSON when applicable).
+//   exclude-self — same as exclude_self (optional alias).
+//   timeout      — integer seconds (1–600); omitted: Maintenance.DiscoveryTimeoutSeconds (0 or unset in YAML → 10s).
+func requestQueryValues(r *http.Request) url.Values {
+	if r.URL != nil && r.URL.RawQuery != "" {
+		if q, err := url.ParseQuery(r.URL.RawQuery); err == nil {
+			return q
+		}
+	}
+	if r.RequestURI != "" {
+		if i := strings.IndexByte(r.RequestURI, '?'); i >= 0 {
+			if q, err := url.ParseQuery(r.RequestURI[i+1:]); err == nil {
+				return q
+			}
+		}
+	}
+	return url.Values{}
+}
+
+func parseDiscoveryRunOptions(r *http.Request) (discovery.DiscoveryRunOptions, error) {
+	q := requestQueryValues(r)
+	var opts discovery.DiscoveryRunOptions
+	v := strings.TrimSpace(q.Get("exclude_self"))
+	if v == "" {
+		v = strings.TrimSpace(q.Get("exclude-self"))
+	}
+	if v != "" {
+		opts.ExcludeSelf = parseQueryBoolTrue(v)
+	}
+	if v := strings.TrimSpace(q.Get("timeout")); v != "" {
+		sec, err := strconv.Atoi(v)
+		if err != nil {
+			return opts, fmt.Errorf("timeout must be an integer (seconds)")
+		}
+		if sec < 1 || sec > 600 {
+			return opts, fmt.Errorf("timeout must be between 1 and 600 seconds")
+		}
+		opts.Timeout = time.Duration(sec) * time.Second
+	}
+	return opts, nil
+}
+
+func parseQueryBoolTrue(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "1" || s == "true" || s == "yes" || s == "on"
+}
+
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
-	list, err := s.discovery.DoDiscovery()
+	opts, err := parseDiscoveryRunOptions(r)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusBadRequest)
+		return
+	}
+	list, err := s.discovery.DoDiscovery(opts)
 	if err != nil {
 		log.Printf("discovery: ERROR: DoDiscovery failed: %v", err)
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
@@ -286,7 +357,25 @@ func (s *Server) handleDiscoveryStream(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
-	ch, err := s.discovery.DoDiscoveryStream()
+	opts, err := parseDiscoveryRunOptions(r)
+	if err != nil {
+		w.Header().Set("Content-Type", sseContentType)
+		w.Header().Set("Cache-Control", sseNoCache)
+		w.Header().Set("Connection", sseKeepAlive)
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		payload, _ := json.Marshal(map[string]string{"message": err.Error()})
+		if _, werr := fmt.Fprintf(w, "event: discoveryfail\ndata: %s\n\n", payload); werr != nil {
+			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+	ch, err := s.discovery.DoDiscoveryStream(opts)
 	if err != nil {
 		// EventSource cannot read JSON error bodies on non-2xx; send a one-line SSE error event with 200 OK.
 		log.Printf("discovery: ERROR: DoDiscoveryStream failed: %v", err)

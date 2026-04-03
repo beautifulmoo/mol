@@ -1,5 +1,9 @@
 (function () {
-  const API_BASE = '/api/v1';
+  var _api = (typeof window !== 'undefined' && window.__CONTRABASS_API_PREFIX__) || '/api/v1';
+  if (typeof _api === 'string' && _api.length > 1 && _api.charAt(_api.length - 1) === '/') {
+    _api = _api.slice(0, -1);
+  }
+  var API_BASE = _api;
 
   const serverIconSvg = '<svg class="host-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="4" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="16" width="20" height="4" rx="1"/><circle cx="6" cy="6" r="0.8"/><circle cx="6" cy="12" r="0.8"/><circle cx="6" cy="18" r="0.8"/></svg>';
 

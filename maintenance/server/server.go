@@ -150,6 +150,40 @@ func (s *Server) remoteBaseURL(ip string) (string, error) {
 	return "http://" + ip + ":" + strconv.Itoa(port), nil
 }
 
+// fetchRemoteVersionKey returns the remote agent's version key from GET {APIPrefix}/self.
+func (s *Server) fetchRemoteVersionKey(ip string) (string, error) {
+	baseURL, err := s.remoteBaseURL(ip)
+	if err != nil {
+		return "", err
+	}
+	u := baseURL + s.apiPrefix + "/self"
+	resp, err := remoteHTTPClient.Get(u)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Status string `json:"status"`
+		Data   struct {
+			Version string `json:"version"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	if out.Status != "success" {
+		return "", fmt.Errorf("remote self: status %q", out.Status)
+	}
+	return strings.TrimSpace(out.Data.Version), nil
+}
+
 // looksLikeBrowser returns true if the request is likely from a browser (e.g. Accept: text/html or User-Agent: Mozilla/...).
 // Used to redirect GET / to /web/ only for browsers; curl/Postman get 404.
 func looksLikeBrowser(r *http.Request) bool {
@@ -1147,10 +1181,22 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(stagingVersions, func(i, j int) bool {
 		return config.CompareVersionKeys(stagingVersions[i], stagingVersions[j]) > 0
 	})
+
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	compareKey := currentVersion
+	if ip != "" && ip != "self" {
+		rv, err := s.fetchRemoteVersionKey(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 버전 조회 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		compareKey = rv
+	}
+
 	var applyVersion, removeVersion string
 	canApply := false
 	for _, v := range stagingVersions {
-		if config.StagingUpdateAvailable(v, currentVersion) {
+		if config.StagingUpdateAvailable(v, compareKey) {
 			canApply = true
 			if applyVersion == "" {
 				applyVersion = v
@@ -1160,14 +1206,20 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	if len(stagingVersions) > 0 {
 		removeVersion = stagingVersions[len(stagingVersions)-1]
 	}
-	s.send(w, "success", map[string]interface{}{
-		"current_version":     currentVersion,
-		"staging_versions":    stagingVersions,
-		"can_apply":           canApply,
-		"apply_version":       applyVersion,
-		"remove_version":      removeVersion,
-		"update_in_progress":  isUpdateUnitActive(),
-	}, http.StatusOK)
+	out := map[string]interface{}{
+		"staging_versions":   stagingVersions,
+		"can_apply":          canApply,
+		"apply_version":      applyVersion,
+		"remove_version":     removeVersion,
+		"update_in_progress": isUpdateUnitActive(),
+	}
+	if ip != "" && ip != "self" {
+		out["remote_ip"] = ip
+		out["remote_current_version"] = compareKey
+	} else {
+		out["current_version"] = currentVersion
+	}
+	s.send(w, "success", out, http.StatusOK)
 }
 
 // isUpdateUnitActive returns true while the transient update unit (UpdateTransientUnit) is active.
@@ -1304,6 +1356,17 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := strings.TrimSpace(req.IP)
 	if ip != "" && ip != "self" {
+		// 실제 삭제·버전 검증은 ip로 지정된 호스트의 에이전트에서 수행된다. 그쪽 바이너리를 갱신해야 한다.
+		for _, ver := range req.Versions {
+			ver = strings.TrimSpace(ver)
+			if ver == "" {
+				continue
+			}
+			if err := config.ValidateVersionKeyPath(ver); err != nil {
+				s.send(w, "fail", ver+": "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
 			s.send(w, "fail", "원격 버전 삭제 요청 실패: "+err.Error(), http.StatusOK)
@@ -1339,16 +1402,8 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 		if ver == "" {
 			continue
 		}
-		invalidChar := false
-		for _, c := range ver {
-			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
-				continue
-			}
-			invalidChar = true
-			break
-		}
-		if invalidChar {
-			skipped = append(skipped, ver+" (허용되지 않은 문자)")
+		if err := config.ValidateVersionKeyPath(ver); err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s (%v)", ver, err))
 			continue
 		}
 		if ver == currentVer {

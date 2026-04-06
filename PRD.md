@@ -178,6 +178,8 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ## 5. API
 
+**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를 본다.
+
 ### 5.1 공통 응답 형식 (일반 API)
 
 - **status**: `"success"` 또는 `"fail"`
@@ -291,11 +293,13 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 #### 5.5.4 업데이트 상태·기록·설정·헬스
 
 - **업데이트 상태** `GET .../update-status`  
-  - `current_version`: `readlink` 등으로 `current` 가 가리키는 디렉터리 이름(버전 키).  
-  - `staging_versions`: 스테이징 아래 디렉터리 목록(버전 키). **비교 가능한 순서**(버전 키 비교, 새 쪽이 앞)로 정렬.  
-  - **`can_apply` / `apply_version`**: 스테이징에 올라온 버전 키 중, **현재 설치보다 업데이트로 적용할 가치가 있는지** 판단한다 — 시맨틱(`version` 필드)이 서로 다르면 디렉터리 키만 달라도 적용 가능(다운그레이드 포함); 시맨틱이 같으면 **`patch_version` 이 현재보다 큰 스테이징만** 적용 가능.  
+  - **Query `ip` (선택)**  
+    - 비어 있거나 `"self"`: **이 에이전트** 기준. `current_version`은 `readlink` 등으로 `current` 가 가리키는 디렉터리 이름(버전 키).  
+    - **원격 IP** 지정: **이 서버의 로컬 스테이징** 목록은 그대로 사용하고, 비교 대상 “현재 버전”만 **원격 호스트**에서 가져온다 — 요청을 받은 서버가 원격 **`Server.HTTPPort`** 로 `GET .../self` 를 호출해 응답의 `version`(버전 키)을 사용한다. 응답에는 `remote_ip`, `remote_current_version` 을 넣고 `current_version` 은 넣지 않는다. 원격 조회 실패 시 `fail`.  
+  - `staging_versions`: 스테이징 아래 디렉터리 목록(버전 키). **비교 가능한 순서**(버전 키 비교, 새 쪽이 앞)로 정렬. (원격 `ip` 여부와 관계없이 **항상 이 서버의 스테이징**이다.)  
+  - **`can_apply` / `apply_version`**: 스테이징에 올라온 버전 키 중, **비교 기준 버전**(로컬이면 `current_version`, 원격이면 `remote_current_version`) 대비 **업데이트로 적용할 가치가 있는지** 판단한다 — 규칙은 동일(시맨틱·패치 비교, `StagingUpdateAvailable`). 원격 모드에서는 “**이 서버 스테이징을 그 원격에 적용할 수 있는지**”를 나타낸다.  
   - `remove_version`: 스테이징 정렬 후 **가장 오래된(맨 끝)** 항목 등 UI 삭제용으로 쓸 수 있다.  
-  - `update_in_progress`: `systemctl is-active contrabass-mole-update.service` 가 active 이면 true.
+  - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
 - **업데이트 기록** `GET .../update-log` — `update_history.log` 최근 5줄, `recent_rollback`, 진행 중이면 롤백 플래그 완화 등 기존과 동일.
 - **current-cfg** `GET/POST .../current-cfg` — 기존과 동일.
 - **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(예: `contrabass-moleU 0.4.4_10`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
@@ -308,7 +312,10 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **정렬 순서(표시용)**: **current** 대상을 맨 위 → **previous** 대상 → 그 외는 **버전 키 비교 규칙**(시맨틱 부분을 절 단위 정수로 비교한 뒤, 같으면 `_` 뒤 패치를 정수로 비교)에 따른 **내림차순**(더 “새” 버전이 위). 웹 UI에서 현재·이전·나머지 순으로 한눈에 볼 수 있다.  
   - `ip` 지정: 요청을 받은 서버가 **원격 호스트의 `Server.HTTPPort`(Gin)** 로 `GET .../versions/list` 를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.
 - **삭제**: `POST {serverUrl}/api/v1/versions/remove`  
-  - Body: `{ "versions": [ "<버전>", ... ], "ip": "" | "self" | "<host_ip>" }`. `ip`가 비어 있거나 `"self"`이면 로컬에서 삭제. `ip` 지정 시 요청을 받은 서버가 **원격 `Server.HTTPPort`** 로 `POST .../versions/remove` (Body: `{ "versions": [...] }`)를 호출한 뒤 응답을 그대로 클라이언트에 전달한다. 로컬/원격 공통: `current`·`previous`가 가리키는 버전은 삭제하지 않고 제외 사유와 함께 응답에 포함한다.
+  - Body: `{ "versions": [ "<버전>", ... ], "ip": "" | "self" | "<host_ip>" }`. `ip`가 비어 있거나 `"self"`이면 로컬에서 삭제. `ip` 지정 시 요청을 받은 서버가 **원격 `Server.HTTPPort`** 로 `POST .../versions/remove` (Body: `{ "versions": [...] }`)를 호출한 뒤 응답을 그대로 클라이언트에 전달한다. 로컬/원격 공통: `current`·`previous`가 가리키는 버전은 삭제하지 않고 제외 사유와 함께 응답에 포함한다.  
+  - **버전 키 검증**: 삭제 대상 문자열은 **`ValidateVersionKeyPath`와 동일한 규칙**(디렉터리명으로 안전한 문자; 패치 구분 `_` 포함, 예 `0.4.4_9`)을 따른다. 구현상 업로드·적용 API와 같은 검증을 사용한다.  
+  - **원격 `ip` 사용 시 주의**: 실제 삭제·검증은 **`ip`로 지정된 호스트에서 실행되는 에이전트**가 수행한다. 클라이언트가 붙은 머신(또는 Gin 프록시 앞단)만 최신으로 올리고 **원격 호스트는 구버전 바이너리**이면, 응답 메시지·검증 동작은 **원격 프로세스** 기준이 된다(예: 구버전에서 잘못된 문자 제한이 남아 있으면 그쪽 메시지가 그대로 돌아온다). 원격에서도 동일 동작을 기대하려면 **해당 호스트에 동일 빌드를 배포**한다.  
+  - **프록시 선검증**: `ip`가 원격일 때 요청을 받은 서버는 원격으로 넘기기 전에 버전 키 형식을 검사하여, 잘못된 항목은 즉시 `fail`(HTTP 400)할 수 있다.
 
 ---
 
@@ -462,8 +469,8 @@ Maintenance:
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, DoDiscoveryUnicast; 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
-- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에만 저장한다. config에서 `AgentVersion`·`PatchVersion` 으로 **버전 키**를 만들고, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + `--version`, §12)·**config 검증**(구조체 파싱, `DiscoveryServiceName`·`PatchVersion` 등 타입 안내) 후 400 가능. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용**은 원격 에이전트의 upload → apply-update(self) 와 동일 모델. `update-log`·`current-cfg`·`update-status` 의 프록시 동작은 기존과 같다. update 실패 시 rollback 자동.
-- **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. current/previous 가리키는 버전 키는 삭제하지 않음.
+- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에만 저장한다. config에서 `AgentVersion`·`PatchVersion` 으로 **버전 키**를 만들고, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + `--version`, §12)·**config 검증**(구조체 파싱, `DiscoveryServiceName`·`PatchVersion` 등 타입 안내) 후 400 가능. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용**은 원격 에이전트의 upload → apply-update(self) 와 동일 모델. `update-log`·`current-cfg` 의 프록시 동작은 기존과 같다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
+- **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
 
 ---

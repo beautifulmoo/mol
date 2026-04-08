@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"net"
 	"os"
-	"os/exec"
 	"runtime"
 	"sort"
 	"strconv"
@@ -106,37 +105,16 @@ func cpuInfoLinux() (string, error) {
 }
 
 // cpuUUIDLinux returns a stable host identifier for discovery/UI.
-// Order: /proc/cpuinfo Serial (if meaningful) → dmidecode → sysfs product_uuid → /etc/machine-id.
-// Minimal installs often lack dmidecode; machine-id exists on typical systemd-based Ubuntu.
+// Order: /sys/class/dmi/id/product_uuid → /etc/machine-id → /var/lib/dbus/machine-id.
+// product_uuid matches dmidecode -s system-uuid when DMI exists; sysfs avoids the optional dmidecode binary.
+// We do not read /proc/cpuinfo Serial (often absent on x86 servers; ARM without DMI falls through to machine-id).
 func cpuUUIDLinux() (string, error) {
-	f, err := os.Open("/proc/cpuinfo")
-	if err == nil {
-		s := bufio.NewScanner(f)
-		for s.Scan() {
-			line := s.Text()
-			if strings.HasPrefix(line, "Serial") {
-				if i := strings.Index(line, ":"); i >= 0 {
-					v := strings.TrimSpace(line[i+1:])
-					if !uselessHostID(v) {
-						_ = f.Close()
-						return v, nil
-					}
-				}
-			}
-		}
-		_ = f.Close()
-	}
-
-	if v := runDmidecodeUUID(); v != "" {
-		return v, nil
-	}
 	if v := readTrimmedFile("/sys/class/dmi/id/product_uuid"); v != "" && !uselessHostID(v) {
 		return v, nil
 	}
 	if v := readTrimmedFile("/etc/machine-id"); v != "" {
 		return v, nil
 	}
-	// dbus machine-id (non-systemd rare; often duplicate of /etc/machine-id)
 	if v := readTrimmedFile("/var/lib/dbus/machine-id"); v != "" {
 		return v, nil
 	}
@@ -179,19 +157,6 @@ func readTrimmedFile(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
-}
-
-func runDmidecodeUUID() string {
-	cmd := exec.Command("dmidecode", "-s", "system-uuid")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	v := strings.TrimSpace(string(out))
-	if uselessHostID(v) {
-		return ""
-	}
-	return v
 }
 
 func cpuUsagePercentLinux() (float64, error) {

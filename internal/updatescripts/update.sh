@@ -40,6 +40,9 @@ NEW_BIN="$NEW_DIR/contrabass-moleU"
 }
 
 # 2. 적용할 버전의 config.yaml에서 설정 읽기. 실패해도 기본값 유지.
+# HTTP_PORT = Maintenance.MaintenancePort (에이전트가 maintenance HTTP를 여는 포트, 예: 8889).
+# Server.HTTPPort(예: 8888)는 Gin이 아닌 별도 바인딩이며, 브라우저는 보통 8888→maintenance로 리버스 프록시한다.
+# GET /version 은 maintenance 리스너에서만 제공되므로 헬스체크는 MaintenancePort로 해야 한다(8888만 쓰면 /version 이 프록시되지 않아 404 등 잘못된 응답이 올 수 있음).
 SERVICE=contrabass-mole.service
 HTTP_PORT=
 if [ -f "$NEW_DIR/config.yaml" ]; then
@@ -87,9 +90,21 @@ if ! systemctl is-active --quiet $SERVICE; then
     prepend_history "rollback completed"
     exit 1
 fi
-if ! curl -sSf -o /dev/null --connect-timeout 5 --max-time 10 "http://127.0.0.1:${HTTP_PORT}/version" 2>/dev/null; then
-    prepend_history "update $NEW_VERSION failed (health check), rollback"
-    echo "health check failed (HTTP :${HTTP_PORT} not responding), rollback"
+# GET /version 본문은 정확히 "<BinaryName> <버전 키>" 한 줄(예: contrabass-moleU 0.4.4_11). HTTP 200만으로는 부족함.
+# curl 은 파이프 없이 단독 실행해 -f 실패(404 등)가 반드시 감지되게 한다.
+HEALTH_RAW=""
+if ! HEALTH_RAW=$(curl -sSf --connect-timeout 5 --max-time 10 "http://127.0.0.1:${HTTP_PORT}/version" 2>/dev/null); then
+    prepend_history "update $NEW_VERSION failed (health check: curl /version), rollback"
+    echo "health check failed (curl http://127.0.0.1:${HTTP_PORT}/version), rollback"
+    "$SCRIPT_DIR/rollback.sh"
+    prepend_history "rollback completed"
+    exit 1
+fi
+HEALTH_LINE=$(printf '%s' "$HEALTH_RAW" | tr -d '\r' | head -n 1 | sed 's/[[:space:]]*$//')
+EXPECTED_LINE="$(basename "$NEW_BIN") ${NEW_VERSION}"
+if [ "$HEALTH_LINE" != "$EXPECTED_LINE" ]; then
+    prepend_history "update $NEW_VERSION failed (health check: bad /version body), rollback"
+    echo "health check failed: expected '${EXPECTED_LINE}', got '${HEALTH_LINE}' (MaintenancePort=${HTTP_PORT})"
     "$SCRIPT_DIR/rollback.sh"
     prepend_history "rollback completed"
     exit 1

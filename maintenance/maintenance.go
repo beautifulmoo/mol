@@ -67,7 +67,8 @@ func setSOReuseport(fd int) error {
 
 // ShouldStartGinReverseProxy returns true only for `program -cfg <path>` with a non-empty path.
 // That is the long-running service mode where main also starts the Gin reverse proxy (Server.HTTPPort).
-// For --nic-brd, --discovery, -h, --version, or no args, this is false so Gin does not bind a port.
+// Any other invocation does not start Gin: --discovery, --nic-brd, -h/--help, --version, no args, or unknown first arg
+// (because args[1] must be exactly "-cfg").
 func ShouldStartGinReverseProxy(args []string) bool {
 	if len(args) < 3 {
 		return false

@@ -70,7 +70,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 **9. 확인용 CLI**
 
-- **`contrabass-moleU --nic-brd`** 는 위 규칙과 동일하게 **(인터페이스 이름 : brd)** 를 한 줄씩 출력한다. Gin(`Server.HTTPPort`)은 서비스 모드(`-cfg <파일>`)에서만 기동되므로, **`--nic-brd`만 실행할 때는 Gin이 바인딩되지 않는다**(루트 `maintenance.ShouldStartGinReverseProxy`).
+- **`contrabass-moleU --nic-brd`** 는 위 규칙과 동일하게 **(인터페이스 이름 : brd)** 를 한 줄씩 출력한다. Gin(`Server.HTTPPort`)은 서비스 모드(`-cfg <파일>`)에서만 기동되므로, **`--nic-brd`·`--discovery`·`-h` 등 CLI 전용 실행에서는 Gin이 바인딩되지 않는다**(루트 `maintenance.ShouldStartGinReverseProxy`: 첫 인자가 `-cfg`일 때만 true).
 
 **10. 참고 스크립트 `brd_for_bm.sh` (저장소 루트)**
 

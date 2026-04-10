@@ -6,8 +6,8 @@
 - **언어**: Go
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
-- **소스 레이아웃**: Discovery·Discovery CLI(`discoverycli`)·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지로 구성된다. 루트 `main.go`는 `contrabass-agent/maintenance` 만 import한다. **설정(YAML)** 은 **`internal/config`** 에서 로드한다. **업데이트/롤백 셸**은 루트 `update.sh`·`rollback.sh` 를 소스로 하여 **`internal/updatescripts/`** 에 복사 후 **`//go:embed`** 로 바이너리에 포함한다(`Makefile`이 빌드 전 동기화).
-- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.Version`**(ldflags `-X main.Version=…`)과 **`main()`** 만 두고, **`maintenance.Run(main.Version, os.Args)`** 의 반환값으로 **`os.Exit`** 한다. **`maintenance.Run(binVersion, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며 `os.Args`를 직접 읽지 않고, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 **`contrabass-moleU --discovery`** 경로에서 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
+- **소스 레이아웃**: Discovery·Discovery CLI(`discoverycli`)·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지로 구성된다. 루트 `main.go`는 `contrabass-agent/maintenance` 만 import한다. **설정(YAML)** 은 **`internal/config`** 에서 로드한다. **업데이트/롤백 셸**은 루트 `update.sh`·`rollback.sh` 를 소스로 하여 **`internal/updatescripts/`** 에 복사 후 **`//go:embed`** 로 바이너리에 포함한다(`Makefile`이 빌드 전 동기화). Discovery용 IPv4 brd 자동 수집 규칙과 동일한 의도의 **참고 셸** `brd_for_bm.sh` 를 저장소 루트에 둔다(§3.1.1).
+- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.Version`**(ldflags `-X main.Version=…`)과 **`main()`** 만 두고, **`contrabass-moleU -cfg <파일>`**(비어 있지 않은 경로)인 **서비스 모드**에서만 Gin 리버스 프록시(`Server.HTTPPort`)를 `go`로 기동한 뒤 **`maintenance.Run(main.Version, os.Args)`** 를 호출하고, 그 반환값으로 **`os.Exit`** 한다. `--nic-brd`·`--discovery`·`-h` 등 **CLI 전용** 실행 시에는 Gin을 띄우지 않는다. **`maintenance.Run(binVersion, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 **`contrabass-moleU --discovery`** 경로에서 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
 - **소스 트리와 테스트**: 배포용 저장소에는 Go **`*_test.go`** 단위 테스트 파일을 두지 않는다(단일 바이너리 산출물에는 원래 테스트가 포함되지 않으며, 소스 정책상 별도 테스트 파일 없이 유지한다). 회귀 검증이 필요하면 `go test`용 파일을 로컬·CI에서만 두거나 이력에서 복구한다.
 - **웹 서버**: Go 표준 라이브러리 **net/http** 만 사용 (외부 웹 프레임워크 미사용)
 
@@ -34,42 +34,47 @@
 
 ### 3.1.1 Discovery 브로드캐스트 주소 수집 (상세)
 
-Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** `/sys/class/net/`과 `ip -o -4 addr show`로 수집한다. **물리 NIC**뿐 아니라 **bonding(bond\*), bridge(br\*), vlan(vlan\*)** 등도 포함하여, 해당 인터페이스의 brd로 브로드캐스트가 나가도록 한다.
+Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** `/sys/class/net/`·sysfs `type`·(브리지인 경우) `brif/`·`ip -4 -o addr show dev <iface>`로 수집한다. **이름으로 인터페이스를 거르지 않는다.** 목표는 **호스트 내부 전용 가상망이 아니라**, 물리 BM 간 브로드캐스트로 Discovery가 가능한 경로의 brd를 잡는 것이다(물리 NIC, bonding, VLAN, **슬레이브가 붙은** bridge 등). 인터페이스 이름 패턴(`docker*`, `veth*` 등)으로 제외하지 않는다.
 
-**1. 대상 인터페이스**
+**1. 인터페이스 열거**
 
-- `/sys/class/net/` 아래 각 인터페이스 이름(디렉터리/심볼릭 링크)을 열거한다.
+- `/sys/class/net/`에서 OS가 인식한 **모든** 인터페이스 이름을 얻는다.
 
-**2. 제외(이름)**
+**2. 루프백 제외**
 
-- 다음에 해당하면 **제외**한다.
-  - `lo` (루프백)
-  - `docker*`, `veth*`, `virbr*`
-  - `br-int`, `br-tun` (및 해당 접두사)
-  - `cni*`, `flannel*`, `vxlan_sys*`, `genev_sys*`
+- `lo`만 이름으로 제외한다(외부 브로드캐스트 불가).
 
-**3. operstate(UP만)**
+**3. sysfs `type` (이더넷 계열만)**
 
-- `/sys/class/net/<iface>/operstate`를 읽어 **값이 `up`인 인터페이스만** 사용한다. `down` 등은 제외한다.
+- `/sys/class/net/<iface>/type` 값이 **`1`(ARPHRD_ETHER)** 인 경우만 후보로 한다. 이더넷 기반으로 보는 물리 NIC·bond·VLAN·bridge·일부 TAP/TUN 등이 포함된다. `1`이 아니면 제외한다.
 
-**4. IPv4 + brd 존재**
+**4. 브리지: 슬레이브 유무**
 
-- 남은 인터페이스마다 `ip -o -4 addr show <iface>`를 실행한다. 출력에 **`brd`**가 포함된 줄만 사용하여 brd 주소를 추출한다. 한 인터페이스에 IPv4가 여러 개면 brd도 여러 개 나올 수 있다.
+- `/sys/class/net/<iface>/brif/` 디렉터리가 **있으면**(브리지 마스터) 그 안에 **슬레이브 인터페이스가 1개 이상** 있어야 한다. **0개**면(예: 내부망 전용 virbr) 제외한다. `brif/`가 없으면 브리지 마스터가 아니므로 이 검사를 건너뛴다.
 
-**5. /virtual/ 인데 허용하는 경우**
+**5. IPv4·brd 추출**
 
-- `readlink /sys/class/net/<iface>` 결과가 **`/virtual/`**를 포함하면, 그 인터페이스는 기본적으로 “가상”으로 보아 **제외**한다.
-- **단, 이름이** `bond*`, `br*`, `vlan*`, `eth*`, `en*` **중 하나로 시작하면 제외하지 않고 포함**한다.  
-  → bonding(bond0 등), bridge(br0 등), vlan(vlan10 등), 물리 NIC에 가까운 이름(eth*, en*)은 `/virtual/` 아래에 있어도 Discovery brd 수집 대상이 된다.
+- 각 후보 인터페이스에 대해 `ip -4 -o addr show dev <iface>`로 IPv4 라인을 읽는다. IPv4가 없으면 제외한다. 출력 줄에 **`brd <주소>`**가 있으면 그 브로드캐스트 주소를 사용한다.
 
-**6. 중복 제거 및 fallback**
+**6. 한 인터페이스·여러 주소**
 
-- 위 조건을 만족하는 인터페이스에서 추출한 **brd 주소**를 모은 뒤 **중복을 제거**하여 Discovery에 사용한다.
-- **수집 결과가 비어 있으면** 설정 `discovery_broadcast_address`(단일)를 사용하고, 그것도 없으면 `255.255.255.255`를 사용한다.
+- 한 인터페이스에 IPv4가 여러 개면 줄마다 brd를 볼 수 있다. **같은 인터페이스 안에서** 동일 brd는 한 번만 유지한다.
 
-**7. 확인용 CLI**
+**7. 인터페이스 간 중복**
 
-- **`contrabass-moleU --nic-brd`** 실행 시 위와 동일한 규칙으로 수집한 **(인터페이스 이름 : brd 주소)** 쌍을 한 줄씩 출력한다. Discovery에 실제로 쓰이는 brd 목록을 확인할 때 사용한다.
+- **서로 다른 인터페이스**에서 같은 brd가 나오면, **`--nic-brd` 출력**에서는 **각각 한 줄씩** 내보낸다(`iface : brd` 형식). **Discovery UDP 송신 목록**을 만들 때는 **동일 brd 문자열은 한 번만** 써도 된다(같은 서브넷으로의 중복 전송 방지).
+
+**8. fallback**
+
+- 자동 수집 결과가 비어 있으면 설정 `discovery_broadcast_address`(단일)를 쓰고, 그것도 없으면 `255.255.255.255`를 쓴다.
+
+**9. 확인용 CLI**
+
+- **`contrabass-moleU --nic-brd`** 는 위 규칙과 동일하게 **(인터페이스 이름 : brd)** 를 한 줄씩 출력한다. Gin(`Server.HTTPPort`)은 서비스 모드(`-cfg <파일>`)에서만 기동되므로, **`--nic-brd`만 실행할 때는 Gin이 바인딩되지 않는다**(루트 `maintenance.ShouldStartGinReverseProxy`).
+
+**10. 참고 스크립트 `brd_for_bm.sh` (저장소 루트)**
+
+- **BM 간 브로드캐스트에 쓸 수 있는** IPv4 brd를, sysfs `type`·브리지 `brif/`·`ip -4 -o addr show` 로 골라 **`iface : brd`** 형식으로 출력하는 **bash 참고 구현**이다. 에이전트 내부의 `maintenance/hostinfo` 브로드캐스트 수집과 **동일한 설계 의도**를 따르며, 셸·Go 간 줄 단위 출력이 완전히 같을 필요는 없다(파싱 방식 차이 허용). 운영 호스트에서 brd 목록을 빠르게 확인하거나 스펙 검토용으로 쓴다.
 
 ### 3.1.2 DISCOVERY_REQUEST 페이로드 크기 (UDP·MTU)
 
@@ -172,7 +177,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **`-cfg <파일>`**: 설정 파일 경로(필수 인자). 이 옵션으로만 HTTP·Discovery가 기동한다. systemd 등에서는 `ExecStart=.../contrabass-moleU -cfg /path/to/config.yaml` 형태로 지정한다.
 - **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료.
 - **`-version`, `--version`**: 버전 문자열 출력 후 종료.
-- **`--nic-brd`**: 물리 NIC별 IPv4 브로드캐스트(brd) 주소를 `NIC이름 : brd주소` 형식으로 출력(Discovery에 사용되는 주소 확인용) 후 종료.
+- **`--nic-brd`**: §3.1.1과 동일 규칙으로 IPv4 브로드캐스트(brd)를 `NIC이름 : brd주소` 형식으로 출력(확인용) 후 종료.
 - **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만]` 형식으로, **`responded_from_ip`**만 취합한다. Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
 
 ---
@@ -438,7 +443,7 @@ Maintenance:
 | `Maintenance.SSHPort` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `Maintenance.SSHUser` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
 
-- **Discovery 브로드캐스트 주소**: **3.1.1**에 따라 인터페이스(brd 보유, operstate=up, 이름·/virtual/ 필터)를 자동 수집하여 사용한다. bonding(bond\*), bridge(br\*), vlan(vlan\*), eth\*, en\* 등이 포함되며, 설정에 주소를 넣지 않아도 된다. 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일)를 fallback으로 사용한다.
+- **Discovery 브로드캐스트 주소**: **3.1.1**에 따라 sysfs `type`·브리지 `brif/`·`ip` 출력으로 brd를 자동 수집한다(이름 패턴으로 거르지 않음). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일)를 fallback으로 사용한다.
 - **contrabass-mole.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 에이전트의 API(**`Server.HTTPPort`**, Gin)를 호출하고, 원격 에이전트가 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 에이전트가 꺼져 있어도 시작 가능). SSH 포트·사용자는 `SSHPort`, `SSHUser`로 지정하며, 키 기반 인증이 필요하다. 원격 **서비스 재시작**은 SSH를 사용하지 않고, 요청을 받은 서버가 원격 에이전트 API로 `POST service-control` (ip: "self", action: "restart")를 호출하며, 원격 에이전트가 자기 서버에서 `systemctl restart`를 실행한다(SSH 공개키 등록 없이 가능).
 
 ---
@@ -484,12 +489,12 @@ Maintenance:
 - [ ] Discovery: UDP broadcast 요청(목적지 포트 discovery_udp_port), 응답은 요청자 IP:**요청 소스 포트**로 unicast; pending 등록 후 전송, 타임아웃 시 drain
 - [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합
 - [ ] Discovery 자기 응답: 기본 **포함**(`"self": true`); 쿼리 **`exclude_self`** 시 CPU UUID(또는 IP+ServicePort 폴백)로 제외
-- [ ] Discovery 브로드캐스트: **3.1.1** 인터페이스 brd 자동 수집(operstate=up, 이름·/virtual/ 필터, bonding·bridge·vlan 포함); 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; **`contrabass-moleU --nic-brd`**로 확인
+- [ ] Discovery 브로드캐스트: **3.1.1** (type=1, 브리지는 brif 슬레이브 존재, IPv4 brd; 이름 필터 없음); 송신 목록은 brd 문자열 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; **`contrabass-moleU --nic-brd`**로 확인; 참고 셸 **`brd_for_bm.sh`**
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
 - [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, **event: discoveryfail** 시 서버 메시지 표시·**journalctl** 안내; 응답 오는 대로 화면 갱신; 기존 카드 매칭은 **cpu_uuid → IP** 순서만 사용(**hostname 미사용**, 동일 hostname 다른 호스트 병합 방지), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
 - [ ] Discovery 일괄: `GET {APIPrefix}/discovery`, data 배열(빈 경우 []); 쿼리 `exclude_self`·`timeout`; **웹 UI 미호출**
 - [ ] Discovery SSE: `GET {APIPrefix}/discovery/stream`, 동일 쿼리 지원; 웹 UI는 쿼리 없이 기본만 사용
-- [ ] Gin 프록시(루트 main): `Server.HTTPPort`, `WebPrefix`·`APIPrefix`로 maintenance에 프록시; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
+- [ ] Gin 프록시(루트 main): **`-cfg <파일>` 서비스 모드에서만** 기동(`ShouldStartGinReverseProxy`); `Server.HTTPPort`, `WebPrefix`·`APIPrefix`로 maintenance에 프록시; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
 - [ ] 웹: `client-runtime.js`로 `APIPrefix` 주입 후 `app.js` API 호출
 - [ ] URL prefix: `WebPrefix`·`APIPrefix`, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼

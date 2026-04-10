@@ -12,7 +12,7 @@ import (
 // Config holds application configuration (YAML).
 type Config struct {
 	DiscoveryServiceName       string `yaml:"DiscoveryServiceName"`
-	DiscoveryBroadcastAddress  string `yaml:"DiscoveryBroadcastAddress"` // fallback when no physical NIC broadcast addrs found
+	DiscoveryBroadcastAddress  string `yaml:"DiscoveryBroadcastAddress"` // fallback when automatic brd collection (PRD 3.1.1) finds none
 	// DiscoveryBroadcastAddresses []string `yaml:"DiscoveryBroadcastAddresses"` // 주석: 물리 NIC brd 자동 수집 사용
 	DiscoveryUDPPort           int    `yaml:"DiscoveryUDPPort"`
 	MaintenanceListenAddress   string `yaml:"MaintenanceListenAddress"` // e.g. "127.0.0.1" (internal only) or "0.0.0.0"

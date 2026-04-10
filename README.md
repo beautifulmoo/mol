@@ -110,7 +110,7 @@ Maintenance:
   PatchVersion: 0
 ```
 
-- **Discovery 브로드캐스트**: 기본은 **NIC에서 brd 자동 수집**(bonding·bridge·vlan 등 포함, `contrabass-moleU --nic-brd`로 확인). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음.
+- **Discovery 브로드캐스트**: 기본은 **PRD §3.1.1과 동일 규칙으로 brd 자동 수집**(sysfs `type`·브리지 `brif`·`ip` 출력; `contrabass-moleU --nic-brd`로 확인; Gin은 `-cfg` 서비스 모드에서만 기동). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음. 참고용 셸 **`brd_for_bm.sh`**(저장소 루트)로 동일 의도의 목록을 확인할 수 있다.
 - `Maintenance.DiscoveryServiceName`: Discovery JSON의 `service` 값(기본 `Mole-Discovery`) · `Maintenance.DiscoveryUDPPort`: 9999 · `Maintenance.MaintenancePort`: (설정값) · `Maintenance.DiscoveryTimeoutSeconds` · `Maintenance.DiscoveryDeduplicate`
 - `Maintenance.DeployBase` / `Maintenance.InstallPrefix`(비우면 DeployBase): 스테이징·versions·update.sh 경로
 - `Maintenance.AgentVersion`: 비우면 ldflags 빌드 버전

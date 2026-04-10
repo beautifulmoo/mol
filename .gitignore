@@ -3,3 +3,6 @@ mol
 contrabass-moleU
 fake_mol
 hello
+
+# 로컬/도구가 만든 호스트명@IP 형태 임시 파일 등
+contrabass@*

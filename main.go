@@ -172,19 +172,21 @@ func TestGETWeb(c *gin.Context) {
 }
 
 func main() {
-	gcfg := ginProxyConfig(os.Args)
-	httpPort := gcfg.ServerHTTPPort
-	if httpPort <= 0 {
-		httpPort = 8888
-	}
-	// Gin(Server.HTTPPort): WebPrefix·APIPrefix는 maintenance(MaintenancePort)로 프록시. maintenance 서버는 -cfg 로 기동.
-	go func() {
-		router := MyGin(gcfg)
-		addr := fmt.Sprintf("0.0.0.0:%d", httpPort)
-		if err := router.Run(addr); err != nil {
-			log.Printf("gin: %v", err)
+	// Gin은 `-cfg <파일>` 서비스 모드에서만 띄운다. --nic-brd / --discovery 등은 설정을 읽지 않고 Gin도 바인딩하지 않는다.
+	if maintenance.ShouldStartGinReverseProxy(os.Args) {
+		gcfg := ginProxyConfig(os.Args)
+		httpPort := gcfg.ServerHTTPPort
+		if httpPort <= 0 {
+			httpPort = 8888
 		}
-	}()
+		go func() {
+			router := MyGin(gcfg)
+			addr := fmt.Sprintf("0.0.0.0:%d", httpPort)
+			if err := router.Run(addr); err != nil {
+				log.Printf("gin: %v", err)
+			}
+		}()
+	}
 
 	os.Exit(maintenance.Run(Version, os.Args))
 }

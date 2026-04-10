@@ -32,7 +32,7 @@ const helpText = `Contrabass agent — Discovery 및 웹 UI
 옵션:
   -h, --help             이 도움말 출력
   -version, --version    버전 출력 후 종료
-  --nic-brd              물리 NIC별 IPv4 브로드캐스트(brd) 주소 출력 (Discovery용 확인) 후 종료
+  --nic-brd              Discovery와 동일 규칙으로 인터페이스별 IPv4 brd 출력 (확인용) 후 종료
   --discovery [flags]    설정 없이 UDP Discovery만 수행 (<bin> --discovery -h)
 
 `
@@ -65,8 +65,21 @@ func setSOReuseport(fd int) error {
 	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReuseport, 1)
 }
 
+// ShouldStartGinReverseProxy returns true only for `program -cfg <path>` with a non-empty path.
+// That is the long-running service mode where main also starts the Gin reverse proxy (Server.HTTPPort).
+// For --nic-brd, --discovery, -h, --version, or no args, this is false so Gin does not bind a port.
+func ShouldStartGinReverseProxy(args []string) bool {
+	if len(args) < 3 {
+		return false
+	}
+	if args[1] != "-cfg" {
+		return false
+	}
+	return strings.TrimSpace(args[2]) != ""
+}
+
 // Run starts the maintenance HTTP server and Discovery. binVersion is the build-time value from main (ldflags -X main.Version=…).
-// args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit).
+// args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit). Does not call os.Exit.
 func Run(binVersion string, args []string) int {
 	if len(args) <= 1 {
 		printMustSpecifyConfig(binVersion)
@@ -193,13 +206,13 @@ func Run(binVersion string, args []string) int {
 	if len(broadcastAddrs) == 0 {
 		if cfg.DiscoveryBroadcastAddress != "" {
 			broadcastAddrs = []string{cfg.DiscoveryBroadcastAddress}
-			log.Printf("discovery: no physical NIC brd found, using config fallback: %v", broadcastAddrs)
+			log.Printf("discovery: no brd addresses collected (3.1.1), using config fallback: %v", broadcastAddrs)
 		} else {
 			broadcastAddrs = []string{"255.255.255.255"}
-			log.Printf("discovery: no physical NIC brd found, using 255.255.255.255")
+			log.Printf("discovery: no brd addresses collected (3.1.1), using 255.255.255.255")
 		}
 	} else {
-		log.Printf("discovery: broadcast addresses (physical NIC brd): %v", broadcastAddrs)
+		log.Printf("discovery: broadcast addresses: %v", broadcastAddrs)
 	}
 	discCfg := discovery.Config{
 		DiscoveryServiceName:        cfg.DiscoveryServiceName,

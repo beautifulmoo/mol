@@ -23,69 +23,34 @@ func ipPath() string {
 
 const netDir = "/sys/class/net"
 
-// shouldExcludeByName returns true if the interface name is in the virtual/excluded list
-// (docker*, veth*, virbr*, br-int, br-tun, cni*, flannel*, vxlan_sys*, genev_sys*).
-func shouldExcludeByName(name string) bool {
-	switch {
-	case name == "lo":
-		return true
-	case strings.HasPrefix(name, "docker"):
-		return true
-	case strings.HasPrefix(name, "veth"):
-		return true
-	case strings.HasPrefix(name, "virbr"):
-		return true
-	case name == "br-int" || strings.HasPrefix(name, "br-int"):
-		return true
-	case name == "br-tun" || strings.HasPrefix(name, "br-tun"):
-		return true
-	case strings.HasPrefix(name, "cni"):
-		return true
-	case strings.HasPrefix(name, "flannel"):
-		return true
-	case strings.HasPrefix(name, "vxlan_sys"):
-		return true
-	case strings.HasPrefix(name, "genev_sys"):
-		return true
-	}
-	return false
-}
-
-// isVirtualButAllowed returns true if the interface is under /virtual/ but we keep it
-// (bond*, br*, vlan*, eth*, en* — bonding, bridge, vlan, physical-like names).
-func isVirtualButAllowed(name string) bool {
-	return strings.HasPrefix(name, "bond") ||
-		strings.HasPrefix(name, "br") ||
-		strings.HasPrefix(name, "vlan") ||
-		strings.HasPrefix(name, "eth") ||
-		strings.HasPrefix(name, "en")
-}
-
-// includeInterface returns true if the interface should be used for broadcast discovery.
-// Excludes: lo, down interfaces, excluded names, and /virtual/ interfaces except bond/br/vlan/eth/en.
-func includeInterface(name string) bool {
-	if shouldExcludeByName(name) {
+// includeInterfaceForDiscovery reports whether iface should be used for BM-style broadcast discovery.
+// Rules (aligned with brd_for_bm.sh / PRD §3.1.1): skip lo; sysfs type must be 1 (ARPHRD_ETHER);
+// if brif/ exists (bridge master), require at least one slave in brif/ (exclude empty internal bridges).
+// No name-based filtering (docker*, veth*, etc.).
+func includeInterfaceForDiscovery(name string) bool {
+	if name == "lo" {
 		return false
 	}
-	operstatePath := filepath.Join(netDir, name, "operstate")
-	if data, err := os.ReadFile(operstatePath); err == nil {
-		if strings.TrimSpace(string(data)) != "up" {
+	typePath := filepath.Join(netDir, name, "type")
+	data, err := os.ReadFile(typePath)
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(string(data)) != "1" {
+		return false
+	}
+	brifPath := filepath.Join(netDir, name, "brif")
+	if fi, err := os.Stat(brifPath); err == nil && fi.IsDir() {
+		ents, err := os.ReadDir(brifPath)
+		if err != nil || len(ents) == 0 {
 			return false
 		}
-	}
-	linkPath := filepath.Join(netDir, name)
-	target, err := os.Readlink(linkPath)
-	if err != nil {
-		return true // e.g. not a symlink, allow and let ip output decide
-	}
-	if strings.Contains(target, "/virtual/") {
-		return isVirtualButAllowed(name)
 	}
 	return true
 }
 
-// getInterfaceBrdPairs runs "ip -o -4 addr show" for each included interface and returns (iface, brd) pairs.
-// Includes bonding (bond*), bridge (br*), vlan (vlan*), eth*, en* and physical NICs; excludes lo, down, docker*, veth*, etc.
+// getInterfaceBrdPairs runs "ip -o -4 addr show" per included interface and returns (iface, brd) pairs.
+// Duplicate brd on the same interface is collapsed; the same brd on different interfaces appears as multiple pairs.
 func getInterfaceBrdPairs() []NicBrdPair {
 	if runtime.GOOS != "linux" {
 		return nil
@@ -101,38 +66,43 @@ func getInterfaceBrdPairs() []NicBrdPair {
 		if name == "." || name == ".." {
 			continue
 		}
-		if !includeInterface(name) {
+		if !includeInterfaceForDiscovery(name) {
 			continue
 		}
-		cmd := exec.Command(ipCmd, "-o", "-4", "addr", "show", name)
+		cmd := exec.Command(ipCmd, "-o", "-4", "addr", "show", "dev", name)
 		out, err := cmd.Output()
 		if err != nil {
 			continue
 		}
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		seenBrdOnIface := make(map[string]struct{})
 		for _, line := range lines {
-			if !strings.Contains(line, "brd") {
+			if line == "" || !strings.Contains(line, "brd") {
 				continue
 			}
 			fields := strings.Fields(line)
 			for i := 0; i < len(fields)-1; i++ {
-				if fields[i] == "brd" {
-					brd := strings.TrimSpace(fields[i+1])
-					if brd != "" && brd != "0.0.0.0" {
-						pairs = append(pairs, NicBrdPair{Iface: name, Brd: brd})
-					}
+				if fields[i] != "brd" {
+					continue
+				}
+				brd := strings.TrimSpace(fields[i+1])
+				if brd == "" || brd == "0.0.0.0" {
 					break
 				}
+				if _, dup := seenBrdOnIface[brd]; dup {
+					break
+				}
+				seenBrdOnIface[brd] = struct{}{}
+				pairs = append(pairs, NicBrdPair{Iface: name, Brd: brd})
+				break
 			}
 		}
 	}
 	return pairs
 }
 
-// GetPhysicalNICBroadcastAddresses returns IPv4 broadcast addresses for discovery.
-// Includes physical NICs and bonding/bridge/vlan (bond*, br*, vlan*, eth*, en*) that are UP and have brd.
-// Excludes lo, down interfaces, docker*, veth*, virbr*, br-int, br-tun, cni*, flannel*, vxlan_sys*, genev_sys*.
-// Duplicate brd addresses are deduplicated.
+// GetPhysicalNICBroadcastAddresses returns IPv4 broadcast addresses for discovery sends.
+// Deduplicates by brd string only (same subnet from multiple NICs → one send per address).
 func GetPhysicalNICBroadcastAddresses() []string {
 	pairs := getInterfaceBrdPairs()
 	seen := make(map[string]struct{})
@@ -152,9 +122,8 @@ type NicBrdPair struct {
 	Brd   string
 }
 
-// GetPhysicalNICBrdPairs returns (interface name, brd address) for each included interface's IPv4 brd.
-// Same inclusion rules as GetPhysicalNICBroadcastAddresses (bonding, bridge, vlan, physical; excludes virtual-only).
-// For CLI: contrabass-moleU --nic-brd.
+// GetPhysicalNICBrdPairs returns (interface name, brd) for each distinct brd per interface.
+// For CLI: contrabass-moleU --nic-brd (same rules as automatic discovery brd collection).
 func GetPhysicalNICBrdPairs() []NicBrdPair {
 	return getInterfaceBrdPairs()
 }

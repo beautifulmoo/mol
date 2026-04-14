@@ -7,7 +7,7 @@
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
 - **소스 레이아웃**: Discovery·Discovery CLI(`discoverycli`)·호스트 정보·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지로 구성된다. 루트 `main.go`는 `contrabass-agent/maintenance` 만 import한다. **설정(YAML)** 은 **`internal/config`** 에서 로드한다. **업데이트/롤백 셸**은 루트 `update.sh`·`rollback.sh` 를 소스로 하여 **`internal/updatescripts/`** 에 복사 후 **`//go:embed`** 로 바이너리에 포함한다(`Makefile`이 빌드 전 동기화). Discovery용 IPv4 brd 자동 수집 규칙과 동일한 의도의 **참고 셸** `brd_for_bm.sh` 를 저장소 루트에 둔다(§3.1.1).
-- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.VersionKey`**(ldflags `-X main.VersionKey=…`, `Makefile` → `scripts/build-version.sh`·git describe)과 **`main()`** 만 두고, **`contrabass-moleU -cfg <파일>`**(비어 있지 않은 경로)인 **서비스 모드**에서만 Gin 리버스 프록시(`Server.HTTPPort`)를 `go`로 기동한 뒤 **`maintenance.Run(main.VersionKey, os.Args)`** 를 호출하고, 그 반환값으로 **`os.Exit`** 한다. `--nic-brd`·`--discovery`·`-h` 등 **CLI 전용** 실행 시에는 Gin을 띄우지 않는다. **`maintenance.Run(buildVersionKey, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 **`contrabass-moleU --discovery`** 경로에서 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
+- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.VersionKey`**(ldflags `-X main.VersionKey=…`, `Makefile` 기본값은 **`./scripts/build-version.sh`** 가 출력하는 **`git describe --tags --long --always` 전체 문자열**, 예: `0.4.4-4-gc44d420`; 필요 시 **`make build VERSION_KEY=…`** 로 덮어쓸 수 있음)과 **`main()`** 만 두고, **`contrabass-moleU -cfg <파일>`**(비어 있지 않은 경로)인 **서비스 모드**에서만 Gin 리버스 프록시(`Server.HTTPPort`)를 `go`로 기동한 뒤 **`maintenance.Run(main.VersionKey, os.Args)`** 를 호출하고, 그 반환값으로 **`os.Exit`** 한다. `--nic-brd`·`--discovery`·`-h` 등 **CLI 전용** 실행 시에는 Gin을 띄우지 않는다. **`maintenance.Run(buildVersionKey, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 **`contrabass-moleU --discovery`** 경로에서 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
 - **소스 트리와 테스트**: 배포용 저장소에는 Go **`*_test.go`** 단위 테스트 파일을 두지 않는다(단일 바이너리 산출물에는 원래 테스트가 포함되지 않으며, 소스 정책상 별도 테스트 파일 없이 유지한다). 회귀 검증이 필요하면 `go test`용 파일을 로컬·CI에서만 두거나 이력에서 복구한다.
 - **웹 서버**: Go 표준 라이브러리 **net/http** 만 사용 (외부 웹 프레임워크 미사용)
 
@@ -307,7 +307,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
 - **업데이트 기록** `GET .../update-log` — `update_history.log` 최근 5줄, `recent_rollback`, 진행 중이면 롤백 플래그 완화 등 기존과 동일.
 - **current-cfg** `GET/POST .../current-cfg` — 기존과 동일.
-- **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(예: `contrabass-moleU 0.4.4-10`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
+- **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(버전 키는 describe 전체일 수 있음, 예: `contrabass-moleU 0.4.4-4-gc44d420`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
 
 ### 5.6 설치된 버전(versions) API
 
@@ -445,7 +445,7 @@ Maintenance:
 
 ## 8. 서비스 시작 로그 및 버전 노출
 
-- **systemctl status / journalctl**: 에이전트가 시작할 때 **버전 키**(빌드 시 주입된 `main.VersionKey`, 예: `0.4.0-2`)을 로그에 남긴다. 예: `contrabass-moleU version 0.4.0-2: discovery listening on :9999 (bound IPs: ...)`. `journalctl -u contrabass-mole.service` 로 확인할 수 있다.
+- **systemctl status / journalctl**: 에이전트가 시작할 때 **버전 키**(빌드 시 주입된 `main.VersionKey`, 예: `0.4.0-2` 또는 describe 전체 `0.4.4-4-gc44d420`)을 로그에 남긴다. 예: `contrabass-moleU version 0.4.4-4-gc44d420: discovery listening on :9999 (bound IPs: ...)`. `journalctl -u contrabass-mole.service` 로 확인할 수 있다.
 
 ---
 
@@ -453,7 +453,8 @@ Maintenance:
 
 - **CLI `--version`**: **`-version` / `--version`** 은 빌드 **ldflags** `main.VersionKey`(전체 버전 키 문자열)와 `appmeta.BinaryName` 을 한 줄로 출력한다(설정 파일 없음). 미주입 시 `0.0.0-0` 으로 표시된다.
 - **HTTP·Discovery 노출 문자열**: 서비스 기동 시(`-cfg`)에는 **`main.VersionKey`** 를 그대로 쓴다. 이 문자열이 **자기 정보 API**, **DISCOVERY_RESPONSE의 `version`**, **`GET /version`**, 시작 로그(§8)에 일관되게 쓰인다.
-- **업데이트 판단**: 스테이징·`versions/` 디렉터리명·비교 API는 모두 **버전 키** 문자열을 사용한다(§5.5). 키는 git describe 등 빌드 파이프라인에서 결정된다.
+- **빌드 시 버전 키 주입**: 기본은 **`scripts/build-version.sh`** 가 **`git describe --tags --long --always` 전체**를 표준 출력한다(`Makefile` 의 `VERSION_KEY ?= $(shell ./scripts/build-version.sh)` → `go build -ldflags "-X main.VersionKey=…"`). 태그 없음·빈 저장소 등 예외는 스크립트 주석·구현과 동일하다. **수동 문자열**을 넣으려면 **`make build VERSION_KEY=<원하는 문자열>`** 이거나, 동일한 `-ldflags "-X main.VersionKey=…"` 를 직접 `go build` 에 넘긴다.
+- **업데이트 판단**: 스테이징·`versions/` 디렉터리명·비교 API는 모두 **버전 키** 문자열을 사용한다(§5.5). 키는 위 파이프라인 또는 수동 주입으로 결정된다. **문자열 비교가 아니라** `internal/config` 의 비교 로직에서 describe 접미사 **`-g<해시>`** 를 제거한 뒤 시맨틱·패치로 순서를 정한다(§5.5.1).
 - **실행 파일 검증**: 업로드된 바이너리는 `--version` 으로 실행해 출력이 **`<BinaryName> `** 로 시작하는지 확인한다(§12). 에이전트는 `--version` / `-version` 시 버전 한 줄 출력 후 종료한다.
 
 ---
@@ -516,7 +517,7 @@ Maintenance:
 - [ ] 일반 API 응답: status + data
 - [ ] 자기 정보 API: GET /api/v1/self
 - [ ] 설정: YAML, 항목 7.1 반영
-- [ ] 버전: **`main.VersionKey`**(Makefile/`scripts/build-version.sh`)로 노출·업데이트 경로와 일치; 업로드는 바이너리 `--version`
+- [ ] 버전: **`main.VersionKey`**(`Makefile`·`scripts/build-version.sh`의 전체 describe, 또는 `VERSION_KEY=` 수동 주입)로 노출·업데이트 경로와 일치; 업로드는 바이너리 `--version`; 비교 시 `-g<해시>` 제거(§5.5.1)
 - [ ] 프론트: embed 정적 파일, Vanilla JS, EventSource로 Discovery 스트림 수신
 
 ---
@@ -535,7 +536,7 @@ Maintenance:
 | 설정 파일 지정 | **` -cfg <경로>`** 필수로 HTTP+Discovery 기동. **`MOL_CONFIG` 환경 변수는 사용하지 않음** (`config.Load` 빈 경로 시 현재 디렉터리 `config.yaml`) |
 | 업로드 multipart | 실행 파일 필드명 **`agent`**, 파일명은 클라이언트가 보낸 이름(서버는 `appmeta.BinaryName` 권장). `config` 필드는 config.yaml |
 | 배포 디렉터리 내 실행 파일 | `staging/`·`versions/<버전 키>/` 아래 파일명은 **`BinaryName`** (과거 단일 바이너리 파일명 규칙은 사용하지 않음). `update.sh` 도 동일 파일명을 기대 |
-| `GET /version` | 한 줄: **`<BinaryName> <버전 키>`** |
+| `GET /version` | 한 줄: **`<BinaryName> <버전 키>`** (버전 키는 `git describe` 전체 문자열일 수 있음) |
 | 업로드 시 `--version` 검증 | 표준 출력 한 줄이 **`<BinaryName> `** 로 시작해야 함 (`maintenance/server.validateAgentBinary`) |
 
 ---

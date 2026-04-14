@@ -50,6 +50,21 @@ func isELFExecutable(header []byte) bool {
 	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
 }
 
+// writeBinaryToPendingStaging writes the ELF to base/staging/.incoming-<unique>/<BinaryName> (mode 0755).
+// Caller should os.Rename(pendingDir, stagingDir(base, versionKey)) after versionKeyFromAgentBinary, or os.RemoveAll(pendingDir).
+func writeBinaryToPendingStaging(base string, execBytes []byte) (pendingDir, binPath string, err error) {
+	pendingDir = filepath.Join(base, "staging", ".incoming-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if err = os.MkdirAll(pendingDir, 0755); err != nil {
+		return "", "", err
+	}
+	binPath = filepath.Join(pendingDir, appmeta.BinaryName)
+	if err = os.WriteFile(binPath, execBytes, 0755); err != nil {
+		_ = os.RemoveAll(pendingDir)
+		return "", "", err
+	}
+	return pendingDir, binPath, nil
+}
+
 // versionKeyFromAgentBinary runs binPath --version and returns the version key after "<BinaryName> " (same string as GET /version).
 func versionKeyFromAgentBinary(binPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -751,41 +766,48 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmp, err := os.CreateTemp("", "agent-upload-*")
-	if err != nil {
-		s.send(w, "fail", "임시 파일 생성 실패", http.StatusInternalServerError)
-		return
-	}
-	tmpPath := tmp.Name()
-	_ = tmp.Close()
-	defer os.Remove(tmpPath)
-	if err := os.WriteFile(tmpPath, execBytes, 0755); err != nil {
-		s.send(w, "fail", "실행 파일 검증용 임시 쓰기 실패", http.StatusInternalServerError)
-		return
-	}
-	versionKey, err := versionKeyFromAgentBinary(tmpPath)
-	if err != nil {
-		s.send(w, "fail", err.Error(), http.StatusBadRequest)
-		return
-	}
-
 	base := s.deployBase
 	if base == "" {
 		base = "/var/lib/contrabass/mole"
 	}
 	s.clearStaging(base)
-	stagingDir, err := s.writeToStaging(base, versionKey, bytes.NewReader(execBytes), configData)
+
+	pendingDir, probeBin, err := writeBinaryToPendingStaging(base, execBytes)
 	if err != nil {
-		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
+		s.send(w, "fail", "스테이징 임시 경로에 실행 파일을 쓸 수 없습니다: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	binPath := filepath.Join(stagingDir, appmeta.BinaryName)
-	if err := validateAgentBinary(binPath); err != nil {
-		os.RemoveAll(stagingDir)
+	defer func() {
+		if _, statErr := os.Stat(pendingDir); statErr == nil {
+			_ = os.RemoveAll(pendingDir)
+		}
+	}()
+
+	versionKey, err := versionKeyFromAgentBinary(probeBin)
+	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
-	log.Printf("upload: version %s -> %s (staging)", versionKey, stagingDir)
+
+	finalDir := s.stagingDir(base, versionKey)
+	if err := os.Rename(pendingDir, finalDir); err != nil {
+		s.send(w, "fail", "스테이징 디렉터리로 옮기지 못했습니다: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.WriteFile(filepath.Join(finalDir, "config.yaml"), configData, 0644); err != nil {
+		_ = os.RemoveAll(finalDir)
+		s.send(w, "fail", "config.yaml 저장 실패: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	binPath := filepath.Join(finalDir, appmeta.BinaryName)
+	if err := validateAgentBinary(binPath); err != nil {
+		_ = os.RemoveAll(finalDir)
+		s.send(w, "fail", err.Error(), http.StatusBadRequest)
+		return
+	}
+	log.Printf("upload: version %s -> %s (staging)", versionKey, finalDir)
 	s.send(w, "success", map[string]string{"version": versionKey}, http.StatusOK)
 }
 
@@ -962,28 +984,13 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). "+appmeta.BinaryName+" 실행 파일을 선택하세요.", http.StatusBadRequest)
 			return
 		}
-		tmp, err := os.CreateTemp("", "agent-validate-*")
+		pendingDir, probeBin, err := writeBinaryToPendingStaging(base, execBytes)
 		if err != nil {
-			s.send(w, "fail", "임시 파일 생성 실패", http.StatusInternalServerError)
+			s.send(w, "fail", "스테이징 임시 경로에 실행 파일을 쓸 수 없습니다: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		tmpPath := tmp.Name()
-		defer os.Remove(tmpPath)
-		if _, err := tmp.Write(execBytes); err != nil {
-			tmp.Close()
-			s.send(w, "fail", "실행 파일 검증용 임시 쓰기 실패", http.StatusInternalServerError)
-			return
-		}
-		if err := tmp.Chmod(0755); err != nil {
-			tmp.Close()
-			s.send(w, "fail", "실행 파일 검증 실패", http.StatusInternalServerError)
-			return
-		}
-		if err := tmp.Close(); err != nil {
-			s.send(w, "fail", "실행 파일 검증 실패", http.StatusInternalServerError)
-			return
-		}
-		versionKey, err := versionKeyFromAgentBinary(tmpPath)
+		defer os.RemoveAll(pendingDir)
+		versionKey, err := versionKeyFromAgentBinary(probeBin)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return

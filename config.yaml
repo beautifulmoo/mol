@@ -22,8 +22,7 @@ Maintenance:
   APIPrefix: "/maintenance/api/v1"
   DiscoveryTimeoutSeconds: 10
   DiscoveryDeduplicate: true
-  AgentVersion: "0.4.4"   # leave empty to use build ldflags; set e.g. "1.2.3" to override
-  PatchVersion: 10   # non-negative; combined key is "<AgentVersion>-<PatchVersion>" for update compare / dirs
+  # Version key is injected at build (Makefile → scripts/build-version.sh → main.VersionKey), not from this file.
   # SystemctlServiceName: "contrabass-mole.service"   # for service-status API (self + discovered hosts)
   # DeployBase: "/var/lib/contrabass/mole"   # base for staging/, update.sh
   # InstallPrefix: "/var/lib/contrabass/mole"   # contrabass-moleU 설치 경로 prefix (versions 목록·삭제, installer). 비면 DeployBase 사용

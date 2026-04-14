@@ -16,8 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Version is set at build time: -ldflags "-X main.Version=1.2.3"
-var Version string
+// VersionKey is the full agent version key "<semver>-<patch>" from git describe at build time (see Makefile, scripts/build-version.sh).
+var VersionKey string
 
 func configPathFromArgs(args []string) string {
 	if len(args) >= 3 && args[1] == "-cfg" {
@@ -188,5 +188,5 @@ func main() {
 		}()
 	}
 
-	os.Exit(maintenance.Run(Version, os.Args))
+	os.Exit(maintenance.Run(VersionKey, os.Args))
 }

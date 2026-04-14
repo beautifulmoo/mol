@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // VersionKey returns the directory / comparison key: "<semver>-<patch>".
@@ -151,36 +149,6 @@ func parseSemverInts(s string) []int {
 		out = append(out, n)
 	}
 	return out
-}
-
-// ParseVersionKeyFromYAML reads AgentVersion and PatchVersion from YAML and returns the combined key.
-func ParseVersionKeyFromYAML(data []byte) (string, error) {
-	var f FileConfig
-	if err := yaml.Unmarshal(data, &f); err != nil {
-		return "", err
-	}
-	v := strings.TrimSpace(f.Maintenance.AgentVersion)
-	if v == "" {
-		return "", fmt.Errorf("empty AgentVersion")
-	}
-	if f.Maintenance.PatchVersion < 0 {
-		return "", fmt.Errorf("PatchVersion must be >= 0")
-	}
-	return VersionKey(v, f.Maintenance.PatchVersion), nil
-}
-
-// ValidateSemverField returns an error if s contains a character not allowed in the YAML version field.
-func ValidateSemverField(s string) error {
-	if s == "" || s == "." || s == ".." {
-		return fmt.Errorf("invalid version")
-	}
-	for _, c := range s {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
-			continue
-		}
-		return fmt.Errorf("version field: invalid character")
-	}
-	return nil
 }
 
 // ValidateVersionKeyPath returns an error if the combined key is unsafe for a directory name.

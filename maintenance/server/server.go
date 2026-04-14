@@ -50,24 +50,37 @@ func isELFExecutable(header []byte) bool {
 	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
 }
 
-// validateAgentBinary runs binPath --version with a short timeout and checks that output starts with "<BinaryName> " and exit code is 0.
-func validateAgentBinary(binPath string) error {
+// versionKeyFromAgentBinary runs binPath --version and returns the version key after "<BinaryName> " (same string as GET /version).
+func versionKeyFromAgentBinary(binPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath, "--version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("실행 파일 검증 시간 초과 (--version이 5초 내에 끝나지 않음)")
+			return "", fmt.Errorf("실행 파일 검증 시간 초과 (--version이 5초 내에 끝나지 않음)")
 		}
-		return fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 실패): %w", err)
+		return "", fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 실패): %w", err)
 	}
 	line := strings.TrimSpace(string(out))
 	want := appmeta.BinaryName + " "
 	if !strings.HasPrefix(line, want) {
-		return fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 출력 접두사 기대 %q, 실제: %q)", want, line)
+		return "", fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 출력 접두사 기대 %q, 실제: %q)", want, line)
 	}
-	return nil
+	key := strings.TrimSpace(strings.TrimPrefix(line, want))
+	if key == "" {
+		return "", fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version에 버전 키가 비어 있음)")
+	}
+	if err := config.ValidateVersionKeyPath(key); err != nil {
+		return "", fmt.Errorf("실행 파일의 버전 키가 유효하지 않습니다: %w", err)
+	}
+	return key, nil
+}
+
+// validateAgentBinary runs binPath --version and checks output shape and version key.
+func validateAgentBinary(binPath string) error {
+	_, err := versionKeyFromAgentBinary(binPath)
+	return err
 }
 
 const (
@@ -217,7 +230,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	v := s.version
 	if v == "" {
-		v = "0.0.0"
+		v = "0.0.0-0"
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -733,27 +746,26 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 		return
 	}
-	cfg, err := config.LoadFromBytes(configData)
-	if err != nil {
+	if _, err := config.LoadFromBytes(configData); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
-	ver := strings.TrimSpace(cfg.AgentVersion)
-	if ver == "" {
-		s.send(w, "fail", "config.yaml에서 AgentVersion을 읽을 수 없습니다. AgentVersion 항목(문자열)이 필요합니다", http.StatusBadRequest)
+
+	tmp, err := os.CreateTemp("", "agent-upload-*")
+	if err != nil {
+		s.send(w, "fail", "임시 파일 생성 실패", http.StatusInternalServerError)
 		return
 	}
-	if err := config.ValidateSemverField(ver); err != nil {
-		s.send(w, "fail", "AgentVersion 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer os.Remove(tmpPath)
+	if err := os.WriteFile(tmpPath, execBytes, 0755); err != nil {
+		s.send(w, "fail", "실행 파일 검증용 임시 쓰기 실패", http.StatusInternalServerError)
 		return
 	}
-	if cfg.PatchVersion < 0 {
-		s.send(w, "fail", "PatchVersion은 0 이상이어야 합니다", http.StatusBadRequest)
-		return
-	}
-	versionKey := config.VersionKey(ver, cfg.PatchVersion)
-	if err := config.ValidateVersionKeyPath(versionKey); err != nil {
-		s.send(w, "fail", "버전 키에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+	versionKey, err := versionKeyFromAgentBinary(tmpPath)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -971,7 +983,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "실행 파일 검증 실패", http.StatusInternalServerError)
 			return
 		}
-		if err := validateAgentBinary(tmpPath); err != nil {
+		versionKey, err := versionKeyFromAgentBinary(tmpPath)
+		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -986,27 +999,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 			return
 		}
-		cfg, err := config.LoadFromBytes(configData)
-		if err != nil {
+		if _, err := config.LoadFromBytes(configData); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
-			return
-		}
-		ver := strings.TrimSpace(cfg.AgentVersion)
-		if ver == "" {
-			s.send(w, "fail", "config.yaml에서 AgentVersion을 읽을 수 없습니다. AgentVersion 항목(문자열)이 필요합니다", http.StatusBadRequest)
-			return
-		}
-		if err := config.ValidateSemverField(ver); err != nil {
-			s.send(w, "fail", "AgentVersion 필드: 허용 문자는 영문·숫자·마침표·하이픈입니다", http.StatusBadRequest)
-			return
-		}
-		if cfg.PatchVersion < 0 {
-			s.send(w, "fail", "PatchVersion은 0 이상이어야 합니다", http.StatusBadRequest)
-			return
-		}
-		versionKey := config.VersionKey(ver, cfg.PatchVersion)
-		if err := config.ValidateVersionKeyPath(versionKey); err != nil {
-			s.send(w, "fail", "버전 키에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 			return
 		}
 		baseURL, err := s.remoteBaseURL(ip)

@@ -27,7 +27,7 @@
 - **SSE** `event: discoveryfail` + `data.message`, 실패 시 **`discovery: ERROR:`** 한 줄 로그(`journalctl` 검색).
 - **DISCOVERY_REQUEST** JSON은 마샬 후 **1300바이트 미만** 검증(UDP·MTU).
 - **`internal/updatescripts/`** 에 `update.sh`·`rollback.sh` 임베드(`Makefile` 동기화), 배포는 `{base}/current/` 스크립트 실행.
-- 설정 **`DiscoveryServiceName`**, 스테이징/업데이트용 **`PatchVersion`**·버전키(`version_patch` 등) 비교.
+- 버전 키: 빌드 시 **`main.VersionKey`**(`Makefile`·`scripts/build-version.sh`); 업로드 시 바이너리 **`--version`**; `config.yaml`에서는 버전 제거.
 - 저장소 정책: Go **`*_test.go`** 는 트리에 두지 않음(상세는 PRD §1).
 
 상세 스펙은 **[PRD.md](PRD.md)** §3, CLI 사용은 **[README.md](README.md)** 를 참고한다.

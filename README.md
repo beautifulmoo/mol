@@ -18,15 +18,15 @@ cd ~/work/mol
 make
 ```
 
-또는 (Make 없이):
+또는 (Make 없이; 웹 embed·내장 스크립트 동기화는 생략됨):
 
 ```bash
 cd ~/work/mol
-go build -o contrabass-moleU -ldflags "-X main.Version=1.0.0" .
+go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-0" .
 ```
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
-- 버전을 넣어 빌드하려면: `make build VERSION=0.0.2` 또는 `go build -o contrabass-moleU -ldflags "-X main.Version=0.0.2" .`
+- **버전 키**(`0.4.4-1` 형태)는 `make`/`make build` 시 `scripts/build-version.sh`(git describe)로 `main.VersionKey`에 주입된다. 덮어쓰기: `make build VERSION_KEY=0.4.4-99`.
 
 ## 배포
 
@@ -106,14 +106,12 @@ Maintenance:
   DiscoveryUDPPort: 9999
   WebPrefix: "/web"
   APIPrefix: "/api/v1"
-  AgentVersion: "0.4.0"
-  PatchVersion: 0
 ```
 
+- **버전 문자열**(로그·Discovery·`GET /version` 등)은 **config가 아니라 빌드 시 주입된 `main.VersionKey`** 를 쓴다(`make` → `scripts/build-version.sh`).
 - **Discovery 브로드캐스트**: 기본은 **PRD §3.1.1과 동일 규칙으로 brd 자동 수집**(sysfs `type`·브리지 `brif`·`ip` 출력; `contrabass-moleU --nic-brd`로 확인; Gin은 `-cfg` 서비스 모드에서만 기동). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음. 참고용 셸 **`brd_for_bm.sh`**(저장소 루트)로 동일 의도의 목록을 확인할 수 있다.
 - `Maintenance.DiscoveryServiceName`: Discovery JSON의 `service` 값(기본 `Mole-Discovery`) · `Maintenance.DiscoveryUDPPort`: 9999 · `Maintenance.MaintenancePort`: (설정값) · `Maintenance.DiscoveryTimeoutSeconds` · `Maintenance.DiscoveryDeduplicate`
 - `Maintenance.DeployBase` / `Maintenance.InstallPrefix`(비우면 DeployBase): 스테이징·versions·update.sh 경로
-- `Maintenance.AgentVersion`: 비우면 ldflags 빌드 버전
 - `Maintenance.SystemctlServiceName`: 기본 `contrabass-mole.service`
 - **SSH** (`Maintenance.SSHPort` 기본 22, `Maintenance.SSHUser` 기본 **root**): 원격 호스트의 **서비스 시작/중지**만 SSH. **상태 조회·재시작**은 원격 에이전트 **HTTP API**(Gin `Server.HTTPPort` 경유, PRD 참고)를 통해 처리한다.
 

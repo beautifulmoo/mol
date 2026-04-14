@@ -21,9 +21,7 @@ type Config struct {
 	WebPrefix                  string `yaml:"WebPrefix"`
 	APIPrefix                  string `yaml:"APIPrefix"`
 	DiscoveryTimeoutSeconds    int    `yaml:"DiscoveryTimeoutSeconds"`
-	DiscoveryDeduplicate       bool   `yaml:"DiscoveryDeduplicate"`
-	AgentVersion               string `yaml:"AgentVersion"`
-	PatchVersion               int    `yaml:"PatchVersion"` // numeric patch; combined key "<AgentVersion>-<PatchVersion>" for dirs / compare
+	DiscoveryDeduplicate bool `yaml:"DiscoveryDeduplicate"`
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"SystemctlServiceName"` // e.g. "contrabass-mole.service"
 	DeployBase           string `yaml:"DeployBase"`           // e.g. "/var/lib/contrabass/mole" for staging/, update.sh
@@ -63,22 +61,11 @@ func Default() Config {
 		APIPrefix:                 "/api/v1",
 		DiscoveryTimeoutSeconds:   10,
 		DiscoveryDeduplicate:      true,
-		AgentVersion:              "",
-		PatchVersion:              0,
 		SystemctlServiceName:      "contrabass-mole.service",
 		DeployBase:                "/var/lib/contrabass/mole",
 		SSHPort:                   22,
 		SSHUser:                   "root",
 	}
-}
-
-// ParseVersionFromYAML extracts the "AgentVersion" field from YAML bytes (semver only, no patch suffix).
-func ParseVersionFromYAML(data []byte) (string, error) {
-	var f FileConfig
-	if err := yaml.Unmarshal(data, &f); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(f.Maintenance.AgentVersion), nil
 }
 
 // Load reads config from path. If path is empty, "config.yaml" in the current directory is used.
@@ -116,7 +103,7 @@ func configValidationError(err error) error {
 		for _, e := range yerr.Errors {
 			msgs = append(msgs, describeYAMLUnmarshalError(e))
 		}
-		return fmt.Errorf("%s%s. 필요한 항목 및 타입: Server.HTTPPort(숫자), DiscoveryServiceName(문자열), DiscoveryUDPPort(숫자), MaintenancePort(숫자), DiscoveryTimeoutSeconds(숫자), AgentVersion(문자열), PatchVersion(숫자) 등", prefix, strings.Join(msgs, "; "))
+		return fmt.Errorf("%s%s. 필요한 항목 및 타입: Server.HTTPPort(숫자), DiscoveryServiceName(문자열), DiscoveryUDPPort(숫자), MaintenancePort(숫자), DiscoveryTimeoutSeconds(숫자) 등", prefix, strings.Join(msgs, "; "))
 	}
 	// Syntax error (e.g. invalid indentation)
 	if strings.Contains(err.Error(), "yaml:") {

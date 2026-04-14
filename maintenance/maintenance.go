@@ -40,10 +40,10 @@ const helpText = `Contrabass agent — Discovery 및 웹 UI
 //go:embed web/*
 var webFS embed.FS
 
-func versionLine(binVersion string) string {
-	v := binVersion
+func versionLine(buildVersionKey string) string {
+	v := strings.TrimSpace(buildVersionKey)
 	if v == "" {
-		v = "devel"
+		v = "0.0.0-0"
 	}
 	return appmeta.BinaryName + " " + v
 }
@@ -79,11 +79,11 @@ func ShouldStartGinReverseProxy(args []string) bool {
 	return strings.TrimSpace(args[2]) != ""
 }
 
-// Run starts the maintenance HTTP server and Discovery. binVersion is the build-time value from main (ldflags -X main.Version=…).
+// Run starts the maintenance HTTP server and Discovery. buildVersionKey is the full key from main (ldflags -X main.VersionKey=…, see Makefile / scripts/build-version.sh).
 // args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit). Does not call os.Exit.
-func Run(binVersion string, args []string) int {
+func Run(buildVersionKey string, args []string) int {
 	if len(args) <= 1 {
-		printMustSpecifyConfig(binVersion)
+		printMustSpecifyConfig(buildVersionKey)
 		return 0
 	}
 	if len(args) >= 2 {
@@ -92,7 +92,7 @@ func Run(binVersion string, args []string) int {
 			fmt.Print(strings.ReplaceAll(helpText, "<bin>", appmeta.BinaryName))
 			return 0
 		case "--version", "-version":
-			fmt.Println(versionLine(binVersion))
+			fmt.Println(versionLine(buildVersionKey))
 			return 0
 		case "--nic-brd":
 			pairs := hostinfo.GetPhysicalNICBrdPairs()
@@ -106,7 +106,7 @@ func Run(binVersion string, args []string) int {
 	}
 	if args[1] != "-cfg" {
 		fmt.Fprintf(os.Stderr, "알 수 없는 인자: %q\n\n", args[1])
-		printMustSpecifyConfig(binVersion)
+		printMustSpecifyConfig(buildVersionKey)
 		return 1
 	}
 	if len(args) < 3 {
@@ -133,14 +133,10 @@ func Run(binVersion string, args []string) int {
 		log.Printf("config: MaintenanceListenAddress is required (e.g. 127.0.0.1 or 0.0.0.0)")
 		return 1
 	}
-	version := strings.TrimSpace(cfg.AgentVersion)
-	if version == "" {
-		version = binVersion
+	displayVersion := strings.TrimSpace(buildVersionKey)
+	if displayVersion == "" {
+		displayVersion = "0.0.0-0"
 	}
-	if version == "" {
-		version = "0.0.0"
-	}
-	displayVersion := config.VersionKey(version, cfg.PatchVersion)
 
 	// UDP listener for discovery: one conn on :port (all interfaces) and one per local IPv4 so we can send broadcast from each interface (source port stays 9999 so responses are received).
 	portStr := ":" + strconv.Itoa(cfg.DiscoveryUDPPort)

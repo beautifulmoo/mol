@@ -50,15 +50,31 @@ func isELFExecutable(header []byte) bool {
 	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
 }
 
-// writeBinaryToPendingStaging writes the ELF to base/staging/.incoming-<unique>/<BinaryName> (mode 0755).
-// Caller should os.Rename(pendingDir, stagingDir(base, versionKey)) after versionKeyFromAgentBinary, or os.RemoveAll(pendingDir).
-func writeBinaryToPendingStaging(base string, execBytes []byte) (pendingDir, binPath string, err error) {
-	pendingDir = filepath.Join(base, "staging", ".incoming-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+// maxConfigPartBytes caps the config.yaml part (YAML only; kept in memory after upload).
+const maxConfigPartBytes = 4 << 20 // 4 MiB
+
+// writeBinaryToPendingStagingFromReader streams the ELF to base/.incoming-<unique>/<BinaryName> (not under staging/).
+// Must run before clearStaging (which removes staging/). Caller renames to staging/<versionKey>/ after versionKeyFromAgentBinary, or os.RemoveAll(pendingDir).
+func writeBinaryToPendingStagingFromReader(base string, body io.Reader) (pendingDir, binPath string, err error) {
+	pendingDir = filepath.Join(base, ".incoming-"+strconv.FormatInt(time.Now().UnixNano(), 10))
 	if err = os.MkdirAll(pendingDir, 0755); err != nil {
 		return "", "", err
 	}
 	binPath = filepath.Join(pendingDir, appmeta.BinaryName)
-	if err = os.WriteFile(binPath, execBytes, 0755); err != nil {
+	f, err := os.OpenFile(binPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		_ = os.RemoveAll(pendingDir)
+		return "", "", err
+	}
+	_, err = io.Copy(f, body)
+	if cerr := f.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.RemoveAll(pendingDir)
+		return "", "", err
+	}
+	if err := os.Chmod(binPath, 0755); err != nil {
 		_ = os.RemoveAll(pendingDir)
 		return "", "", err
 	}
@@ -126,6 +142,7 @@ type Server struct {
 	installPrefix        string // contrabass-moleU 설치 경로 prefix (versions/ 기준). 비면 deployBase 사용
 	sshPort              int
 	sshUser              string
+	maxUploadBytes       int64 // POST /upload & multipart apply-update body limit (multipart streaming to disk for agent part)
 }
 
 // Config for Server.
@@ -144,6 +161,7 @@ type Config struct {
 	InstallPrefix        string // contrabass-moleU 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
 	SSHPort              int    // for remote service start/stop via SSH (default 22)
 	SSHUser              string // SSH user for remote (default "root")
+	MaxUploadBytes       int    // 0 or omit → config.DefaultMaxUploadBytes (64<<20); max multipart body for upload / multipart apply-update
 }
 
 // New creates a Server.
@@ -163,11 +181,28 @@ func New(cfg Config) *Server {
 		installPrefix:        strings.TrimSuffix(cfg.InstallPrefix, "/"),
 		sshPort:              cfg.SSHPort,
 		sshUser:              cfg.SSHUser,
+		maxUploadBytes:       normalizeMaxUploadBytes(cfg.MaxUploadBytes),
 	}
 	if s.installPrefix == "" {
 		s.installPrefix = s.deployBase
 	}
 	return s
+}
+
+func normalizeMaxUploadBytes(n int) int64 {
+	const minB = int64(1 << 20)  // 1 MiB
+	const maxB = int64(10 << 30) // 10 GiB
+	if n <= 0 {
+		return int64(config.DefaultMaxUploadBytes)
+	}
+	v := int64(n)
+	if v < minB {
+		return minB
+	}
+	if v > maxB {
+		return maxB
+	}
+	return v
 }
 
 func (s *Server) remoteBaseURL(ip string) (string, error) {
@@ -613,8 +648,6 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", nil, http.StatusOK)
 }
 
-const maxUploadBytes = 64 << 20 // 64MB for agent binary + config
-
 // stagingDir returns deploy_base/staging/<version>. Staging is never the running path, so no "text file busy".
 func (s *Server) stagingDir(base, version string) string {
 	return filepath.Join(base, "staging", version)
@@ -725,40 +758,94 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		s.send(w, "fail", "요청 크기 초과 또는 multipart 파싱 실패", http.StatusBadRequest)
+	base := s.deployBase
+	if base == "" {
+		base = "/var/lib/contrabass/mole"
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		s.send(w, "fail", "요청이 multipart가 아니거나 본문을 읽을 수 없습니다", http.StatusBadRequest)
 		return
 	}
-	execFile, _, err := r.FormFile(uploadBinaryField)
-	if err != nil {
+	var pendingDir, binPath string
+	var configData []byte
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
+			s.send(w, "fail", "요청 크기 초과이거나 multipart 읽기 실패", http.StatusBadRequest)
+			return
+		}
+		switch part.FormName() {
+		case uploadBinaryField:
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
+			var werr error
+			pendingDir, binPath, werr = writeBinaryToPendingStagingFromReader(base, part)
+			if werr != nil {
+				part.Close()
+				s.send(w, "fail", "스테이징 임시 경로에 실행 파일을 쓸 수 없습니다: "+werr.Error(), http.StatusInternalServerError)
+				return
+			}
+		case "config":
+			var rerr error
+			configData, rerr = io.ReadAll(io.LimitReader(part, maxConfigPartBytes))
+			if rerr != nil {
+				part.Close()
+				if pendingDir != "" {
+					_ = os.RemoveAll(pendingDir)
+				}
+				s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
+				return
+			}
+		default:
+			_, _ = io.Copy(io.Discard, part)
+		}
+		part.Close()
+	}
+	if binPath == "" {
 		s.send(w, "fail", "실행 파일이 필요합니다 (multipart 필드 \""+uploadBinaryField+"\")", http.StatusBadRequest)
 		return
 	}
-	defer execFile.Close()
-	execBytes, err := io.ReadAll(execFile)
+	if configData == nil {
+		if pendingDir != "" {
+			_ = os.RemoveAll(pendingDir)
+		}
+		s.send(w, "fail", "config 파일이 필요합니다", http.StatusBadRequest)
+		return
+	}
+
+	defer func() {
+		if pendingDir == "" {
+			return
+		}
+		if _, statErr := os.Stat(pendingDir); statErr == nil {
+			_ = os.RemoveAll(pendingDir)
+		}
+	}()
+
+	hdr := make([]byte, 4)
+	fh, err := os.Open(binPath)
 	if err != nil {
 		s.send(w, "fail", "실행 파일 읽기 실패", http.StatusInternalServerError)
 		return
 	}
-	if len(execBytes) < 4 {
+	_, err = io.ReadFull(fh, hdr)
+	fh.Close()
+	if err != nil {
 		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
 		return
 	}
-	if !isELFExecutable(execBytes[:4]) {
+	if !isELFExecutable(hdr) {
 		s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). "+appmeta.BinaryName+" 실행 파일을 선택하세요.", http.StatusBadRequest)
-		return
-	}
-	configFile, _, err := r.FormFile("config")
-	if err != nil {
-		s.send(w, "fail", "config 파일이 필요합니다", http.StatusBadRequest)
-		return
-	}
-	defer configFile.Close()
-
-	configData, err := io.ReadAll(configFile)
-	if err != nil {
-		s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
 		return
 	}
 	if _, err := config.LoadFromBytes(configData); err != nil {
@@ -766,34 +853,24 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
 	s.clearStaging(base)
 
-	pendingDir, probeBin, err := writeBinaryToPendingStaging(base, execBytes)
-	if err != nil {
-		s.send(w, "fail", "스테이징 임시 경로에 실행 파일을 쓸 수 없습니다: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer func() {
-		if _, statErr := os.Stat(pendingDir); statErr == nil {
-			_ = os.RemoveAll(pendingDir)
-		}
-	}()
-
-	versionKey, err := versionKeyFromAgentBinary(probeBin)
+	versionKey, err := versionKeyFromAgentBinary(binPath)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	finalDir := s.stagingDir(base, versionKey)
+	if err := os.MkdirAll(filepath.Join(base, "staging"), 0755); err != nil {
+		s.send(w, "fail", "스테이징 디렉터리 생성 실패: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err := os.Rename(pendingDir, finalDir); err != nil {
 		s.send(w, "fail", "스테이징 디렉터리로 옮기지 못했습니다: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	pendingDir = ""
 
 	if err := os.WriteFile(filepath.Join(finalDir, "config.yaml"), configData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
@@ -801,8 +878,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	binPath := filepath.Join(finalDir, appmeta.BinaryName)
-	if err := validateAgentBinary(binPath); err != nil {
+	binFinal := filepath.Join(finalDir, appmeta.BinaryName)
+	if err := validateAgentBinary(binFinal); err != nil {
 		_ = os.RemoveAll(finalDir)
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
@@ -955,58 +1032,128 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// 원격 전용: multipart(실행 파일+config+ip) → 원격 업로드 API로 전송 후 원격 apply-update API 호출 (로컬 스테이징·SCP 미사용)
 	if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
-		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-		if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
+		mr, err := r.MultipartReader()
+		if err != nil {
 			s.send(w, "fail", "multipart 파싱 실패", http.StatusBadRequest)
 			return
 		}
-		ip := strings.TrimSpace(r.FormValue("ip"))
+		var remoteIP string
+		var pendingDir, binPath string
+		var configData []byte
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				if pendingDir != "" {
+					_ = os.RemoveAll(pendingDir)
+				}
+				s.send(w, "fail", "요청 크기 초과이거나 multipart 읽기 실패", http.StatusBadRequest)
+				return
+			}
+			switch part.FormName() {
+			case "ip":
+				b, rerr := io.ReadAll(io.LimitReader(part, 256))
+				if rerr != nil {
+					part.Close()
+					if pendingDir != "" {
+						_ = os.RemoveAll(pendingDir)
+					}
+					s.send(w, "fail", "multipart 읽기 실패", http.StatusBadRequest)
+					return
+				}
+				remoteIP = strings.TrimSpace(string(b))
+			case uploadBinaryField:
+				if pendingDir != "" {
+					_ = os.RemoveAll(pendingDir)
+				}
+				var werr error
+				pendingDir, binPath, werr = writeBinaryToPendingStagingFromReader(base, part)
+				if werr != nil {
+					part.Close()
+					s.send(w, "fail", "스테이징 임시 경로에 실행 파일을 쓸 수 없습니다: "+werr.Error(), http.StatusInternalServerError)
+					return
+				}
+			case "config":
+				var rerr error
+				configData, rerr = io.ReadAll(io.LimitReader(part, maxConfigPartBytes))
+				if rerr != nil {
+					part.Close()
+					if pendingDir != "" {
+						_ = os.RemoveAll(pendingDir)
+					}
+					s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
+					return
+				}
+			default:
+				_, _ = io.Copy(io.Discard, part)
+			}
+			part.Close()
+		}
+		ip := remoteIP
 		if ip == "" || ip == "self" {
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
 			s.send(w, "fail", "원격 적용 시 ip가 필요합니다", http.StatusBadRequest)
 			return
 		}
-		execFile, _, err := r.FormFile(uploadBinaryField)
-		if err != nil {
+		if binPath == "" {
 			s.send(w, "fail", "실행 파일이 필요합니다 (multipart 필드 \""+uploadBinaryField+"\")", http.StatusBadRequest)
 			return
 		}
-		execBytes, err := io.ReadAll(execFile)
-		execFile.Close()
-		if err != nil {
-			s.send(w, "fail", "실행 파일 읽기 실패", http.StatusInternalServerError)
-			return
-		}
-		if len(execBytes) < 4 {
-			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
-			return
-		}
-		if !isELFExecutable(execBytes[:4]) {
-			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). "+appmeta.BinaryName+" 실행 파일을 선택하세요.", http.StatusBadRequest)
-			return
-		}
-		pendingDir, probeBin, err := writeBinaryToPendingStaging(base, execBytes)
-		if err != nil {
-			s.send(w, "fail", "스테이징 임시 경로에 실행 파일을 쓸 수 없습니다: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer os.RemoveAll(pendingDir)
-		versionKey, err := versionKeyFromAgentBinary(probeBin)
-		if err != nil {
-			s.send(w, "fail", err.Error(), http.StatusBadRequest)
-			return
-		}
-		configFile, _, err := r.FormFile("config")
-		if err != nil {
+		if configData == nil {
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
 			s.send(w, "fail", "config 파일이 필요합니다", http.StatusBadRequest)
 			return
 		}
-		defer configFile.Close()
-		configData, err := io.ReadAll(configFile)
+		hdr := make([]byte, 4)
+		fh, err := os.Open(binPath)
 		if err != nil {
-			s.send(w, "fail", "config 읽기 실패", http.StatusInternalServerError)
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
+			s.send(w, "fail", "실행 파일 읽기 실패", http.StatusInternalServerError)
+			return
+		}
+		_, err = io.ReadFull(fh, hdr)
+		fh.Close()
+		if err != nil {
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
+			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (파일이 너무 짧음)", http.StatusBadRequest)
+			return
+		}
+		if !isELFExecutable(hdr) {
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
+			s.send(w, "fail", "올바른 실행 파일이 아닙니다 (ELF 형식이 아님). "+appmeta.BinaryName+" 실행 파일을 선택하세요.", http.StatusBadRequest)
 			return
 		}
 		if _, err := config.LoadFromBytes(configData); err != nil {
+			if pendingDir != "" {
+				_ = os.RemoveAll(pendingDir)
+			}
+			s.send(w, "fail", err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer func() {
+			if pendingDir == "" {
+				return
+			}
+			if _, statErr := os.Stat(pendingDir); statErr == nil {
+				_ = os.RemoveAll(pendingDir)
+			}
+		}()
+
+		versionKey, err := versionKeyFromAgentBinary(binPath)
+		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1017,10 +1164,18 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 		defer cancel()
-		if err := s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, bytes.NewReader(execBytes), configData); err != nil {
+		binFile, err := os.Open(binPath)
+		if err != nil {
+			s.send(w, "fail", "실행 파일 열기 실패", http.StatusInternalServerError)
+			return
+		}
+		err = s.postUploadToTargetWithReader(ctx, baseURL, s.apiPrefix, binFile, configData)
+		_ = binFile.Close()
+		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
+		pendingDir = ""
 		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, versionKey)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)

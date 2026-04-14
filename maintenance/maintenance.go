@@ -264,6 +264,7 @@ func Run(buildVersionKey string, args []string) int {
 		InstallPrefix:        cfg.InstallPrefix,
 		SSHPort:              cfg.SSHPort,
 		SSHUser:              cfg.SSHUser,
+		MaxUploadBytes:       cfg.MaxUploadBytes.Int(),
 	})
 
 	// maintenance HTTP is typically internal-only; access via Gin(8888) reverse proxy.

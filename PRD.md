@@ -280,6 +280,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 - **업로드** `POST {serverUrl}/api/v1/upload`  
   - **multipart**: 필드명 **`agent`**(실행 파일), **`config`**(config.yaml).  
+  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. **`multipart.Reader`**로 파트를 순회하며 **`agent`** 내용은 **메모리에 통째로 올리지 않고 디스크로 스트리밍** 저장한다(임시: `{DeployBase}/.incoming-<고유>/`). 검증·`clearStaging` 후 **`staging/<버전 키>/`** 로 옮긴다. **`config`** 파트는 구현상 소량 상한(예: 4 MiB)만 메모리에 둔다.  
   - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 `--version` 실행(5초), 출력이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`, 기본 `contrabass-moleU`)로 시작·종료 0.  
   - **config 검증**: `internal/config` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
   - **버전 키(스테이징 디렉터리명)**: 업로드된 **실행 파일**을 임시 경로에서 **`--version`** 실행하여, 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 읽는다. config에는 버전을 두지 않는다.  
@@ -293,7 +294,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - 내장 `update.sh`·`rollback.sh` 내용을 **`{DeployBase}/current/update.sh`**, `.../rollback.sh` 로 쓴 뒤(실제 파일은 `current` 가 가리키는 `versions/<현재 버전 키>/` 아래),  
     `systemd-run --unit=contrabass-mole-update --property=RemainAfterExit=yes /bin/bash <그 경로>/update.sh <적용할 버전 키>`  
   - 응답은 즉시 성공(백그라운드 적용). 에이전트는 root로 동작·sudo 없음.
-- **적용 (원격)**: 대상 호스트 에이전트 HTTP로 (1) upload (2) `apply-update` with `ip: "self"` — 로컬과 동일하게 원격이 `current` 아래에 스크립트를 풀고 실행한다. JSON·multipart(원격) 흐름은 기존과 동일하되, **`version` 은 항상 버전 키 문자열**이다.
+- **적용 (원격)**: 대상 호스트 에이전트 HTTP로 (1) upload (2) `apply-update` with `ip: "self"` — 로컬과 동일하게 원격이 `current` 아래에 스크립트를 풀고 실행한다. JSON·multipart(원격) 흐름은 기존과 동일하되, **`version` 은 항상 버전 키 문자열**이다. **multipart 원격 적용** 요청도 동일 **`MaxUploadBytes`** 및 **`agent`** 디스크 스트리밍 규칙을 따른다(필드 **`ip`** 는 multipart 파트로 읽음).
 
 #### 5.5.4 업데이트 상태·기록·설정·헬스
 
@@ -437,6 +438,7 @@ Maintenance:
 | `Maintenance.InstallPrefix` | (선택) 에이전트(`BinaryName`) 설치 경로 prefix. `versions/` 목록·삭제 API 및 installer에서 사용. 비면 `DeployBase` 사용 | `"/var/lib/contrabass/mole"` |
 | `Maintenance.SSHPort` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `Maintenance.SSHUser` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
+| `Maintenance.MaxUploadBytes` | (선택) `POST /upload` 및 multipart `apply-update`의 **최대 요청 본문 크기**(바이트). 생략 시 `internal/config.DefaultMaxUploadBytes`(코드상 `64 << 20`). YAML에서는 **정수** 또는 문자열 **`"M << N"`** / 십진 문자열(예: `"67108864"`) — `internal/config`의 `uploadBytesExpr`로 파싱. 구현상 **1 MiB–10 GiB**로 클램프 | `67108864`, `"64 << 20"` |
 
 - **Discovery 브로드캐스트 주소**: **3.1.1**에 따라 sysfs `type`·브리지 `brif/`·`ip` 출력으로 brd를 자동 수집한다(이름 패턴으로 거르지 않음). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일)를 fallback으로 사용한다.
 - **contrabass-mole.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 에이전트의 API(**`Server.HTTPPort`**, Gin)를 호출하고, 원격 에이전트가 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 에이전트가 꺼져 있어도 시작 가능). SSH 포트·사용자는 `SSHPort`, `SSHUser`로 지정하며, 키 기반 인증이 필요하다. 원격 **서비스 재시작**은 SSH를 사용하지 않고, 요청을 받은 서버가 원격 에이전트 API로 `POST service-control` (ip: "self", action: "restart")를 호출하며, 원격 에이전트가 자기 서버에서 `systemctl restart`를 실행한다(SSH 공개키 등록 없이 가능).
@@ -504,7 +506,7 @@ Maintenance:
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`). 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 에이전트 API 호출**(SSH 키 불필요)
 - [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
-- [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root) (선택); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리 `--version`**
+- [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열) (선택); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리 `--version`**
 - [ ] **CLI**: **`-cfg <파일>`** 로만 HTTP 서버 + Discovery 기동; 인자 없이 실행 시 안내 후 종료; `-h`/`--help`; `--version`/`-version`; `--nic-brd`; **`--discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`)
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`internal/updatescripts` embed, `Makefile` 동기화); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; 로컬 적용 후 **페이지 전체 새로고침 없이** `/self` 폴링 → 업데이트 기록·config·versions·상태·update-status 현행화; 원격 적용 후 host-info 폴링(최대 8회) → 동일 패널 현행화; 로그 폴링 2초 간격; **GET /version** 헬스; recent_rollback·update_in_progress

@@ -28,3 +28,4 @@ Maintenance:
   # InstallPrefix: "/var/lib/contrabass/mole"   # contrabass-moleU 설치 경로 prefix (versions 목록·삭제, installer). 비면 DeployBase 사용
   # SSHPort: 22   # SSH port for remote service start/stop (default 22)
   # SSHUser: "root"   # SSH user for remote start/stop (default "root")
+  # MaxUploadBytes: "64 << 20"   # optional; bytes as integer or string (decimal or "M << N", e.g. "128 << 20"). Omit = DefaultMaxUploadBytes; server clamps 1 MiB–10 GiB.

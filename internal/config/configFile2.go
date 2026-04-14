@@ -29,6 +29,9 @@ type Config struct {
 	// SSH for remote service start/stop (when remote contrabass-moleU is stopped, API is unreachable)
 	SSHPort int    `yaml:"SSHPort"` // default 22; used for ssh -p when starting/stopping remote contrabass-moleU (systemctl) on the remote host
 	SSHUser string `yaml:"SSHUser"` // default "root"; user for ssh to remote host
+	// MaxUploadBytes is the max multipart body size for POST /upload and multipart apply-update (agent + config).
+	// YAML: integer bytes, or string "64 << 20" / "67108864". Omitted uses DefaultMaxUploadBytes. 0 → server default.
+	MaxUploadBytes uploadBytesExpr `yaml:"MaxUploadBytes"`
 }
 
 // FileConfig is the on-disk YAML shape:
@@ -48,6 +51,9 @@ type ServerConfig struct {
 // DefaultDiscoveryServiceName is the default DISCOVERY_REQUEST `service` value (must match Maintenance.DiscoveryServiceName).
 const DefaultDiscoveryServiceName = "Mole-Discovery"
 
+// DefaultMaxUploadBytes is the default max POST body size for /upload and multipart apply-update (same as the former maxUploadBytes constant).
+const DefaultMaxUploadBytes = 64 << 20
+
 // Default returns default configuration values.
 func Default() Config {
 	return Config{
@@ -65,6 +71,7 @@ func Default() Config {
 		DeployBase:                "/var/lib/contrabass/mole",
 		SSHPort:                   22,
 		SSHUser:                   "root",
+		MaxUploadBytes:            uploadBytesExpr(DefaultMaxUploadBytes),
 	}
 }
 

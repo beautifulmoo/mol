@@ -130,7 +130,7 @@ curl -sS -X POST "${BASE}${API}/upload" \
   -F 'config=@/path/to/config.yaml'
 ```
 
-성공 시 `data.version`에 버전 키(예: `0.4.4_10`)가 온다.
+성공 시 `data.version`에 버전 키(예: `0.4.4-10`)가 온다.
 
 #### Postman
 
@@ -155,7 +155,7 @@ URL만 `http://127.0.0.1:8889/api/v1/upload` 등으로 맞추고 **Send** 하면
 ```bash
 curl -sS -X POST "${BASE}${API}/upload/remove" \
   -H 'Content-Type: application/json' \
-  -d '{"version":"0.4.4_10"}'
+  -d '{"version":"0.4.4-10"}'
 ```
 
 ---
@@ -167,7 +167,7 @@ curl -sS -X POST "${BASE}${API}/upload/remove" \
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -H 'Content-Type: application/json' \
-  -d '{"version":"0.4.4_10","ip":"self"}'
+  -d '{"version":"0.4.4-10","ip":"self"}'
 ```
 
 **원격** — JSON만: 로컬에 해당 버전 디렉터리가 있어야 하며, 서버가 원격으로 업로드·적용 API를 호출한다.
@@ -175,7 +175,7 @@ curl -sS -X POST "${BASE}${API}/apply-update" \
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -H 'Content-Type: application/json' \
-  -d '{"version":"0.4.4_10","ip":"192.168.0.42"}'
+  -d '{"version":"0.4.4-10","ip":"192.168.0.42"}'
 ```
 
 **원격** — 파일을 이 서버에서 골라 원격에 올리며 적용(multipart, `ip` 필수):
@@ -216,7 +216,7 @@ curl -sS -X POST "${BASE}${API}/current-config" \
 ```bash
 curl -sS -X POST "${BASE}${API}/versions/remove" \
   -H 'Content-Type: application/json' \
-  -d '{"versions":["0.4.4_9","0.4.4_8"]}'
+  -d '{"versions":["0.4.4-9","0.4.4-8"]}'
 ```
 
 원격 호스트에 프록시:
@@ -224,7 +224,7 @@ curl -sS -X POST "${BASE}${API}/versions/remove" \
 ```bash
 curl -sS -X POST "${BASE}${API}/versions/remove" \
   -H 'Content-Type: application/json' \
-  -d '{"versions":["0.4.4_9"],"ip":"192.168.0.42"}'
+  -d '{"versions":["0.4.4-9"],"ip":"192.168.0.42"}'
 ```
 
 ---

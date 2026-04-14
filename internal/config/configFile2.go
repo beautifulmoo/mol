@@ -23,7 +23,7 @@ type Config struct {
 	DiscoveryTimeoutSeconds    int    `yaml:"DiscoveryTimeoutSeconds"`
 	DiscoveryDeduplicate       bool   `yaml:"DiscoveryDeduplicate"`
 	AgentVersion               string `yaml:"AgentVersion"`
-	PatchVersion               int    `yaml:"PatchVersion"` // numeric patch; combined key version_patch for dirs / compare
+	PatchVersion               int    `yaml:"PatchVersion"` // numeric patch; combined key "<AgentVersion>-<PatchVersion>" for dirs / compare
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"SystemctlServiceName"` // e.g. "contrabass-mole.service"
 	DeployBase           string `yaml:"DeployBase"`           // e.g. "/var/lib/contrabass/mole" for staging/, update.sh

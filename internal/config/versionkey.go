@@ -8,39 +8,51 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// VersionKey returns the directory / comparison key: "<semver>_<patch>".
+// VersionKey returns the directory / comparison key: "<semver>-<patch>".
 // patch is numeric (no fixed width); compare with CompareVersionKeys, not raw strings.
+// AgentVersion may use any number of dot-separated numeric segments (e.g. 1.2.3 or 1.2.3.4); there is no fixed "three-part" limit.
 func VersionKey(semver string, patch int) string {
 	semver = strings.TrimSpace(semver)
 	if patch < 0 {
 		patch = 0
 	}
-	return fmt.Sprintf("%s_%d", semver, patch)
+	return fmt.Sprintf("%s-%d", semver, patch)
 }
 
 // SplitVersionKey splits a version key into semver part and numeric patch.
-// Legacy dirs without "_<digits>" (e.g. "0.4.0") yield patch 0.
-// The last "_<digits-only>" suffix is the patch when the suffix is all ASCII digits.
+// Canonical format ends with "-<digits>" (new). Legacy on-disk dirs may use "_<digits>" instead; both are accepted.
+// The rightmost '_' or '-' that is followed only by ASCII digits defines the patch; semver is the prefix before it.
+// Dirs without such a suffix (e.g. "0.4.0" only) yield patch 0.
 func SplitVersionKey(s string) (semver string, patch int) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", 0
 	}
-	idx := strings.LastIndex(s, "_")
-	if idx <= 0 || idx == len(s)-1 {
-		return s, 0
-	}
-	suffix := s[idx+1:]
-	for i := 0; i < len(suffix); i++ {
-		if suffix[i] < '0' || suffix[i] > '9' {
-			return s, 0
+	for i := len(s) - 2; i >= 0; i-- {
+		if s[i] != '_' && s[i] != '-' {
+			continue
 		}
+		suffix := s[i+1:]
+		if len(suffix) == 0 {
+			continue
+		}
+		allDig := true
+		for j := 0; j < len(suffix); j++ {
+			if suffix[j] < '0' || suffix[j] > '9' {
+				allDig = false
+				break
+			}
+		}
+		if !allDig {
+			continue
+		}
+		p, err := strconv.Atoi(suffix)
+		if err != nil {
+			continue
+		}
+		return s[:i], p
 	}
-	p, err := strconv.Atoi(suffix)
-	if err != nil {
-		return s, 0
-	}
-	return s[:idx], p
+	return s, 0
 }
 
 // CompareVersionKeys compares two keys: semver (numeric tuple) first, then patch as integer.

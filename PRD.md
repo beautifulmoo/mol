@@ -116,7 +116,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   "host_ip": "172.29.237.41",
   "hostname": "example-host-41",
   "service_port": 8889,
-  "version": "0.2.0_0",
+  "version": "0.2.0-0",
   "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "cpu_info": "Intel Xeon 8 cores",
   "cpu_usage_percent": 23.5,
@@ -236,15 +236,15 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 #### 5.5.1 배포 디렉터리 구조·버전 키
 
 - **배포 베이스** `DeployBase`(기본 `/var/lib/contrabass/mole`) 아래에는 **스테이징** `staging/`·**버전별 실행 트리** `versions/`·**현재/이전 포인터** `current`·`previous`·**기록** `update_history.log` 가 둔다. **업데이트/롤백 셸 스크립트는 배포 루트에 상주시키지 않는다** — 내용은 **에이전트 단일 바이너리(contrabass-moleU)에 내장**되며, 적용 시점에만 `current`가 가리키는 버전 디렉터리 아래에 풀어 쓴다(아래 5.5.3).
-- **버전 디렉터리 이름(버전 키)** 은 설정의 **`AgentVersion`**(시맨틱 버전 문자열)과 **`PatchVersion`**(0 이상의 정수)으로 결정된다. 합쳐서 **`{AgentVersion}_{PatchVersion}`** 한 개의 문자열이 스테이징·`versions/` 아래 디렉터리명이 된다(예: `AgentVersion: "0.4.0"`, `PatchVersion: 5` → 디렉터리 `0.4.0_5`).  
-  - **비교 규칙**: 동일 **시맨틱**(설정의 `AgentVersion` 값)인 경우 **패치 숫자**만 정수로 비교한다(문자열 `"_10"` vs `"_5"` 를 그대로 비교하면 순서가 뒤집히므로, 구현에서는 `_` 뒤를 정수로 파싱한다). 시맨틱이 다르면 기존과 같이 **서로 다른 릴리스**로 보고, 스테이징에 다른 버전 키가 있으면 적용 가능으로 본다(다운그레이드 포함).  
-  - **레거시**: 과거에 `versions/0.4.0` 처럼 `_패치` 없이 둔 디렉터리는 **패치 0**으로 해석하여 비교한다.
-- **노출 버전 문자열**: 로그·Discovery·`GET /version`·DISCOVERY_RESPONSE의 `version` 등에 쓰이는 문자열은 위 **버전 키**(`{AgentVersion}_{PatchVersion}`) 형태로 통일한다.
+- **버전 디렉터리 이름(버전 키)** 은 설정의 **`AgentVersion`**(시맨틱 버전 문자열)과 **`PatchVersion`**(0 이상의 정수)으로 결정된다. 합쳐서 **`{AgentVersion}-{PatchVersion}`** 한 개의 문자열이 스테이징·`versions/` 아래 디렉터리명이 된다(예: `AgentVersion: "0.4.0"`, `PatchVersion: 5` → 디렉터리 `0.4.0-5`). 시맨틱 부분은 점으로 구분된 숫자 세그먼트 개수에 고정 제한이 없다(예: `1.2.3.4-0`).  
+  - **비교 규칙**: 동일 **시맨틱**(설정의 `AgentVersion` 값)인 경우 **패치 숫자**만 정수로 비교한다(문자열 `"10"` vs `"5"` 접미사를 그대로 비교하면 순서가 뒤집히므로, 구현에서는 마지막 `-`(또는 레거시 `_`) 뒤를 정수로 파싱한다). 시맨틱이 다르면 기존과 같이 **서로 다른 릴리스**로 보고, 스테이징에 다른 버전 키가 있으면 적용 가능으로 본다(다운그레이드 포함).  
+  - **레거시**: 과거에 `versions/0.4.0` 처럼 `-패치` 없이 둔 디렉터리는 **패치 0**으로 해석하여 비교한다. 과거 `_숫자` 형식 디렉터리도 읽을 수 있다.
+- **노출 버전 문자열**: 로그·Discovery·`GET /version`·DISCOVERY_RESPONSE의 `version` 등에 쓰이는 문자열은 위 **버전 키**(`{AgentVersion}-{PatchVersion}`) 형태로 통일한다.
 
   ```
   deploy_base/                    # 예: /var/lib/contrabass/mole (설정 키: DeployBase)
-  ├── current -> versions/0.4.0_2 # 심볼릭 링크, 현재 실행 버전(버전 키)
-  ├── previous -> versions/0.4.0_1
+  ├── current -> versions/0.4.0-2 # 심볼릭 링크, 현재 실행 버전(버전 키)
+  ├── previous -> versions/0.4.0-1
   ├── update_history.log          # 업데이트·롤백 기록 (맨 앞에 추가, 최근 5건을 웹에 표시)
   ├── staging/                    # 업로드 API로만 채움, 적용 시 versions로 복사 가능
   │   └── <버전 키>/
@@ -308,18 +308,18 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
 - **업데이트 기록** `GET .../update-log` — `update_history.log` 최근 5줄, `recent_rollback`, 진행 중이면 롤백 플래그 완화 등 기존과 동일.
 - **current-cfg** `GET/POST .../current-cfg` — 기존과 동일.
-- **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(예: `contrabass-moleU 0.4.4_10`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
+- **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(예: `contrabass-moleU 0.4.4-10`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
 
 ### 5.6 설치된 버전(versions) API
 
 - **경로 기준**: `InstallPrefix`(설정, 비면 `DeployBase`) 아래 `versions/` 디렉터리 및 `current`·`previous` 심볼릭 링크를 사용한다. installer 등에서도 동일 경로를 참조할 수 있도록 `InstallPrefix`를 둔다.
 - **목록**: `GET {serverUrl}/api/v1/versions/list?ip=`  
   - `ip` 비어 있거나 `"self"`: `{InstallPrefix}/versions/` 디렉터리 내 각 **버전 키** 이름의 하위 디렉터리(그 안에 **`appmeta.BinaryName` 실행 파일**이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ] } }` — 여기서 `version` 문자열은 디렉터리명과 동일한 **버전 키**이다.  
-  - **정렬 순서(표시용)**: **current** 대상을 맨 위 → **previous** 대상 → 그 외는 **버전 키 비교 규칙**(시맨틱 부분을 절 단위 정수로 비교한 뒤, 같으면 `_` 뒤 패치를 정수로 비교)에 따른 **내림차순**(더 “새” 버전이 위). 웹 UI에서 현재·이전·나머지 순으로 한눈에 볼 수 있다.  
+  - **정렬 순서(표시용)**: **current** 대상을 맨 위 → **previous** 대상 → 그 외는 **버전 키 비교 규칙**(시맨틱 부분을 절 단위 정수로 비교한 뒤, 같으면 `-`(또는 레거시 `_`) 뒤 패치를 정수로 비교)에 따른 **내림차순**(더 “새” 버전이 위). 웹 UI에서 현재·이전·나머지 순으로 한눈에 볼 수 있다.  
   - `ip` 지정: 요청을 받은 서버가 **원격 호스트의 `Server.HTTPPort`(Gin)** 로 `GET .../versions/list` 를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.
 - **삭제**: `POST {serverUrl}/api/v1/versions/remove`  
   - Body: `{ "versions": [ "<버전>", ... ], "ip": "" | "self" | "<host_ip>" }`. `ip`가 비어 있거나 `"self"`이면 로컬에서 삭제. `ip` 지정 시 요청을 받은 서버가 **원격 `Server.HTTPPort`** 로 `POST .../versions/remove` (Body: `{ "versions": [...] }`)를 호출한 뒤 응답을 그대로 클라이언트에 전달한다. 로컬/원격 공통: `current`·`previous`가 가리키는 버전은 삭제하지 않고 제외 사유와 함께 응답에 포함한다.  
-  - **버전 키 검증**: 삭제 대상 문자열은 **`ValidateVersionKeyPath`와 동일한 규칙**(디렉터리명으로 안전한 문자; 패치 구분 `_` 포함, 예 `0.4.4_9`)을 따른다. 구현상 업로드·적용 API와 같은 검증을 사용한다.  
+  - **버전 키 검증**: 삭제 대상 문자열은 **`ValidateVersionKeyPath`와 동일한 규칙**(디렉터리명으로 안전한 문자; 패치 구분 `-`(레거시 `_` 허용), 예 `0.4.4-9`)을 따른다. 구현상 업로드·적용 API와 같은 검증을 사용한다.  
   - **원격 `ip` 사용 시 주의**: 실제 삭제·검증은 **`ip`로 지정된 호스트에서 실행되는 에이전트**가 수행한다. 클라이언트가 붙은 머신(또는 Gin 프록시 앞단)만 최신으로 올리고 **원격 호스트는 구버전 바이너리**이면, 응답 메시지·검증 동작은 **원격 프로세스** 기준이 된다(예: 구버전에서 잘못된 문자 제한이 남아 있으면 그쪽 메시지가 그대로 돌아온다). 원격에서도 동일 동작을 기대하려면 **해당 호스트에 동일 빌드를 배포**한다.  
   - **프록시 선검증**: `ip`가 원격일 때 요청을 받은 서버는 원격으로 넘기기 전에 버전 키 형식을 검사하여, 잘못된 항목은 즉시 `fail`(HTTP 400)할 수 있다.
 
@@ -384,7 +384,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **툴팁**:  
     - 비활성·스테이징에 파일 없음: "먼저 업데이트 영역에서 버전을 업로드하세요"  
     - 비활성·스테이징 버전과 현재 버전 동일: "최신 버전입니다"  
-    - 활성: "x.x.x_y 버전으로 업데이트 가능합니다" (스테이징의 버전 키; 시맨틱·패치 표기)
+    - 활성: "x.x.x-y 버전으로 업데이트 가능합니다" (스테이징의 버전 키; 시맨틱·패치 표기)
 - **스테이징 버전 표시**: 「업로드된 버전 삭제」 버튼 옆에 현재 스테이징에 올라간 버전(예: "스테이징: 1.2.3")을 표시한다. 스테이징이 비어 있으면 표시하지 않는다.
 - **업데이트 인디케이터**: 로컬·원격 카드 모두, 업데이트 적용이 진행 중일 때 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. **로컬**은 `/self` 폴링 성공(또는 폴링 종료) 후 숨긴다. **원격**은 host-info 폴링·패널 갱신 완료 후 숨긴다. 요청 실패 시 즉시 숨긴다.
 - **파일 선택 초기화**: 실행 파일·config 선택 및 편집 내용만 초기화. 스테이징/versions 에 올라간 버전은 유지.
@@ -436,7 +436,7 @@ Maintenance:
 | `Maintenance.DiscoveryTimeoutSeconds` | Discovery 응답 대기 시간(초) | `10` |
 | `Maintenance.DiscoveryDeduplicate` | 동일 호스트 중복 제거 여부 | `true` |
 | `Maintenance.AgentVersion` | (선택) 시맨틱 버전 문자열. 비어 있으면 빌드 ldflags. 노출·Discovery·버전 키의 앞부분으로 사용 | `"0.4.0"` 또는 빈 문자열 |
-| `Maintenance.PatchVersion` | (선택) 비음수 정수. `AgentVersion` 과 합쳐 **버전 키** `"{AgentVersion}_{PatchVersion}"` 가 된다(스테이징·versions 디렉터리명·비교). 기본 `0` | `0`, `5`, `10` |
+| `Maintenance.PatchVersion` | (선택) 비음수 정수. `AgentVersion` 과 합쳐 **버전 키** `"{AgentVersion}-{PatchVersion}"` 가 된다(스테이징·versions 디렉터리명·비교). 기본 `0` | `0`, `5`, `10` |
 | `Maintenance.SystemctlServiceName` | (선택) 서비스 상태·제어 대상 유닛 이름 | `"contrabass-mole.service"` |
 | `Maintenance.DeployBase` | (선택) 업데이트 배포 베이스. `staging/`·`versions/`·`current`·`previous`·`update_history.log` 의 기준 경로. **update/rollback 셸은 바이너리에 내장**되어 적용 시 `current` 아래에만 기록된다 | `"/var/lib/contrabass/mole"` |
 | `Maintenance.InstallPrefix` | (선택) 에이전트(`BinaryName`) 설치 경로 prefix. `versions/` 목록·삭제 API 및 installer에서 사용. 비면 `DeployBase` 사용 | `"/var/lib/contrabass/mole"` |
@@ -450,14 +450,14 @@ Maintenance:
 
 ## 8. 서비스 시작 로그 및 버전 노출
 
-- **systemctl status / journalctl**: 에이전트가 시작할 때 **버전 키**(`AgentVersion`·`PatchVersion` 으로 구성된 문자열, 예: `0.4.0_2`)을 로그에 남긴다. 예: `contrabass-moleU version 0.4.0_2: discovery listening on :9999 (bound IPs: ...)`. `journalctl -u contrabass-mole.service` 로 확인할 수 있다.
+- **systemctl status / journalctl**: 에이전트가 시작할 때 **버전 키**(`AgentVersion`·`PatchVersion` 으로 구성된 문자열, 예: `0.4.0-2`)을 로그에 남긴다. 예: `contrabass-moleU version 0.4.0-2: discovery listening on :9999 (bound IPs: ...)`. `journalctl -u contrabass-mole.service` 로 확인할 수 있다.
 
 ---
 
 ## 9. 버전 정보
 
 - **CLI `--version`**: **`-version` / `--version`** 은 빌드 **ldflags** `main.Version` 과 `appmeta.BinaryName` 을 한 줄로 출력한다(설정 파일 없음). `main.Version` 미지정 시 `devel` 등으로 표시될 수 있다.
-- **HTTP·Discovery 노출 문자열**: 서비스 기동 시(`-cfg`)에는 설정의 **`AgentVersion`**(비어 있으면 ldflags)과 **`PatchVersion`**(기본 0)을 합쳐 **버전 키** `"{AgentVersion}_{PatchVersion}"` 를 만든다. 이 문자열이 **자기 정보 API**, **DISCOVERY_RESPONSE의 `version`**, **`GET /version`**, 시작 로그(§8)에 일관되게 쓰인다.
+- **HTTP·Discovery 노출 문자열**: 서비스 기동 시(`-cfg`)에는 설정의 **`AgentVersion`**(비어 있으면 ldflags)과 **`PatchVersion`**(기본 0)을 합쳐 **버전 키** `"{AgentVersion}-{PatchVersion}"` 를 만든다. 이 문자열이 **자기 정보 API**, **DISCOVERY_RESPONSE의 `version`**, **`GET /version`**, 시작 로그(§8)에 일관되게 쓰인다.
 - **업데이트 판단**: 동일 시맨틱에서 릴리스 사이클이 아닌 **패치 빌드**만 자주 올릴 수 있도록 `PatchVersion` 을 두고, 스테이징·`versions/` 디렉터리명·비교 API가 모두 이 키를 사용한다(§5.5).
 - **실행 파일 검증**: 업로드된 바이너리는 `--version` 으로 실행해 출력이 **`<BinaryName> `** 로 시작하는지 확인한다(§12). 에이전트는 `--version` / `-version` 시 버전 한 줄 출력 후 종료한다.
 

@@ -90,7 +90,7 @@ if ! systemctl is-active --quiet $SERVICE; then
     prepend_history "rollback completed"
     exit 1
 fi
-# GET /version 본문은 정확히 "<BinaryName> <버전 키>" 한 줄(예: contrabass-moleU 0.4.4_11). HTTP 200만으로는 부족함.
+# GET /version 본문은 정확히 "<BinaryName> <버전 키>" 한 줄(예: contrabass-moleU 0.4.4-11). HTTP 200만으로는 부족함.
 # curl 은 파이프 없이 단독 실행해 -f 실패(404 등)가 반드시 감지되게 한다.
 HEALTH_RAW=""
 if ! HEALTH_RAW=$(curl -sSf --connect-timeout 5 --max-time 10 "http://127.0.0.1:${HTTP_PORT}/version" 2>/dev/null); then

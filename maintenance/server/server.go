@@ -1160,12 +1160,9 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	if base == "" {
 		base = "/var/lib/contrabass/mole"
 	}
-	currentVersion := ""
-	currentLink := filepath.Join(base, "current")
-	if target, err := os.Readlink(currentLink); err == nil {
-		// target is e.g. "versions/0.0.6" or absolute path ending with versions/0.0.6
-		currentVersion = filepath.Base(target)
-	}
+	// Symlink target name under versions/ (EvalSymlinks + Rel); may differ from running process if link moved before restart.
+	symlinkVersion := strings.TrimSpace(s.resolveSymlinkVersion(base, "current"))
+
 	stagingParent := filepath.Join(base, "staging")
 	stagingVersions := []string{}
 	if entries, err := os.ReadDir(stagingParent); err == nil {
@@ -1184,14 +1181,21 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	})
 
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
-	compareKey := currentVersion
+	var compareKey string
 	if ip != "" && ip != "self" {
 		rv, err := s.fetchRemoteVersionKey(ip)
 		if err != nil {
 			s.send(w, "fail", "원격 버전 조회 실패: "+err.Error(), http.StatusOK)
 			return
 		}
-		compareKey = rv
+		compareKey = strings.TrimSpace(rv)
+	} else {
+		// Local: compare against the running agent (same as GET /self / GET /version), not only the current symlink.
+		// Otherwise symlink can already point at staging/versions key N while the process is still N-1 → can_apply stays false.
+		compareKey = strings.TrimSpace(s.version)
+		if compareKey == "" {
+			compareKey = symlinkVersion
+		}
 	}
 
 	var applyVersion, removeVersion string
@@ -1218,7 +1222,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		out["remote_ip"] = ip
 		out["remote_current_version"] = compareKey
 	} else {
-		out["current_version"] = currentVersion
+		out["current_version"] = compareKey
 	}
 	s.send(w, "success", out, http.StatusOK)
 }

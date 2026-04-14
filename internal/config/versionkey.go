@@ -2,12 +2,17 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
+// gitDescribeHashSuffix matches the trailing "-g<hex>" from `git describe --long` (e.g. ...-gc44d420).
+// Stripped before semver/patch parsing so CompareVersionKeys still orders by tag + commit distance.
+var gitDescribeHashSuffix = regexp.MustCompile(`(?i)-g[0-9a-f]+$`)
+
 // VersionKey returns the directory / comparison key: "<semver>-<patch>".
-// patch is numeric (no fixed width); compare with CompareVersionKeys, not raw strings.
+// patch is numeric (no fixed width); compare with CompareVersionKeys (git describe "-g<hash>" is stripped before parsing).
 // AgentVersion may use any number of dot-separated numeric segments (e.g. 1.2.3 or 1.2.3.4); there is no fixed "three-part" limit.
 func VersionKey(semver string, patch int) string {
 	semver = strings.TrimSpace(semver)
@@ -17,12 +22,18 @@ func VersionKey(semver string, patch int) string {
 	return fmt.Sprintf("%s-%d", semver, patch)
 }
 
+// StripGitDescribeHash removes a trailing "-g<hex>" suffix from git describe --long output so the rest matches "<semver>-<patch>".
+func StripGitDescribeHash(s string) string {
+	return gitDescribeHashSuffix.ReplaceAllString(strings.TrimSpace(s), "")
+}
+
 // SplitVersionKey splits a version key into semver part and numeric patch.
+// If the key ends with git describe's "-g<hex>", that suffix is removed first (see StripGitDescribeHash).
 // Canonical format ends with "-<digits>" (new). Legacy on-disk dirs may use "_<digits>" instead; both are accepted.
 // The rightmost '_' or '-' that is followed only by ASCII digits defines the patch; semver is the prefix before it.
 // Dirs without such a suffix (e.g. "0.4.0" only) yield patch 0.
 func SplitVersionKey(s string) (semver string, patch int) {
-	s = strings.TrimSpace(s)
+	s = StripGitDescribeHash(strings.TrimSpace(s))
 	if s == "" {
 		return "", 0
 	}

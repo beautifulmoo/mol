@@ -22,11 +22,11 @@ make
 
 ```bash
 cd ~/work/mol
-go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-0" .
+go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 ```
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
-- **버전 키**(`0.4.4-1` 형태)는 `make`/`make build` 시 `scripts/build-version.sh`(git describe)로 `main.VersionKey`에 주입된다. 덮어쓰기: `make build VERSION_KEY=0.4.4-99`.
+- **버전 키**는 `make`/`make build` 시 `scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
 
 ## 배포
 

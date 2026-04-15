@@ -374,18 +374,16 @@
           doApplyToHost(applicableVersion);
           return;
         }
-        // 실행 파일+config 선택된 경우: 로컬에 저장하지 않고 원격으로만 전송 (multipart apply-update)
-        var execFileInput = el('upload-exec');
-        var configEditor = el('upload-config-editor');
-        if (!execFileInput || !execFileInput.files[0] || !configEditor || !configEditor.value.trim()) {
-          if (summary) summary.textContent = '실행 파일과 config.yaml을 선택하세요.';
+        // tar.gz 번들 선택 시: 로컬 스테이징 없이 원격으로만 전송 (multipart apply-update)
+        var bundleInput = el('upload-bundle');
+        if (!bundleInput || !bundleInput.files[0]) {
+          if (summary) summary.textContent = '원격 적용할 tar.gz 번들을 선택하세요.';
           recheckApplyButton();
           return;
         }
         var formData = new FormData();
         formData.append('ip', ip);
-        formData.append('agent', execFileInput.files[0]);
-        formData.append('config', new Blob([configEditor.value], { type: 'text/yaml' }), 'config.yaml');
+        formData.append('bundle', bundleInput.files[0]);
         showCardUpdating(cardEl, true);
         fetch(API_BASE + '/apply-update', {
           method: 'POST',
@@ -853,10 +851,8 @@
   }
 
   function hasUploadableSelection() {
-    var execFileSelected = el('upload-exec') && el('upload-exec').files && el('upload-exec').files[0];
-    var configEditor = el('upload-config-editor');
-    var configHas = configEditor && configEditor.value.trim();
-    return !!(execFileSelected && configHas);
+    var bundle = el('upload-bundle');
+    return !!(bundle && bundle.files && bundle.files[0]);
   }
 
   function updateUploadButtonState() {
@@ -866,55 +862,25 @@
     updateAllHostApplyButtons();
   }
 
-  function loadConfigIntoEditor(file, callback) {
-    var editor = el('upload-config-editor');
-    if (!editor) { if (callback) callback(); return; }
-    if (!file) {
-      editor.value = '';
-      if (callback) callback();
-      return;
-    }
-    var reader = new FileReader();
-    reader.onload = function () {
-      editor.value = typeof reader.result === 'string' ? reader.result : '';
-      if (callback) callback();
-    };
-    reader.onerror = function () {
-      editor.value = '';
-      if (callback) callback();
-    };
-    reader.readAsText(file, 'UTF-8');
-  }
-
   function resetUploadForm() {
-    var execFileInput = el('upload-exec');
-    var configInput = el('upload-config');
-    if (execFileInput) { execFileInput.value = ''; }
-    if (configInput) { configInput.value = ''; }
-    var editor = el('upload-config-editor');
-    if (editor) editor.value = '';
+    var bundleInput = el('upload-bundle');
+    if (bundleInput) { bundleInput.value = ''; }
     var uploadBtn = el('upload-btn');
     if (uploadBtn) uploadBtn.disabled = true;
     updateAllHostApplyButtons();
   }
 
   function doUpload() {
-    var execFileInput = el('upload-exec');
-    var configEditor = el('upload-config-editor');
+    var bundleInput = el('upload-bundle');
     var status = el('upload-status');
     var applyBtn = el('apply-update-btn');
-    if (!execFileInput || !execFileInput.files[0]) {
-      status.textContent = '실행 파일을 선택하세요.';
-      return;
-    }
-    if (!configEditor || !configEditor.value.trim()) {
-      status.textContent = 'config.yaml을 선택하거나 내용을 입력하세요.';
+    if (!bundleInput || !bundleInput.files[0]) {
+      status.textContent = 'tar.gz 번들 파일을 선택하세요.';
       return;
     }
     var formData = new FormData();
-    formData.append('agent', execFileInput.files[0]);
-    formData.append('config', new Blob([configEditor.value], { type: 'text/yaml' }), 'config.yaml');
-    status.textContent = '업로드 중…';
+    formData.append('bundle', bundleInput.files[0]);
+    status.textContent = '업로드 중(번들 검증)…';
     fetch(API_BASE + '/upload', {
       method: 'POST',
       body: formData
@@ -1298,15 +1264,7 @@
   el('apply-update-btn').addEventListener('click', doApplyUpdate);
   el('reset-selection-btn').addEventListener('click', resetUploadForm);
   el('remove-upload-btn').addEventListener('click', doRemoveUpload);
-  el('upload-exec').addEventListener('change', updateUploadButtonState);
-  el('upload-config').addEventListener('change', function () {
-    var configInput = el('upload-config');
-    var file = configInput && configInput.files && configInput.files[0];
-    loadConfigIntoEditor(file, function () {
-      updateUploadButtonState();
-    });
-  });
-  el('upload-config-editor').addEventListener('input', updateUploadButtonState);
+  el('upload-bundle').addEventListener('change', updateUploadButtonState);
 
   resetUploadForm();
   fetchUpdateStatus();

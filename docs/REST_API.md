@@ -60,10 +60,12 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **POST** | `{API}/upload` | **multipart/form-data** (최대 64MB): 필드 **`agent`** (실행 파일), **`config`** (config.yaml). | **200** `success`, `data`: `{ "version": "<버전 키>" }`. 검증 실패 **400** `fail`. |
+| **POST** | `{API}/upload` | **multipart/form-data**: 필드 **`bundle`** — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + 에이전트 + config 등, `scripts/pack-agent-tarball.sh` 참고). 본문 상한은 설정 `Maintenance.MaxUploadBytes`(기본 64MiB). | **200** `success`, `data`: `{ "version": "<버전 키>" }`. 검증 실패 **400** `fail`. |
 | **POST** | `{API}/upload/remove` | **Body JSON**: `{ "version": "<버전 키>" }` — 스테이징 디렉터리만 삭제. | **200** `success` / `fail`. |
 | **GET** | `{API}/update-status` | **Query**: `ip` (선택). 비어 있거나 `self`면 **이 서버**의 `current`와 로컬 스테이징을 비교. **원격 IP**면 해당 호스트 `GET .../self`의 `version`과 **이 서버의 로컬 스테이징**을 비교해 원격에 적용 가능한지 판단. | **200** `success`, `data`: 로컬만일 때 `current_version`, 스테이징 `staging_versions`, `can_apply`, `apply_version`, `remove_version`, `update_in_progress`. 원격 `ip`일 때 추가로 `remote_ip`, `remote_current_version`(원격 현재 버전 키), `can_apply`/`apply_version`은 **원격 기준**으로 채움. 원격 조회 실패 시 `fail`. |
-| **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>"}` — 로컬이면 스테이징/versions에서 적용·`systemd-run` 비동기, 원격이면 해당 호스트로 업로드 API 후 apply. (2) **multipart/form-data** `ip`(필수, 원격), `agent`, `config` — 원격에만 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
+| **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>"}` — 로컬이면 스테이징/versions에서 적용·`systemd-run` 비동기, 원격이면 해당 호스트로 업로드 API 후 apply. (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
+
+업로드 성공 시 스테이징 `{DeployBase}/staging/<버전 키>/` 에는 풀린 에이전트·`config.yaml` 외에 **원본 번들**이 `upload.bundle.tar.gz` 로 함께 저장된다. 로컬 적용으로 `versions/<키>/` 로 복사될 때도 이 파일이 있으면 같이 복사된다. 원격 `apply-update`(JSON)는 `POST .../upload` 전송 시 이 파일이 있으면 **재압축하지 않고 그대로** 보내며, 없으면(구 스테이징 등) 바이너리·config만으로 최소 번들을 만든다.
 
 ---
 
@@ -116,30 +118,22 @@ curl -sS -X POST "${BASE}${API}/service-control" \
 
 ### 업로드 `POST .../upload` (multipart)
 
-실행 파일 필드명은 반드시 **`agent`**, config는 **`config`**. (동일 필드명이 **`POST .../apply-update`** 원격 multipart에도 적용된다.)
+필드 **`bundle`** 하나에 **tar.gz** 배포 번들을 첨부한다(`packaging/contrabass.manifest.yaml.template`, `scripts/pack-agent-tarball.sh`). 원격 전용 **`POST .../apply-update`** multipart도 동일하게 **`ip`** + **`bundle`**.
 
 #### curl
 
-`-F '필드명=@파일경로'` 에서 **`@` 뒤**는 **로컬 디스크에 있는 파일의 경로**이다. curl이 그 파일을 읽어 multipart 한 파트로 붙인다. 예시의 `/path/to/...` 는 **본인 PC의 실제 경로**로 바꾼다.
-
-- **Windows**: Git Bash 등에서는 `C:/Users/이름/...` 또는 `/c/Users/...` 형식이 안전한 경우가 많다. PowerShell에서는 `curl.exe`를 쓰고 `-F "agent=@C:\work\agent"` 처럼 **경로를 따옴표로 감싸** 백슬래시 이스케이프에 주의한다.
+`-F 'bundle=@파일경로'` — 번들은 로컬에서 `make` 후 `./scripts/pack-agent-tarball.sh` 로 만든 `.tar.gz` 등.
 
 ```bash
 curl -sS -X POST "${BASE}${API}/upload" \
-  -F 'agent=@/path/to/contrabass-moleU' \
-  -F 'config=@/path/to/config.yaml'
+  -F 'bundle=@/path/to/contrabass-agent-0.4.4-1-gabc1234.tar.gz'
 ```
 
-성공 시 `data.version`에 버전 키(예: `0.4.4-10`)가 온다.
+성공 시 `data.version`에 버전 키가 온다.
 
 #### Postman
 
-경로 문자열을 직접 넣지 않는다. **Body → form-data** 에서:
-
-1. **Key** `agent` — 타입을 **File**로 바꾼 뒤 **Select Files** 로 실행 파일 선택  
-2. **Key** `config` — 타입 **File** — `config.yaml` 선택  
-
-URL만 `http://127.0.0.1:8889/api/v1/upload` 등으로 맞추고 **Send** 하면 된다. OS가 Windows여도 **파일 선택 대화상자**가 경로를 처리한다.
+**Body → form-data**: **Key** `bundle`, 타입 **File**, tar.gz 선택.
 
 #### curl vs Postman 요약
 

@@ -28,20 +28,12 @@
     </div>
     <aside class="update-section">
       <h2>업데이트</h2>
-      <p class="update-desc">에이전트 실행 파일(contrabass-moleU)과 config.yaml을 업로드하면 config에서 버전을 읽어 <code>/var/lib/contrabass/mole/versions/{버전}</code>에 저장됩니다. 「업데이트 적용」을 누르면 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>를 <code>{deploy_base}/current/</code>에 풀어 쓴 뒤 <code>systemd-run --unit=contrabass-mole-update</code> 로 <code>current/update.sh {버전}</code>이 실행되어 서비스가 재시작됩니다.</p>
+      <p class="update-desc">배포 번들(<strong>tar.gz</strong>: <code>contrabass.manifest.yaml</code> + 에이전트 + config 등)을 한 파일로 업로드합니다. 로컬에서 패키지를 만들려면 저장소의 <code>scripts/pack-agent-tarball.sh</code> 를 사용하세요. 스테이징 후 「업데이트 적용」으로 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>가 <code>{deploy_base}/current/</code>에 기록되고 <code>systemd-run --unit=contrabass-mole-update</code> 로 적용됩니다.</p>
       <div class="update-form">
         <div class="update-fields">
           <div class="update-file-row">
-            <label for="upload-exec">실행 파일 (contrabass-moleU)</label>
-            <input type="file" id="upload-exec" accept="application/octet-stream">
-          </div>
-          <div class="update-file-row">
-            <label for="upload-config">config.yaml</label>
-            <input type="file" id="upload-config" accept=".yaml,.yml,text/yaml,text/plain">
-          </div>
-          <div class="update-config-editor-wrap">
-            <label for="upload-config-editor" class="editor-label">config.yaml 내용 수정 (버전 등)</label>
-            <textarea id="upload-config-editor" class="config-editor" placeholder="config.yaml 파일을 선택하면 내용이 여기에 표시됩니다. 수정 후 업로드하면 수정된 내용이 반영됩니다." spellcheck="false"></textarea>
+            <label for="upload-bundle">배포 번들 (tar.gz)</label>
+            <input type="file" id="upload-bundle" accept=".gz,.tgz,application/gzip,application/x-gzip">
           </div>
         </div>
         <div class="update-actions">

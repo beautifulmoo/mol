@@ -1,0 +1,24 @@
+# Contrabass agent deployment bundle — manifest template for tar.gz packages.
+# - Paths are relative to the archive root (flat ./name layout; subdirs allowed if paths match).
+# - The two TOKEN lines below are substituted by scripts/pack-agent-tarball.sh (64-char hex).
+#   Hand-made bundles: set sha256 from `sha256sum` on each file.
+# - See packaging/contrabass.manifest.example.yaml for a filled-out sample.
+
+manifestVersion: 1
+
+bundle:
+  format: tar.gz
+
+agent:
+  path: ./contrabass-moleU
+  sha256: "__AGENT_SHA256__"
+
+config:
+  path: ./config.yaml
+  sha256: "__CONFIG_SHA256__"
+
+# Optional: full file list for audit (must match archive members except this manifest file name).
+# Uncomment and extend when you add more payload files:
+# files:
+#   - path: ./contrabass-moleU
+#   - path: ./config.yaml

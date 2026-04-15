@@ -279,12 +279,11 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 #### 5.5.3 업로드·삭제·적용
 
 - **업로드** `POST {serverUrl}/api/v1/upload`  
-  - **multipart**: 필드명 **`agent`**(실행 파일), **`config`**(config.yaml).  
-  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. **`multipart.Reader`**로 파트를 순회하며 **`agent`** 내용은 **메모리에 통째로 올리지 않고 디스크로 스트리밍** 저장한다(임시: `{DeployBase}/.incoming-<고유>/`). 검증·`clearStaging` 후 **`staging/<버전 키>/`** 로 옮긴다. **`config`** 파트는 구현상 소량 상한(예: 4 MiB)만 메모리에 둔다.  
+  - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + manifest에 명시된 에이전트·config 등; `packaging/contrabass.manifest.yaml.template`, `scripts/pack-agent-tarball.sh` 참고).  
+  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **config.yaml** 구조체 파싱, **에이전트 ELF**·`--version`(§12) 검증을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 `config.yaml`을 둔다.  
   - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 `--version` 실행(5초), 출력이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`, 기본 `contrabass-moleU`)로 시작·종료 0.  
   - **config 검증**: `internal/config` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
-  - **버전 키(스테이징 디렉터리명)**: 업로드된 **실행 파일**을 임시 경로에서 **`--version`** 실행하여, 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 읽는다. config에는 버전을 두지 않는다.  
-  - **웹 편집**: 편집 영역 내용이 그대로 전송·스테이징에 반영된다.  
+  - **버전 키(스테이징 디렉터리명)**: 추출·검증된 **실행 파일**을 임시 경로에서 **`--version`** 실행하여, 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 읽는다. config에는 버전을 두지 않는다.  
   - **성공**: `{ "status": "success", "data": { "version": "<버전 키>" } }`.
 - **업로드 삭제** `POST .../upload/remove` — Body `{ "version": "<버전 키>" }`. **스테이징** 만 삭제; `versions/` 는 유지.
 - **적용 (로컬)** `POST .../apply-update`, Body `{ "version": "<버전 키>", "ip": "self" 또는 생략 }`  
@@ -294,7 +293,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - 내장 `update.sh`·`rollback.sh` 내용을 **`{DeployBase}/current/update.sh`**, `.../rollback.sh` 로 쓴 뒤(실제 파일은 `current` 가 가리키는 `versions/<현재 버전 키>/` 아래),  
     `systemd-run --unit=contrabass-mole-update --property=RemainAfterExit=yes /bin/bash <그 경로>/update.sh <적용할 버전 키>`  
   - 응답은 즉시 성공(백그라운드 적용). 에이전트는 root로 동작·sudo 없음.
-- **적용 (원격)**: 대상 호스트 에이전트 HTTP로 (1) upload (2) `apply-update` with `ip: "self"` — 로컬과 동일하게 원격이 `current` 아래에 스크립트를 풀고 실행한다. JSON·multipart(원격) 흐름은 기존과 동일하되, **`version` 은 항상 버전 키 문자열**이다. **multipart 원격 적용** 요청도 동일 **`MaxUploadBytes`** 및 **`agent`** 디스크 스트리밍 규칙을 따른다(필드 **`ip`** 는 multipart 파트로 읽음).
+- **적용 (원격)**: 대상 호스트 에이전트 HTTP로 (1) upload (2) `apply-update` with `ip: "self"` — 로컬과 동일하게 원격이 `current` 아래에 스크립트를 풀고 실행한다. JSON·multipart(원격) 흐름은 기존과 동일하되, **`version` 은 항상 버전 키 문자열**이다. **multipart 원격 적용**은 필드 **`ip`** + **`bundle`**(tar.gz)이며, 동일 **`MaxUploadBytes`** 상한을 따른다.
 
 #### 5.5.4 업데이트 상태·기록·설정·헬스
 
@@ -373,13 +372,13 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 6.3 업데이트 (업로드·적용·로그)
 
-- **업로드**: 실행 파일(`BinaryName`)과 config.yaml을 선택한 뒤 `POST /api/v1/upload` (multipart: **`agent`**, `config`). **버전 키**는 업로드된 바이너리의 **`--version`** 출력에서 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버에서 **실행 파일 검증**(ELF 형식 + `--version` 실행, §12)과 **config.yaml 검증**(구조체 파싱, 실패 시 항목/줄/필요 타입 안내)을 수행하며, 잘못된 파일·설정이면 거절하고 에러 메시지를 반환한다.  
-  - **config.yaml 수정 후 업로드**: config 파일을 선택하면 내용이 **편집 영역**(textarea)에 표시된다. 사용자가 버전, broadcast 주소 등 설정을 수정한 뒤 업로드하면 **수정된 내용**이 서버로 전송되어 스테이징에 저장된다. 원본 파일을 수정 없이 올릴 수도 있고, 편집만 하고 파일을 다시 선택하지 않아도 업로드 시 편집 영역 내용이 사용된다.
+- **업로드**: `scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리의 **`--version`** 출력에서 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + `--version`, §12)·**config.yaml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다.  
+  - **config 변경**: 번들을 만들기 전에 로컬에서 `config.yaml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
 - **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, 적용 버튼으로 `POST /api/v1/apply-update` (`{ "version": "..." }`). 성공 시 에이전트(`contrabass-mole.service`) 재시작으로 연결이 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 약 4초 후부터 `GET /api/v1/self`를 **2초 간격 최대 15회** 폴링하여 서버가 다시 뜨면 **업데이트 기록·config.yaml·설치된 버전·서비스 상태·update-status**를 모두 다시 불러와 현행화한다. 대기 중 업데이트 로그는 **2초 간격**으로 조용히 갱신한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다. 실패 시 에러 메시지.
 - **적용 (원격)**  
   - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 스테이징(또는 세션 내 업로드된 **버전 키**)이 있고, 그 값이 **해당 호스트에 표시된 버전 키와 문자열 기준으로 다를 때** 적용 가능으로 본다(서버의 `update-status` 판단과 같은 버전 키 체계). 카드에는 `data-host-version`에 버전 키를 저장한다.  
   - **버튼 스타일**: 활성화 시 **초록색** 계열(로컬 적용 버튼과 동일)로 표시하여 적용 가능 상태를 직관적으로 구분한다.  
-  - **클릭 동작**: 적용할 버전은 **스테이징에 올라간 버전**(또는 세션 내 업로드 버전)을 사용한다. 파일 선택이 없어도 스테이징에 버전이 있으면 JSON `{ version, ip }` 로 로컬 서버에 보내며, 서버는 원격 에이전트의 upload API·apply-update API를 호출하여 배포한다. 실행 파일·config만 선택된 경우에는 multipart `ip`, **`agent`**, `config` 로 전송하면 서버가 원격 upload API로 전달한 뒤 apply-update를 호출한다.  
+  - **클릭 동작**: 적용할 버전은 **스테이징에 올라간 버전**(또는 세션 내 업로드 버전)을 사용한다. 파일 선택이 없어도 스테이징에 버전이 있으면 JSON `{ version, ip }` 로 로컬 서버에 보내며, 서버는 원격 에이전트의 upload API·apply-update API를 호출하여 배포한다. **번들 파일을 함께 선택한 경우**에는 multipart `ip`, **`bundle`** 로 전송하여 서버가 원격에 tar.gz 업로드 후 apply-update를 호출한다(스테이징 없이 원격만 갱신).  
   - **적용 성공 후 카드 버전 표시**: JSON 적용 시에는 요청에 넣은 `version`을, multipart 적용 시에는 서버 성공 메시지(예: "원격 ... 에 버전 X 적용 완료")에서 파싱한 버전을 사용하여, **host-info 응답을 기다리지 않고** 해당 호스트 카드의 버전 표시를 즉시 갱신한다. 이후 지연 후 host-info가 성공하면 전체 호스트 정보로 한 번 더 갱신된다.  
   - **툴팁**:  
     - 비활성·스테이징에 파일 없음: "먼저 업데이트 영역에서 버전을 업로드하세요"  
@@ -387,7 +386,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
     - 활성: "x.x.x-y 버전으로 업데이트 가능합니다" (스테이징의 버전 키; 시맨틱·패치 표기)
 - **스테이징 버전 표시**: 「업로드된 버전 삭제」 버튼 옆에 현재 스테이징에 올라간 버전(예: "스테이징: 1.2.3")을 표시한다. 스테이징이 비어 있으면 표시하지 않는다.
 - **업데이트 인디케이터**: 로컬·원격 카드 모두, 업데이트 적용이 진행 중일 때 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. **로컬**은 `/self` 폴링 성공(또는 폴링 종료) 후 숨긴다. **원격**은 host-info 폴링·패널 갱신 완료 후 숨긴다. 요청 실패 시 즉시 숨긴다.
-- **파일 선택 초기화**: 실행 파일·config 선택 및 편집 내용만 초기화. 스테이징/versions 에 올라간 버전은 유지.
+- **파일 선택 초기화**: 번들 파일 선택만 초기화. 스테이징/versions 에 올라간 버전은 유지.
 - **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제.
 - **업데이트 기록(로그)**: `GET /api/v1/update-log` 로 최근 5건을 표시. **로컬 적용 진행 중**에는 **2초 간격**으로 조용히 폴링한다(완료 후 위 “적용 (로컬)” 흐름에서 전체 패널 갱신과 함께 최종 반영). **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다.
 - **설치된 버전(versions)**: `GET /api/v1/versions/list` 로 목록을 가져오며, **서버 정렬 순서**(5.6)대로 표시한다. **current**·**previous**는 뱃지 및 삭제 비활성화. 목록은 2열·세로 우선으로 표시. 선택 버전만 `POST /api/v1/versions/remove` 로 삭제.
@@ -536,7 +535,7 @@ Maintenance:
 | 임시 업데이트 유닛 | **`contrabass-mole-update.service`** — `systemd-run --unit=contrabass-mole-update` 로 `current/update.sh` 만 실행하는 **transient** 작업용. 메인 유닛과 별개이며 외부 연동용 이름이 아님. 코드 상수: `appmeta.UpdateTransientUnitStem` / `appmeta.UpdateTransientUnit` |
 | Discovery `service` 문자열 | 기본 **`Mole-Discovery`** (`Maintenance.DiscoveryServiceName`, `internal/config.DefaultDiscoveryServiceName`) |
 | 설정 파일 지정 | **` -cfg <경로>`** 필수로 HTTP+Discovery 기동. **`MOL_CONFIG` 환경 변수는 사용하지 않음** (`config.Load` 빈 경로 시 현재 디렉터리 `config.yaml`) |
-| 업로드 multipart | 실행 파일 필드명 **`agent`**, 파일명은 클라이언트가 보낸 이름(서버는 `appmeta.BinaryName` 권장). `config` 필드는 config.yaml |
+| 업로드 multipart | 필드 **`bundle`** — tar.gz( manifest + 에이전트 + config 등). 스테이징에 기록되는 실행 파일명은 항상 **`BinaryName`** |
 | 배포 디렉터리 내 실행 파일 | `staging/`·`versions/<버전 키>/` 아래 파일명은 **`BinaryName`** (과거 단일 바이너리 파일명 규칙은 사용하지 않음). `update.sh` 도 동일 파일명을 기대 |
 | `GET /version` | 한 줄: **`<BinaryName> <버전 키>`** (버전 키는 `git describe` 전체 문자열일 수 있음) |
 | 업로드 시 `--version` 검증 | 표준 출력 한 줄이 **`<BinaryName> `** 로 시작해야 함 (`maintenance/server.validateAgentBinary`) |

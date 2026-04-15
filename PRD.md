@@ -246,18 +246,23 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   ├── current -> versions/0.4.0-2 # 심볼릭 링크, 현재 실행 버전(버전 키)
   ├── previous -> versions/0.4.0-1
   ├── update_history.log          # 업데이트·롤백 기록 (맨 앞에 추가, 최근 5건을 웹에 표시)
-  ├── staging/                    # 업로드 API로만 채움, 적용 시 versions로 복사 가능
+  ├── staging/                    # 업로드 API로만 채움; 원본 번들·풀린 트리 보관
   │   └── <버전 키>/
   │       ├── contrabass-moleU
-  │       └── config.yaml
+  │       ├── config.yaml
+  │       ├── upload.bundle.tar.gz   # 클라이언트가 POST 한 tar.gz 원본(원격 재전송 시 우선 사용)
+  │       └── (manifest에 따라 풀린 기타 파일들… 향후 확장)
   └── versions/
-      └── <버전 키>/
+      └── <버전 키>/               # 로컬 적용 후: 스테이징 트리 복사본에서 upload.bundle.tar.gz 만 제외
           ├── contrabass-moleU
-          └── config.yaml
+          ├── config.yaml
+          └── (기타 풀린 파일들…; 원본 tar.gz 없음 — 심볼릭 링크 `current` 대상·update.sh 가 사용)
   ```
 
 - **스테이징**: 업로드는 **실행 중인** `versions/<버전 키>/` 가 아닌 **`{DeployBase}/staging/<버전 키>/`** 에만 저장하여 "text file busy" 를 피한다. 적용 시 소스는 **스테이징 우선**, 없으면 **versions/**.
-- **스테이징 정리**: 자동 삭제하지 않는다. 로컬 적용 후에도 스테이징을 남겨 같은 버전 키로 원격 적용을 반복할 수 있다. 삭제는 웹 「업로드된 버전 삭제」로 **스테이징만** 수동 삭제한다.
+- **원본 번들 보관**: 업로드 성공 시 **`upload.bundle.tar.gz`** 라는 이름으로 **클라이언트가 보낸 tar.gz 전체**를 스테이징에 함께 둔다. manifest·파일 개수가 늘어도 **원격에 동일 바이트를 다시 보낼 때** 서버가 번들 형식을 하드코딩하지 않도록 하기 위함이다. **`versions/<버전 키>/`에는 원본 번들을 두지 않는다** — 설치 트리는 실행·롤백·향후 임의 버전을 `current`로 지정하는 용도로 **풀린 파일만**이면 되며, 원본 아카이브는 필수 아님.
+- **스테이징 → `versions/` (로컬 적용 직전)**: **`staging/<버전 키>/` 디렉터리 전체를 `versions/<버전 키>/`로 복사**한 뒤, **`upload.bundle.tar.gz`만 삭제**한다. 번들에 에이전트·config 외 파일이 추가되어도 동일 규칙으로 설치 트리에 반영된다.
+- **스테이징 정리**: 자동 삭제하지 않는다. 로컬 적용 후에도 스테이징을 남겨 같은 버전 키로 원격 적용을 반복할 수 있다(원본 번들이 스테이징에 남아 있으면 원격 `POST .../upload`에 그대로 실을 수 있음). 삭제는 웹 「업로드된 버전 삭제」로 **스테이징만** 수동 삭제한다.
 
 #### 5.5.2 update.sh·rollback.sh (소스·내장·실행 위치)
 
@@ -279,8 +284,8 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 #### 5.5.3 업로드·삭제·적용
 
 - **업로드** `POST {serverUrl}/api/v1/upload`  
-  - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + manifest에 명시된 에이전트·config 등; `packaging/contrabass.manifest.yaml.template`, `scripts/pack-agent-tarball.sh` 참고).  
-  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **config.yaml** 구조체 파싱, **에이전트 ELF**·`--version`(§12) 검증을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 `config.yaml`을 둔다.  
+  - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + manifest에 명시된 에이전트·config 등; `packaging/contrabass.manifest.yaml.template`, `scripts/pack-agent-tarball.sh` 참고). **브라우저·CLI·다른 에이전트가 원격에 배포할 때도 동일 경로·동일 필드명**으로 호출한다.  
+  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, GNU tar의 `./` 디렉터리 항목 등은 건너뜀, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **config.yaml** 구조체 파싱, **에이전트 ELF**·`--version`(§12) 검증을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 `config.yaml`을 두고, **요청 본문으로 받은 tar.gz 원본 전체**를 **`upload.bundle.tar.gz`** 로 저장한다(원격 재전송·manifest 확장 시 서버가 번들 레이아웃을 재하드코딩하지 않도록).  
   - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 `--version` 실행(5초), 출력이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`, 기본 `contrabass-moleU`)로 시작·종료 0.  
   - **config 검증**: `internal/config` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
   - **버전 키(스테이징 디렉터리명)**: 추출·검증된 **실행 파일**을 임시 경로에서 **`--version`** 실행하여, 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 읽는다. config에는 버전을 두지 않는다.  
@@ -288,12 +293,14 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **업로드 삭제** `POST .../upload/remove` — Body `{ "version": "<버전 키>" }`. **스테이징** 만 삭제; `versions/` 는 유지.
 - **적용 (로컬)** `POST .../apply-update`, Body `{ "version": "<버전 키>", "ip": "self" 또는 생략 }`  
   - 소스: 스테이징 우선, 없으면 `versions/`.  
-  - 스테이징에만 있으면 `versions/` 로 복사 후 진행.  
+  - 스테이징에만 있으면 **`staging/<버전 키>/` 전체를 `versions/<버전 키>/`로 복사**한 뒤 **`upload.bundle.tar.gz`만 제거**하고 `update.sh` 경로로 진행한다(§5.5.1).  
   - **`{DeployBase}/current` 존재 필수**(심볼릭 링크 또는 그에 준하는 배포). 없으면 적용 불가.  
   - 내장 `update.sh`·`rollback.sh` 내용을 **`{DeployBase}/current/update.sh`**, `.../rollback.sh` 로 쓴 뒤(실제 파일은 `current` 가 가리키는 `versions/<현재 버전 키>/` 아래),  
     `systemd-run --unit=contrabass-mole-update --property=RemainAfterExit=yes /bin/bash <그 경로>/update.sh <적용할 버전 키>`  
   - 응답은 즉시 성공(백그라운드 적용). 에이전트는 root로 동작·sudo 없음.
-- **적용 (원격)**: 대상 호스트 에이전트 HTTP로 (1) upload (2) `apply-update` with `ip: "self"` — 로컬과 동일하게 원격이 `current` 아래에 스크립트를 풀고 실행한다. JSON·multipart(원격) 흐름은 기존과 동일하되, **`version` 은 항상 버전 키 문자열**이다. **multipart 원격 적용**은 필드 **`ip`** + **`bundle`**(tar.gz)이며, 동일 **`MaxUploadBytes`** 상한을 따른다.
+- **적용 (원격)**  
+  - **JSON** `{"version":"<키>","ip":"<원격 IP>"}`: 요청을 받은 서버가 **`resolveVersionDir`**로 로컬 **`staging/` 또는 `versions/`** 에서 해당 버전 디렉터리를 고른 뒤, (1) **`POST http://<원격>:<Server.HTTPPort>/api/v1/upload`** — **로컬 업로드와 동일한 API**이며, 해당 디렉터리에 **`upload.bundle.tar.gz`가 있으면 그 파일을 multipart `bundle`로 그대로 보내고**, 없으면(스테이징 삭제 후 `versions/`만 남은 경우 등) **`BinaryName` + `config.yaml`로 최소 tar.gz를 생성**해 보낸다. (2) **`POST .../apply-update`** with `{"version":"<키>","ip":"self"}`. 원격 에이전트는 로컬과 동일하게 `current` 아래에 스크립트를 풀고 실행한다. **`version`은 항상 버전 키 문자열**이다.  
+  - **multipart 원격 적용**: 필드 **`ip`** + **`bundle`**(tar.gz) — 로컬 스테이징 없이 원격에만 번들 업로드·적용. 동일 **`MaxUploadBytes`** 상한.
 
 #### 5.5.4 업데이트 상태·기록·설정·헬스
 
@@ -372,7 +379,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 6.3 업데이트 (업로드·적용·로그)
 
-- **업로드**: `scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리의 **`--version`** 출력에서 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + `--version`, §12)·**config.yaml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다.  
+- **업로드**: `scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리의 **`--version`** 출력에서 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + `--version`, §12)·**config.yaml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
   - **config 변경**: 번들을 만들기 전에 로컬에서 `config.yaml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
 - **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, 적용 버튼으로 `POST /api/v1/apply-update` (`{ "version": "..." }`). 성공 시 에이전트(`contrabass-mole.service`) 재시작으로 연결이 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 약 4초 후부터 `GET /api/v1/self`를 **2초 간격 최대 15회** 폴링하여 서버가 다시 뜨면 **업데이트 기록·config.yaml·설치된 버전·서비스 상태·update-status**를 모두 다시 불러와 현행화한다. 대기 중 업데이트 로그는 **2초 간격**으로 조용히 갱신한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다. 실패 시 에러 메시지.
 - **적용 (원격)**  
@@ -472,7 +479,7 @@ Maintenance:
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, DoDiscoveryUnicast; 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
-- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에만 저장한다. **버전 키**는 업로드된 바이너리의 `--version` 에서 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + `--version`, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용**은 원격 에이전트의 upload → apply-update(self) 와 동일 모델. `update-log`·`current-cfg` 의 프록시 동작은 기존과 같다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
+- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리의 `--version` 에서 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + `--version`, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 의 프록시 동작은 기존과 같다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
 - **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
 
@@ -535,7 +542,8 @@ Maintenance:
 | 임시 업데이트 유닛 | **`contrabass-mole-update.service`** — `systemd-run --unit=contrabass-mole-update` 로 `current/update.sh` 만 실행하는 **transient** 작업용. 메인 유닛과 별개이며 외부 연동용 이름이 아님. 코드 상수: `appmeta.UpdateTransientUnitStem` / `appmeta.UpdateTransientUnit` |
 | Discovery `service` 문자열 | 기본 **`Mole-Discovery`** (`Maintenance.DiscoveryServiceName`, `internal/config.DefaultDiscoveryServiceName`) |
 | 설정 파일 지정 | **` -cfg <경로>`** 필수로 HTTP+Discovery 기동. **`MOL_CONFIG` 환경 변수는 사용하지 않음** (`config.Load` 빈 경로 시 현재 디렉터리 `config.yaml`) |
-| 업로드 multipart | 필드 **`bundle`** — tar.gz( manifest + 에이전트 + config 등). 스테이징에 기록되는 실행 파일명은 항상 **`BinaryName`** |
+| 업로드 multipart | 필드 **`bundle`** — tar.gz(manifest + 에이전트 + config 등). 스테이징에 실행 파일명 **`BinaryName`**·`config.yaml`·원본 바이트 **`upload.bundle.tar.gz`** |
+| 원격 배포 upload | 로컬 에이전트가 호출하는 **`POST .../upload`는 업로드 API와 동일**; 소스 바이트는 스테이징의 `upload.bundle.tar.gz` 우선, 없으면 바이너리+config로 재패킹 |
 | 배포 디렉터리 내 실행 파일 | `staging/`·`versions/<버전 키>/` 아래 파일명은 **`BinaryName`** (과거 단일 바이너리 파일명 규칙은 사용하지 않음). `update.sh` 도 동일 파일명을 기대 |
 | `GET /version` | 한 줄: **`<BinaryName> <버전 키>`** (버전 키는 `git describe` 전체 문자열일 수 있음) |
 | 업로드 시 `--version` 검증 | 표준 출력 한 줄이 **`<BinaryName> `** 로 시작해야 함 (`maintenance/server.validateAgentBinary`) |

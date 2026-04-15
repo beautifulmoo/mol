@@ -675,50 +675,75 @@ func (s *Server) writeToStaging(base, version string, execReader io.Reader, conf
 	return stagingDir, nil
 }
 
-// copyStagingToVersions copies base/staging/version/ to base/versions/version/ (binary + config.yaml, chmod binary).
-// If StagedBundleFileName exists (original upload tar.gz), it is copied as well.
+// copyStagingToVersions replaces base/versions/version/ with a full copy of base/staging/version/
+// (every extracted file and subdirectory), then removes only StagedBundleFileName so versions/ holds
+// the installed tree without the original tar.gz. Future manifest-added files are included automatically.
 func (s *Server) copyStagingToVersions(base, version string) error {
 	stg := s.stagingDir(base, version)
 	ver := s.versionsDir(base, version)
+	if _, err := os.Stat(stg); err != nil {
+		return fmt.Errorf("스테이징 디렉터리: %w", err)
+	}
+	if err := os.RemoveAll(ver); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(ver, 0755); err != nil {
 		return err
 	}
-	binName := appmeta.BinaryName
-	binSrc := filepath.Join(stg, binName)
-	binDst := filepath.Join(ver, binName)
-	configSrc := filepath.Join(stg, "config.yaml")
-	configDst := filepath.Join(ver, "config.yaml")
-	data, err := os.ReadFile(binSrc)
-	if err != nil {
+	if err := copyStagingTreeInto(stg, ver); err != nil {
 		return err
 	}
-	if err := os.WriteFile(binDst, data, 0644); err != nil {
-		return err
-	}
-	if err := os.Chmod(binDst, 0755); err != nil {
-		os.Remove(binDst)
-		return err
-	}
-	data, err = os.ReadFile(configSrc)
-	if err != nil {
-		os.Remove(binDst)
-		return err
-	}
-	if err := os.WriteFile(configDst, data, 0644); err != nil {
-		os.Remove(binDst)
-		return err
-	}
-	bundleSrc := filepath.Join(stg, StagedBundleFileName)
-	if fi, statErr := os.Stat(bundleSrc); statErr == nil && !fi.IsDir() && fi.Size() > 0 {
-		raw, rerr := os.ReadFile(bundleSrc)
-		if rerr != nil {
-			return rerr
-		}
-		if err := os.WriteFile(filepath.Join(ver, StagedBundleFileName), raw, 0644); err != nil {
+	_ = os.Remove(filepath.Join(ver, StagedBundleFileName))
+	return nil
+}
+
+// copyStagingTreeInto recursively copies files and directories from stg to ver (both must exist; ver is empty).
+func copyStagingTreeInto(stg, ver string) error {
+	return filepath.WalkDir(stg, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(stg, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		dst := filepath.Join(ver, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0755)
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm()
+		if mode == 0 {
+			mode = 0644
+		}
+		return copyFileRobust(path, dst, mode)
+	})
+}
+
+func copyFileRobust(src, dst string, perm fs.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if cerr := out.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // resolveVersionDir returns the directory that contains the agent binary + config for this version: staging first, then versions.

@@ -65,7 +65,7 @@
 | **GET** | `{API}/update-status` | **Query**: `ip` (선택). 비어 있거나 `self`면 **이 서버**의 `current`와 로컬 스테이징을 비교. **원격 IP**면 해당 호스트 `GET .../self`의 `version`과 **이 서버의 로컬 스테이징**을 비교해 원격에 적용 가능한지 판단. | **200** `success`, `data`: 로컬만일 때 `current_version`, 스테이징 `staging_versions`, `can_apply`, `apply_version`, `remove_version`, `update_in_progress`. 원격 `ip`일 때 추가로 `remote_ip`, `remote_current_version`(원격 현재 버전 키), `can_apply`/`apply_version`은 **원격 기준**으로 채움. 원격 조회 실패 시 `fail`. |
 | **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>"}` — 로컬이면 스테이징/versions에서 적용·`systemd-run` 비동기, 원격이면 해당 호스트로 업로드 API 후 apply. (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
 
-업로드 성공 시 스테이징 `{DeployBase}/staging/<버전 키>/` 에는 풀린 에이전트·`config.yaml` 외에 **원본 번들**이 `upload.bundle.tar.gz` 로 함께 저장된다. 로컬 적용으로 `versions/<키>/` 로 복사될 때도 이 파일이 있으면 같이 복사된다. 원격 `apply-update`(JSON)는 `POST .../upload` 전송 시 이 파일이 있으면 **재압축하지 않고 그대로** 보내며, 없으면(구 스테이징 등) 바이너리·config만으로 최소 번들을 만든다.
+업로드 성공 시 스테이징 `{DeployBase}/staging/<버전 키>/` 에는 풀린 에이전트·`config.yaml` 외에 **원본 번들**이 `upload.bundle.tar.gz` 로 함께 저장된다. 로컬 적용으로 `versions/<키>/` 로 옮길 때는 **스테이징 디렉터리 전체를 그대로 복사**한 뒤 `upload.bundle.tar.gz`만 삭제한다(향후 번들에 추가 파일이 있어도 설치 트리에 반영됨). 원격 `apply-update`(JSON)는 스테이징이 남아 있으면 그 안의 `upload.bundle.tar.gz`를 그대로 `POST .../upload`에 실어 보내고, 스테이징만 지운 뒤 `versions/`에만 있으면 바이너리·config로 최소 번들을 만든다.
 
 ---
 

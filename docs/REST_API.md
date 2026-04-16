@@ -73,11 +73,12 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/update-log` | **Query**: `ip` (선택). 원격이면 프록시. | **200** `success`, `data`: `{ "output": "<최대 5줄>", "recent_rollback": <bool> }`. |
+| **GET** | `{API}/update-log` | **Query**: `ip` (선택). 원격이면 프록시. | **200** `success`, `data`: `{ "output": "<최대 10줄>", "recent_rollback": <bool> }`. |
 | **GET** | `{API}/current-config` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "content": "<yaml 문자열>" }`. |
 | **POST** | `{API}/current-config` | **Body JSON**: `{ "content": "<yaml>", "ip": "<선택>" }` — `ip`로 원격 저장 프록시. | **200** `success`, `data`: null(로컬 저장 성공 시). 검증 실패 `fail`. |
 | **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ] }`. |
 | **POST** | `{API}/versions/remove` | **Body JSON**: `{ "versions": ["<키>",...], "ip": "<선택>" }` | **200** `success`, `data`: 결과 메시지 문자열(삭제·제외 요약). current/previous 가리키는 버전은 삭제 안 함. |
+| **POST** | `{API}/versions/switch-current` | **Body JSON**: `{ "version": "<버전 키>", "ip": "<선택>" }` — 로컬에서 `versions/`(또는 스테이징)에 있는 버전을 **current**로 두기 위해 내장 `update.sh`를 `systemd-run`으로 실행(`apply-update` 로컬과 동일). `ip`가 원격이면 해당 호스트 API로 프록시. | **200** `success`, `data`: 안내 문자열 / `fail`. |
 
 ---
 

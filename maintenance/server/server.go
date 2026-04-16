@@ -293,6 +293,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/current-config", s.handleCurrentConfig)
 	mux.HandleFunc(s.apiPrefix+"/versions/list", s.handleVersionsList)
 	mux.HandleFunc(s.apiPrefix+"/versions/remove", s.handleVersionsRemove)
+	mux.HandleFunc(s.apiPrefix+"/versions/switch-current", s.handleVersionsSwitchCurrent)
 	// Web (static) — register client-runtime before the strip-prefix file server so it is not shadowed.
 	mux.HandleFunc(s.webPrefix+"/client-runtime.js", s.handleClientRuntime)
 	webHandler := http.StripPrefix(s.webPrefix, http.FileServer(http.FS(s.webFS)))
@@ -675,12 +676,12 @@ func (s *Server) writeToStaging(base, version string, execReader io.Reader, conf
 	return stagingDir, nil
 }
 
-// copyStagingToVersions replaces base/versions/version/ with a full copy of base/staging/version/
+// copyStagingToVersions replaces versionsBase()/versions/version/ with a full copy of base/staging/version/
 // (every extracted file and subdirectory), then removes only StagedBundleFileName so versions/ holds
 // the installed tree without the original tar.gz. Future manifest-added files are included automatically.
 func (s *Server) copyStagingToVersions(base, version string) error {
 	stg := s.stagingDir(base, version)
-	ver := s.versionsDir(base, version)
+	ver := filepath.Join(s.versionsBase(), "versions", version)
 	if _, err := os.Stat(stg); err != nil {
 		return fmt.Errorf("스테이징 디렉터리: %w", err)
 	}
@@ -746,13 +747,13 @@ func copyFileRobust(src, dst string, perm fs.FileMode) error {
 	return err
 }
 
-// resolveVersionDir returns the directory that contains the agent binary + config for this version: staging first, then versions.
+// resolveVersionDir returns the directory that contains the agent binary + config for this version: staging first (under base/deploy), then versions/ under versionsBase() (same tree as GET /versions/list).
 func (s *Server) resolveVersionDir(base, version string) (string, bool) {
 	stg := s.stagingDir(base, version)
 	if dirHasAgentBinary(stg) {
 		return stg, true // from staging
 	}
-	ver := s.versionsDir(base, version)
+	ver := filepath.Join(s.versionsBase(), "versions", version)
 	if dirHasAgentBinary(ver) {
 		return ver, false // from versions
 	}
@@ -981,6 +982,48 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 }
 
 // postApplyUpdateToTarget tells the target agent to apply the given version from its staging (ip=self).
+// runUpdateViaEmbeddedScript writes embedded update.sh/rollback.sh under current/ and starts systemd-run
+// with update.sh <version>, matching internal/updatescripts/update.sh behavior. base is DeployBase.
+func (s *Server) runUpdateViaEmbeddedScript(base, version string) error {
+	versionDir, fromStaging := s.resolveVersionDir(base, version)
+	if versionDir == "" {
+		return fmt.Errorf("해당 버전이 스테이징 또는 versions에 없습니다: %s", version)
+	}
+	if fromStaging {
+		if err := s.copyStagingToVersions(base, version); err != nil {
+			return fmt.Errorf("스테이징→versions 복사 실패: %w", err)
+		}
+	}
+	currentPath := filepath.Join(base, "current")
+	if _, err := os.Stat(currentPath); err != nil {
+		return fmt.Errorf("배포 루트에 current가 없습니다. 업데이트를 적용할 수 없습니다: %s", currentPath)
+	}
+	updateScript := filepath.Join(currentPath, "update.sh")
+	rollbackScript := filepath.Join(currentPath, "rollback.sh")
+	if err := os.WriteFile(updateScript, []byte(updatescripts.UpdateSh), 0755); err != nil {
+		return fmt.Errorf("update.sh 쓰기 실패: %w", err)
+	}
+	if err := os.WriteFile(rollbackScript, []byte(updatescripts.RollbackSh), 0755); err != nil {
+		_ = os.Remove(updateScript)
+		return fmt.Errorf("rollback.sh 쓰기 실패: %w", err)
+	}
+	exec.Command("systemctl", "reset-failed", appmeta.UpdateTransientUnit).Run()
+	exec.Command("systemctl", "stop", appmeta.UpdateTransientUnit).Run()
+	cmd := exec.Command("systemd-run",
+		"--unit="+appmeta.UpdateTransientUnitStem,
+		"--property=RemainAfterExit=yes",
+		"/bin/bash", updateScript, version)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(updateScript)
+		_ = os.Remove(rollbackScript)
+		return fmt.Errorf("systemd-run(update.sh) 실패: %w", err)
+	}
+	log.Printf("runUpdateViaEmbeddedScript: systemd-run --unit=%s /bin/bash %s %s", appmeta.UpdateTransientUnitStem, updateScript, version)
+	return nil
+}
+
 func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version string) (status string, data interface{}, err error) {
 	applyURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/apply-update"
 	payload, err := json.Marshal(map[string]string{"version": version, "ip": "self"})
@@ -1123,7 +1166,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versionDir, fromStaging := s.resolveVersionDir(base, version)
+	versionDir, _ := s.resolveVersionDir(base, version)
 	if versionDir == "" {
 		s.send(w, "fail", "해당 버전이 스테이징 또는 versions에 없습니다: "+version, http.StatusOK)
 		return
@@ -1131,48 +1174,10 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	ip := strings.TrimSpace(req.IP)
 	if ip == "" || ip == "self" {
-		// Local update: if only in staging, copy to versions then run update.sh; after success remove staging
-		if fromStaging {
-			if err := s.copyStagingToVersions(base, version); err != nil {
-				s.send(w, "fail", "스테이징→versions 복사 실패: "+err.Error(), http.StatusOK)
-				return
-			}
-		}
-		currentPath := filepath.Join(base, "current")
-		if _, err := os.Stat(currentPath); err != nil {
-			s.send(w, "fail", "배포 루트에 current가 없습니다. 업데이트를 적용할 수 없습니다: "+currentPath, http.StatusOK)
+		if err := s.runUpdateViaEmbeddedScript(base, version); err != nil {
+			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
-		updateScript := filepath.Join(currentPath, "update.sh")
-		rollbackScript := filepath.Join(currentPath, "rollback.sh")
-		if err := os.WriteFile(updateScript, []byte(updatescripts.UpdateSh), 0755); err != nil {
-			s.send(w, "fail", "update.sh 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := os.WriteFile(rollbackScript, []byte(updatescripts.RollbackSh), 0755); err != nil {
-			_ = os.Remove(updateScript)
-			s.send(w, "fail", "rollback.sh 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		exec.Command("systemctl", "reset-failed", appmeta.UpdateTransientUnit).Run()
-		exec.Command("systemctl", "stop", appmeta.UpdateTransientUnit).Run()
-		go func() {
-			cmd := exec.Command("systemd-run",
-				"--unit="+appmeta.UpdateTransientUnitStem,
-				"--property=RemainAfterExit=yes",
-				"/bin/bash", updateScript, version)
-			cmd.Stdout = io.Discard
-			cmd.Stderr = io.Discard
-			if err := cmd.Run(); err != nil {
-				log.Printf("apply-update: systemd-run failed: %v", err)
-				_ = os.Remove(updateScript)
-				_ = os.Remove(rollbackScript)
-				return
-			}
-			// 스테이징은 자동 삭제하지 않음. 원격 업데이트에 재사용할 수 있도록 남겨 두고, 사용자가 「업로드된 버전 삭제」로 수동 삭제.
-			// update.sh / rollback.sh 는 스크립트 종료 시 스스로 삭제한다.
-		}()
-		log.Printf("apply-update: systemd-run --unit=%s /bin/bash %s %s", appmeta.UpdateTransientUnitStem, updateScript, version)
 		s.send(w, "success", "업데이트를 적용 중입니다. 잠시 후 서버가 재시작됩니다. 아래 로그를 새로고침하세요.", http.StatusOK)
 		return
 	}
@@ -1515,6 +1520,76 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", msg, http.StatusOK)
 }
 
+// handleVersionsSwitchCurrent POST body: { "version": "<키>", "ip": "" | "self" | "<원격>" } — 지정 버전을 current로 두기 위해
+// 내장 update.sh를 systemd-run으로 실행한다(apply-update 로컬 경로와 동일). 원격 ip면 해당 호스트 API로 프록시.
+func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Version string `json:"version"`
+		IP      string `json:"ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.send(w, "fail", "invalid body", http.StatusBadRequest)
+		return
+	}
+	version := strings.TrimSpace(req.Version)
+	if version == "" {
+		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
+		return
+	}
+	if err := config.ValidateVersionKeyPath(version); err != nil {
+		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+		return
+	}
+	ip := strings.TrimSpace(req.IP)
+	if ip != "" && ip != "self" {
+		baseURL, err := s.remoteBaseURL(ip)
+		if err != nil {
+			s.send(w, "fail", "원격 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(s.apiPrefix, "/") + "/versions/switch-current"
+		payload, err := json.Marshal(map[string]string{"version": version})
+		if err != nil {
+			s.send(w, "fail", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		hr, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(payload))
+		if err != nil {
+			s.send(w, "fail", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		hr.Header.Set("Content-Type", "application/json")
+		resp, err := remoteHTTPClient.Do(hr)
+		if err != nil {
+			s.send(w, "fail", "원격 전환 요청 실패: "+err.Error(), http.StatusOK)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var out APIResponse
+		if json.Unmarshal(body, &out) != nil {
+			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
+		return
+	}
+
+	base := s.deployBase
+	if base == "" {
+		base = "/var/lib/contrabass/mole"
+	}
+	if err := s.runUpdateViaEmbeddedScript(base, version); err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	s.send(w, "success", "systemd-run으로 update.sh가 시작되었습니다. 서비스 재시작·헬스는 스크립트가 수행하며, 완료까지 수십 초 걸릴 수 있습니다. 실패 시 update_history.log·journal을 확인하세요.", http.StatusOK)
+}
+
 func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
@@ -1561,7 +1636,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	if len(lines) == 1 && lines[0] == "" {
 		lines = nil
 	}
-	const maxLines = 5
+	const maxLines = 10
 	var outLines []string
 	if len(lines) > maxLines {
 		outLines = lines[:maxLines]

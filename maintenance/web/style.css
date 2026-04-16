@@ -584,6 +584,28 @@ h3 {
 .versions-actions .discovery-status {
   margin: 0;
 }
+.versions-switch-row {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.versions-switch-row label {
+  margin: 0;
+  color: #a1a1aa;
+  font-size: 0.9rem;
+}
+.versions-switch-row select {
+  min-width: 12rem;
+  max-width: 100%;
+}
+.versions-switch-hint {
+  font-size: 0.85rem;
+  color: #a1a1aa;
+  flex-basis: 100%;
+  margin: 0;
+}
 
 .update-log {
   margin-top: 1rem;

@@ -55,15 +55,15 @@ func normalizeBundlePath(p string) string {
 func bundleMemberAbs(root, manifestPath string) (string, error) {
 	rel := normalizeBundlePath(manifestPath)
 	if rel == "" {
-		return "", errors.New("빈 경로")
+		return "", errors.New("empty path")
 	}
 	if strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {
-		return "", errors.New("허용되지 않는 경로 (.. 또는 절대 경로)")
+		return "", errors.New("path not allowed (.. or absolute)")
 	}
 	dest := filepath.Join(root, filepath.FromSlash(rel))
 	cr, err := filepath.Rel(root, dest)
 	if err != nil || strings.HasPrefix(cr, "..") {
-		return "", errors.New("경로가 아카이브 루트를 벗어남")
+		return "", errors.New("path escapes archive root")
 	}
 	return dest, nil
 }
@@ -111,7 +111,7 @@ func extractTarGzSafe(r io.Reader, rootDir string, maxBytes int64) error {
 		}
 		nmembers++
 		if nmembers > maxBundleMembers {
-			return errors.New("tar 항목이 너무 많습니다")
+			return errors.New("too many tar entries")
 		}
 		name := hdr.Name
 		switch hdr.Typeflag {
@@ -132,10 +132,10 @@ func extractTarGzSafe(r io.Reader, rootDir string, maxBytes int64) error {
 			continue
 		case tar.TypeReg, tar.TypeRegA:
 			if hdr.Size < 0 || hdr.Size > maxBytes {
-				return errors.New("tar 항목 크기가 비정상입니다")
+				return errors.New("invalid tar entry size")
 			}
 			if total+hdr.Size > maxBytes {
-				return errors.New("압축 해제 후 총 크기가 한도를 초과합니다")
+				return errors.New("uncompressed total exceeds limit")
 			}
 			dest, err := bundleMemberAbs(rootDir, name)
 			if err != nil {
@@ -154,13 +154,13 @@ func extractTarGzSafe(r io.Reader, rootDir string, maxBytes int64) error {
 				return err
 			}
 			if nw != hdr.Size {
-				return errors.New("tar 항목 크기 불일치")
+				return errors.New("tar entry size mismatch")
 			}
 			total += hdr.Size
 		case tar.TypeSymlink, tar.TypeLink:
-			return errors.New("심볼릭 링크·하드링크는 허용되지 않습니다")
+			return errors.New("symlinks and hard links are not allowed")
 		default:
-			return fmt.Errorf("지원하지 않는 tar 항목 형식: %v", hdr.Typeflag)
+			return fmt.Errorf("unsupported tar entry type: %v", hdr.Typeflag)
 		}
 	}
 	return nil
@@ -172,13 +172,13 @@ func parseBundleManifest(data []byte) (*bundleManifestDoc, error) {
 		return nil, fmt.Errorf("manifest YAML: %w", err)
 	}
 	if m.ManifestVersion != 1 {
-		return nil, fmt.Errorf("manifestVersion %d는 지원하지 않습니다 (1만 허용)", m.ManifestVersion)
+		return nil, fmt.Errorf("manifestVersion %d not supported (only 1)", m.ManifestVersion)
 	}
 	if strings.TrimSpace(m.Agent.Path) == "" {
-		return nil, errors.New("manifest에 agent.path가 없습니다")
+		return nil, errors.New("manifest missing agent.path")
 	}
 	if strings.TrimSpace(m.Config.Path) == "" {
-		return nil, errors.New("manifest에 config.path가 없습니다")
+		return nil, errors.New("manifest missing config.path")
 	}
 	return &m, nil
 }
@@ -186,17 +186,17 @@ func parseBundleManifest(data []byte) (*bundleManifestDoc, error) {
 func verifyBundleMemberHashes(agentPath, configPath string, m *bundleManifestDoc) error {
 	ah, err := fileSHA256Hex(agentPath)
 	if err != nil {
-		return fmt.Errorf("agent 해시 계산: %w", err)
+		return fmt.Errorf("agent hash: %w", err)
 	}
 	if !sha256Matches(m.Agent.Sha256, ah) {
-		return fmt.Errorf("agent sha256 불일치 (manifest와 실제 파일)")
+		return fmt.Errorf("agent sha256 mismatch (manifest vs file)")
 	}
 	ch, err := fileSHA256Hex(configPath)
 	if err != nil {
-		return fmt.Errorf("config 해시 계산: %w", err)
+		return fmt.Errorf("config hash: %w", err)
 	}
 	if !sha256Matches(m.Config.Sha256, ch) {
-		return fmt.Errorf("config sha256 불일치 (manifest와 실제 파일)")
+		return fmt.Errorf("config sha256 mismatch (manifest vs file)")
 	}
 	return nil
 }
@@ -314,7 +314,7 @@ func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int
 	}
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("번들 저장 실패: %w", err)
+		return "", nil, "", "", "", fmt.Errorf("save bundle: %w", err)
 	}
 
 	extractRoot := filepath.Join(workDir, "root")
@@ -331,14 +331,14 @@ func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int
 	_ = rf.Close()
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("번들 압축 해제: %w", err)
+		return "", nil, "", "", "", fmt.Errorf("extract bundle: %w", err)
 	}
 
 	mf := filepath.Join(extractRoot, bundleManifestName)
 	raw, err := os.ReadFile(mf)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("manifest 파일 없음 (%s)", bundleManifestName)
+		return "", nil, "", "", "", fmt.Errorf("missing manifest file (%s)", bundleManifestName)
 	}
 	m, err := parseBundleManifest(raw)
 	if err != nil {
@@ -357,11 +357,11 @@ func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int
 	}
 	if _, err := os.Stat(agentPath); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("agent 파일 없음: %s", m.Agent.Path)
+		return "", nil, "", "", "", fmt.Errorf("agent file missing: %s", m.Agent.Path)
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("config 파일 없음: %s", m.Config.Path)
+		return "", nil, "", "", "", fmt.Errorf("config file missing: %s", m.Config.Path)
 	}
 	if err := verifyBundleMemberHashes(agentPath, configPath, m); err != nil {
 		_ = os.RemoveAll(workDir)
@@ -386,11 +386,11 @@ func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int
 	_ = af.Close()
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("실행 파일이 너무 짧습니다")
+		return "", nil, "", "", "", fmt.Errorf("executable too short")
 	}
 	if !isELFExecutable(hdr) {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", fmt.Errorf("올바른 실행 파일이 아닙니다 (ELF 형식이 아님)")
+		return "", nil, "", "", "", fmt.Errorf("not a valid ELF executable")
 	}
 	versionKey, err = versionKeyFromAgentBinary(agentPath)
 	if err != nil {

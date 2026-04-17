@@ -24,18 +24,18 @@ import (
 	"contrabass-agent/maintenance/server"
 )
 
-const helpText = `Contrabass agent — Discovery 및 웹 UI
+const helpText = `Contrabass agent — Discovery and maintenance web UI
 
-사용법:
-  <bin> -cfg <파일>     설정 파일을 지정해야 HTTP 서버 + Discovery가 시작됩니다 (필수)
-  <bin>                  인자 없이 실행 시 버전 안내 후 종료 (서비스는 시작하지 않음)
+Usage:
+  <bin> -cfg <file>     Start HTTP server + Discovery (config file required)
+  <bin>                 Print version hint and exit (no service)
 
-옵션:
-  -h, --help             이 도움말 출력
-  -version, --version    버전 출력 후 종료
-  --nic-brd              Discovery와 동일 규칙으로 인터페이스별 IPv4 brd 출력 (확인용) 후 종료
-  --discovery [flags]    설정 없이 UDP Discovery만 수행 (<bin> --discovery -h)
-  --apply-update [flags] 번들 업로드·적용 한 번에 수행 (<bin> --apply-update -h)
+Options:
+  -h, --help             Show this help
+  -version, --version    Print version and exit
+  --nic-brd              Print per-interface IPv4 broadcast addresses (same rules as Discovery), then exit
+  --discovery [flags]    Run UDP Discovery only, no config (<bin> --discovery -h)
+  --apply-update [flags] Upload bundle and apply in one step (<bin> --apply-update -h)
 
 `
 
@@ -53,10 +53,10 @@ func versionLine(buildVersionKey string) string {
 func printMustSpecifyConfig(binVersion string) {
 	fmt.Println(versionLine(binVersion))
 	fmt.Println()
-	fmt.Println("HTTP 서비스와 Discovery를 시작하려면 설정 파일을 지정하세요.")
+	fmt.Println("To start HTTP service and Discovery, pass a config file:")
 	fmt.Printf("  %s -cfg <config.yaml>\n", appmeta.BinaryName)
 	fmt.Println()
-	fmt.Println("자세한 옵션은 다음을 실행하세요.")
+	fmt.Println("For more options:")
 	fmt.Printf("  %s -h\n", appmeta.BinaryName)
 	fmt.Printf("  %s --help\n", appmeta.BinaryName)
 }
@@ -109,13 +109,13 @@ func Run(buildVersionKey string, args []string) int {
 		}
 	}
 	if args[1] != "-cfg" {
-		fmt.Fprintf(os.Stderr, "알 수 없는 인자: %q\n\n", args[1])
+		fmt.Fprintf(os.Stderr, "unknown argument: %q\n\n", args[1])
 		printMustSpecifyConfig(buildVersionKey)
 		return 1
 	}
 	if len(args) < 3 {
-		fmt.Fprintf(os.Stderr, "%s: -cfg 다음에 설정 파일 경로가 필요합니다.\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "예: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: path to config file required after -cfg\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
 		return 1
 	}
 	cfgPath := args[2]

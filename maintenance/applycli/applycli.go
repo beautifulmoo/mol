@@ -30,12 +30,12 @@ const bundleFormField = "bundle" // same as server.uploadBundleField
 func Run(args []string) int {
 	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	cfgPath := fs.String("cfg", "", "설정 파일 경로 (필수)")
+	cfgPath := fs.String("cfg", "", "path to config file (required)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s --apply-update -cfg <config.yaml> <self|원격IP> <bundle.tar.gz>\n\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "  번들을 검증한 뒤 현재 버전과 비교하여 업데이트 가능할 때만 업로드·적용합니다.\n")
-		fmt.Fprintf(os.Stderr, "  self: 로컬 유지보수 API로 업로드 후 적용합니다.\n")
-		fmt.Fprintf(os.Stderr, "  원격IP: 로컬 유지보수 API의 multipart apply-update로 원격 호스트에 직접 전송합니다.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
+		fmt.Fprintf(os.Stderr, "  self: upload via local maintenance API, then apply locally.\n")
+		fmt.Fprintf(os.Stderr, "  remote-ip: multipart apply-update on local maintenance API; bundle is sent to the remote host.\n\n")
 		fs.PrintDefaults()
 	}
 	for _, a := range args {
@@ -49,12 +49,12 @@ func Run(args []string) int {
 	}
 	pos := fs.Args()
 	if len(pos) != 2 {
-		fmt.Fprintf(os.Stderr, "%s: 인자는 <self|원격IP> <bundle.tar.gz> 두 개여야 합니다.\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|remote-ip> <bundle.tar.gz>\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}
 	if strings.TrimSpace(*cfgPath) == "" {
-		fmt.Fprintf(os.Stderr, "%s: -cfg <설정 파일> 이 필요합니다.\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}
@@ -62,13 +62,13 @@ func Run(args []string) int {
 	target := strings.TrimSpace(pos[0])
 	bundlePath := strings.TrimSpace(pos[1])
 	if target == "" || bundlePath == "" {
-		fmt.Fprintf(os.Stderr, "%s: 대상과 번들 경로가 비어 있으면 안 됩니다.\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: target and bundle path must not be empty\n", appmeta.BinaryName)
 		return 1
 	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: 설정 로드: %v\n", appmeta.BinaryName, err)
+		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 
@@ -76,20 +76,20 @@ func Run(args []string) int {
 
 	f, err := os.Open(bundlePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: 번들 열기: %v\n", appmeta.BinaryName, err)
+		fmt.Fprintf(os.Stderr, "%s: open bundle: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 	bundleReader := io.Reader(f)
 	if fi, err := f.Stat(); err == nil && fi.Size() > maxBytes {
 		_ = f.Close()
-		fmt.Fprintf(os.Stderr, "%s: 번들 크기(%d)가 설정 한도(%d)를 초과합니다.\n", appmeta.BinaryName, fi.Size(), maxBytes)
+		fmt.Fprintf(os.Stderr, "%s: bundle size %d exceeds configured limit %d\n", appmeta.BinaryName, fi.Size(), maxBytes)
 		return 1
 	}
 
 	versionKey, _, _, workDir, _, err := server.PrepareAgentBundleFromReader(os.TempDir(), bundleReader, maxBytes)
 	_ = f.Close()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: 번들 검증 실패: %v\n", appmeta.BinaryName, err)
+		fmt.Fprintf(os.Stderr, "%s: bundle validation failed: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
@@ -103,29 +103,29 @@ func Run(args []string) int {
 	case "self":
 		cur, err := fetchVersionGET(httpClient, maintenanceBase+apiPrefix+"/self")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 로컬 버전 조회 실패 (%s): %v\n", appmeta.BinaryName, maintenanceBase+apiPrefix+"/self", err)
+			fmt.Fprintf(os.Stderr, "%s: get local version failed (%s): %v\n", appmeta.BinaryName, maintenanceBase+apiPrefix+"/self", err)
 			return 1
 		}
 		if !config.StagingUpdateAvailable(versionKey, cur) {
-			fmt.Fprintf(os.Stderr, "%s: 업데이트 불필요 또는 정책상 건너뜀 (번들 %q, 현재 %q).\n", appmeta.BinaryName, versionKey, cur)
+			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
-		fmt.Printf("번들 버전 %s → 로컬 적용 (현재 %s)\n", versionKey, cur)
+		fmt.Printf("Applying bundle %s locally (current %s)\n", versionKey, cur)
 		if err := postUploadBundle(httpClient, maintenanceBase+apiPrefix+"/upload", bundlePath); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 업로드 실패: %v\n", appmeta.BinaryName, err)
+			fmt.Fprintf(os.Stderr, "%s: upload failed: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
 		if err := postApplyUpdateJSON(httpClient, maintenanceBase+apiPrefix+"/apply-update", versionKey); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 적용 요청 실패: %v\n", appmeta.BinaryName, err)
+			fmt.Fprintf(os.Stderr, "%s: apply request failed: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
-		fmt.Println("업데이트 적용 요청을 보냈습니다. 잠시 후 에이전트가 재시작됩니다.")
+		fmt.Println("Apply update requested; the agent will restart shortly.")
 		return 0
 
 	default:
 		remoteIP := target
 		if net.ParseIP(remoteIP) == nil {
-			fmt.Fprintf(os.Stderr, "%s: 원격 대상은 유효한 IP 주소여야 합니다: %q\n", appmeta.BinaryName, remoteIP)
+			fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, remoteIP)
 			return 1
 		}
 		httpPort := cfg.ServerHTTPPort
@@ -134,26 +134,26 @@ func Run(args []string) int {
 		}
 		addr := net.JoinHostPort(remoteIP, strconv.Itoa(httpPort))
 		if err := dialTCP(addr, 5*time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 원격 %s 에 연결할 수 없습니다 (에이전트 HTTP 포트가 열려 있어야 합니다): %v\n", appmeta.BinaryName, addr, err)
+			fmt.Fprintf(os.Stderr, "%s: cannot connect to %s (agent HTTP port must be reachable): %v\n", appmeta.BinaryName, addr, err)
 			return 1
 		}
 		remoteBase := fmt.Sprintf("http://%s", addr)
 		cur, err := fetchVersionGET(httpClient, remoteBase+apiPrefix+"/self")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 원격 버전 조회 실패 (%s): %v\n", appmeta.BinaryName, remoteBase+apiPrefix+"/self", err)
+			fmt.Fprintf(os.Stderr, "%s: get remote version failed (%s): %v\n", appmeta.BinaryName, remoteBase+apiPrefix+"/self", err)
 			return 1
 		}
 		if !config.StagingUpdateAvailable(versionKey, cur) {
-			fmt.Fprintf(os.Stderr, "%s: 업데이트 불필요 또는 정책상 건너뜀 (번들 %q, 원격 현재 %q).\n", appmeta.BinaryName, versionKey, cur)
+			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, remote current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
-		fmt.Printf("번들 버전 %s → 원격 %s 적용 (원격 현재 %s)\n", versionKey, remoteIP, cur)
+		fmt.Printf("Applying bundle %s to remote %s (remote current %s)\n", versionKey, remoteIP, cur)
 		applyURL := maintenanceBase + apiPrefix + "/apply-update"
 		if err := postMultipartApplyRemote(httpClient, applyURL, remoteIP, bundlePath); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 원격 적용 실패: %v\n", appmeta.BinaryName, err)
+			fmt.Fprintf(os.Stderr, "%s: remote apply failed: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
-		fmt.Printf("원격 %s 에 버전 %s 적용이 완료되었습니다.\n", remoteIP, versionKey)
+		fmt.Printf("Remote %s updated to version %s.\n", remoteIP, versionKey)
 		return 0
 	}
 }
@@ -271,13 +271,13 @@ func postUploadBundle(client *http.Client, uploadURL, bundlePath string) error {
 	body, _ := io.ReadAll(resp.Body)
 	var out server.APIResponse
 	if json.Unmarshal(body, &out) != nil {
-		return fmt.Errorf("업로드 응답 파싱 실패: %s", strings.TrimSpace(string(body)))
+		return fmt.Errorf("parse upload response: %s", strings.TrimSpace(string(body)))
 	}
 	if out.Status != "success" {
 		if s, ok := out.Data.(string); ok && s != "" {
 			return fmt.Errorf("%s", s)
 		}
-		return fmt.Errorf("업로드 실패: status=%s", out.Status)
+		return fmt.Errorf("upload failed: status=%s", out.Status)
 	}
 	return nil
 }
@@ -300,13 +300,13 @@ func postApplyUpdateJSON(client *http.Client, applyURL, version string) error {
 	body, _ := io.ReadAll(resp.Body)
 	var out server.APIResponse
 	if json.Unmarshal(body, &out) != nil {
-		return fmt.Errorf("적용 응답 파싱 실패: %s", strings.TrimSpace(string(body)))
+		return fmt.Errorf("parse apply response: %s", strings.TrimSpace(string(body)))
 	}
 	if out.Status != "success" {
 		if s, ok := out.Data.(string); ok && s != "" {
 			return fmt.Errorf("%s", s)
 		}
-		return fmt.Errorf("적용 실패: status=%s", out.Status)
+		return fmt.Errorf("apply failed: status=%s", out.Status)
 	}
 	return nil
 }
@@ -347,13 +347,13 @@ func postMultipartApplyRemote(client *http.Client, applyURL, remoteIP, bundlePat
 	body, _ := io.ReadAll(resp.Body)
 	var out server.APIResponse
 	if json.Unmarshal(body, &out) != nil {
-		return fmt.Errorf("원격 적용 응답 파싱 실패: %s", strings.TrimSpace(string(body)))
+		return fmt.Errorf("parse remote apply response: %s", strings.TrimSpace(string(body)))
 	}
 	if out.Status != "success" {
 		if s, ok := out.Data.(string); ok && s != "" {
 			return fmt.Errorf("%s", s)
 		}
-		return fmt.Errorf("원격 적용 실패: status=%s", out.Status)
+		return fmt.Errorf("remote apply failed: status=%s", out.Status)
 	}
 	return nil
 }

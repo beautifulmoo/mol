@@ -146,52 +146,52 @@ func normalizeRemoteHealthCheck(c *Config) {
 	}
 }
 
-// configValidationError turns a YAML unmarshal error into a user-friendly message in Korean.
+// configValidationError turns a YAML unmarshal error into a user-friendly message.
 func configValidationError(err error) error {
 	if err == nil {
 		return nil
 	}
-	prefix := "config.yaml 검증 실패: "
+	prefix := "config validation failed: "
 	// *yaml.TypeError contains multiple errors (e.g. "line 5: cannot unmarshal !!str into int")
 	if yerr, ok := err.(*yaml.TypeError); ok && len(yerr.Errors) > 0 {
 		msgs := make([]string, 0, len(yerr.Errors))
 		for _, e := range yerr.Errors {
 			msgs = append(msgs, describeYAMLUnmarshalError(e))
 		}
-		return fmt.Errorf("%s%s. 필요한 항목 및 타입: Server.HTTPPort(숫자), DiscoveryServiceName(문자열), DiscoveryUDPPort(숫자), MaintenancePort(숫자), DiscoveryTimeoutSeconds(숫자) 등", prefix, strings.Join(msgs, "; "))
+		return fmt.Errorf("%s%s. Expected types include: Server.HTTPPort (int), DiscoveryServiceName (string), DiscoveryUDPPort (int), MaintenancePort (int), DiscoveryTimeoutSeconds (int)", prefix, strings.Join(msgs, "; "))
 	}
 	// Syntax error (e.g. invalid indentation)
 	if strings.Contains(err.Error(), "yaml:") {
-		return fmt.Errorf("%s%v. YAML 형식(들여쓰기, 콜론 뒤 공백 등)을 확인하세요", prefix, err)
+		return fmt.Errorf("%s%v. Check YAML syntax (indentation, colons, etc.)", prefix, err)
 	}
 	return fmt.Errorf("%s%w", prefix, err)
 }
 
-// describeYAMLUnmarshalError maps a single unmarshal error to a short Korean description.
+// describeYAMLUnmarshalError maps a single unmarshal error to a short description.
 func describeYAMLUnmarshalError(s string) string {
 	// Typical: "line 5: cannot unmarshal !!str `hello` into int"
 	if strings.Contains(s, "cannot unmarshal !!str") && strings.Contains(s, "into int") {
 		if line := extractLine(s); line != "" {
-			return line + " 숫자 항목에 문자열이 들어갔습니다 (DiscoveryUDPPort, MaintenancePort, DiscoveryTimeoutSeconds 등은 숫자여야 함)"
+			return line + "string value where a number is required (DiscoveryUDPPort, MaintenancePort, DiscoveryTimeoutSeconds must be integers)"
 		}
-		return "숫자 항목에 문자열이 들어갔습니다 (DiscoveryUDPPort, MaintenancePort, DiscoveryTimeoutSeconds 등은 숫자여야 함)"
+		return "string value where a number is required (DiscoveryUDPPort, MaintenancePort, DiscoveryTimeoutSeconds must be integers)"
 	}
 	if strings.Contains(s, "cannot unmarshal !!int") && strings.Contains(s, "into string") {
 		if line := extractLine(s); line != "" {
-			return line + " 문자열 항목에 숫자가 들어갔습니다"
+			return line + "number where a string is required"
 		}
-		return "문자열 항목에 숫자가 들어갔습니다"
+		return "number where a string is required"
 	}
 	if strings.Contains(s, "cannot unmarshal !!bool") {
 		if line := extractLine(s); line != "" {
-			return line + " 항목 타입이 맞지 않습니다 (불리언이 아닌 값 필요)"
+			return line + "wrong type (expected non-boolean)"
 		}
-		return "항목 타입이 맞지 않습니다"
+		return "wrong type (expected non-boolean)"
 	}
 	if line := extractLine(s); line != "" {
 		// Avoid duplicating "line N:" in message
 		if lineRegex.MatchString(s) {
-			return line + "형식 또는 타입 오류 (해당 줄의 항목명·타입 확인)"
+			return line + "format or type error (check field names and types on that line)"
 		}
 		return line + s
 	}
@@ -202,7 +202,7 @@ var lineRegex = regexp.MustCompile(`line (\d+)`)
 
 func extractLine(s string) string {
 	if m := lineRegex.FindStringSubmatch(s); len(m) >= 2 {
-		return m[1] + "번째 줄: "
+		return "line " + m[1] + ": "
 	}
 	return ""
 }

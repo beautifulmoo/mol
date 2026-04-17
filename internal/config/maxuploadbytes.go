@@ -22,33 +22,33 @@ var maxUploadShiftExpr = regexp.MustCompile(`^\s*(\d+)\s*<<\s*(\d+)\s*$`)
 func parseMaxUploadBytesExpr(s string) (int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, fmt.Errorf("빈 문자열입니다")
+		return 0, fmt.Errorf("empty string")
 	}
 	if strings.Contains(s, "<<") {
 		m := maxUploadShiftExpr.FindStringSubmatch(s)
 		if m == nil {
-			return 0, fmt.Errorf("%q는 지원되지 않습니다 (형식: \"M << N\", 예: \"64 << 20\")", s)
+			return 0, fmt.Errorf("%q is not supported (use \"M << N\", e.g. \"64 << 20\")", s)
 		}
 		a, err1 := strconv.ParseUint(m[1], 10, 64)
 		b, err2 := strconv.ParseUint(m[2], 10, 64)
 		if err1 != nil || err2 != nil {
-			return 0, fmt.Errorf("비트 시프트 피연산자가 올바르지 않습니다")
+			return 0, fmt.Errorf("invalid bit-shift operands")
 		}
 		if b > 62 {
-			return 0, fmt.Errorf("시프트 크기 %d는 너무 큽니다 (최대 62)", b)
+			return 0, fmt.Errorf("shift count %d too large (max 62)", b)
 		}
 		res := a << b
 		if res > uint64(math.MaxInt) {
-			return 0, fmt.Errorf("계산 결과가 너무 큽니다")
+			return 0, fmt.Errorf("result too large")
 		}
 		return int(res), nil
 	}
 	n, err := strconv.Atoi(s)
 	if err != nil {
-		return 0, fmt.Errorf("정수 또는 \"M << N\" 형식이어야 합니다: %w", err)
+		return 0, fmt.Errorf("expected integer or \"M << N\": %w", err)
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("음수일 수 없습니다")
+		return 0, fmt.Errorf("cannot be negative")
 	}
 	return n, nil
 }
@@ -59,12 +59,12 @@ func (u *uploadBytesExpr) UnmarshalYAML(n *yaml.Node) error {
 		return nil
 	}
 	if n.Kind != yaml.ScalarNode {
-		return fmt.Errorf("Maintenance.MaxUploadBytes: 스칼라(숫자 또는 문자열)만 허용됩니다")
+		return fmt.Errorf("Maintenance.MaxUploadBytes: must be a scalar (number or string)")
 	}
 	var i int64
 	if err := n.Decode(&i); err == nil {
 		if i < 0 {
-			return fmt.Errorf("Maintenance.MaxUploadBytes: 음수일 수 없습니다")
+			return fmt.Errorf("Maintenance.MaxUploadBytes: cannot be negative")
 		}
 		*u = uploadBytesExpr(i)
 		return nil
@@ -72,13 +72,13 @@ func (u *uploadBytesExpr) UnmarshalYAML(n *yaml.Node) error {
 	var f float64
 	if err := n.Decode(&f); err == nil {
 		if f < 0 {
-			return fmt.Errorf("Maintenance.MaxUploadBytes: 음수일 수 없습니다")
+			return fmt.Errorf("Maintenance.MaxUploadBytes: cannot be negative")
 		}
 		if f != math.Trunc(f) {
-			return fmt.Errorf("Maintenance.MaxUploadBytes: 정수여야 합니다")
+			return fmt.Errorf("Maintenance.MaxUploadBytes: must be an integer")
 		}
 		if f > float64(math.MaxInt) {
-			return fmt.Errorf("Maintenance.MaxUploadBytes: 값이 너무 큽니다")
+			return fmt.Errorf("Maintenance.MaxUploadBytes: value too large")
 		}
 		*u = uploadBytesExpr(f)
 		return nil

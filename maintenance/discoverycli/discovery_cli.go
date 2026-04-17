@@ -31,7 +31,8 @@ func Run(args []string) int {
 	serviceName := fs.String("service", config.DefaultDiscoveryServiceName, "service name in DISCOVERY_REQUEST")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s --discovery [flags]\n\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n\n")
+		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n")
+		fmt.Fprintf(os.Stderr, "  Each line: [Local|Remote] hostname - primary : [response IPs] version=<agent version>\n\n")
 		fs.PrintDefaults()
 	}
 	for _, a := range args {
@@ -187,7 +188,7 @@ func Run(args []string) int {
 
 func formatResults(list []discovery.DiscoveryResponse) []string {
 	if len(list) == 0 {
-		return []string{"(발견된 호스트 없음)"}
+		return []string{"(no hosts found)"}
 	}
 	selfUUID := ""
 	if info, err := hostinfo.Get(); err == nil {
@@ -204,6 +205,7 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 		hostname string
 		hostIP   string
 		cpuUUID  string
+		version  string // from DISCOVERY_RESPONSE (same as agent version key)
 		ips      map[string]struct{}
 	}
 	groups := make(map[string]*group)
@@ -214,7 +216,7 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 		if key == "" {
 			hn := strings.TrimSpace(r.Hostname)
 			if hn == "" {
-				hn = "(이름 없음)"
+				hn = "(no name)"
 			}
 			key = "noid:" + hn
 		}
@@ -225,16 +227,22 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 				hostname: r.Hostname,
 				hostIP:   "",
 				cpuUUID:  cpu,
+				version:  strings.TrimSpace(r.Version),
 				ips:      make(map[string]struct{}),
 			}
 			if g.hostname == "" {
-				g.hostname = "(이름 없음)"
+				g.hostname = "(no name)"
 			}
 			groups[key] = g
 			order = append(order, key)
-		} else if g.cpuUUID == "" {
-			if u := strings.TrimSpace(r.CPUUUID); u != "" {
-				g.cpuUUID = u
+		} else {
+			if g.cpuUUID == "" {
+				if u := strings.TrimSpace(r.CPUUUID); u != "" {
+					g.cpuUUID = u
+				}
+			}
+			if g.version == "" {
+				g.version = strings.TrimSpace(r.Version)
 			}
 		}
 		if r.RespondedFromIP != "" {
@@ -258,7 +266,11 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 			primary = ipList[0]
 		}
 		tag := localTag(selfUUID, strings.TrimSpace(g.cpuUUID), g.ips, localIPSet)
-		out = append(out, fmt.Sprintf("%s %s - %s : [%s]", tag, g.hostname, primary, strings.Join(ipList, ", ")))
+		ver := g.version
+		if ver == "" {
+			ver = "?"
+		}
+		out = append(out, fmt.Sprintf("%s %s - %s : [%s] version=%s", tag, g.hostname, primary, strings.Join(ipList, ", "), ver))
 	}
 	return out
 }

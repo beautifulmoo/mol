@@ -64,21 +64,21 @@ func versionKeyFromAgentBinary(binPath string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("실행 파일 검증 시간 초과 (--version이 5초 내에 끝나지 않음)")
+			return "", fmt.Errorf("executable check timed out (--version did not finish within 5s)")
 		}
-		return "", fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 실패): %w", err)
+		return "", fmt.Errorf("not a valid executable (--version failed): %w", err)
 	}
 	line := strings.TrimSpace(string(out))
 	want := appmeta.BinaryName + " "
 	if !strings.HasPrefix(line, want) {
-		return "", fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version 출력 접두사 기대 %q, 실제: %q)", want, line)
+		return "", fmt.Errorf("not a valid executable (--version prefix want %q, got %q)", want, line)
 	}
 	key := strings.TrimSpace(strings.TrimPrefix(line, want))
 	if key == "" {
-		return "", fmt.Errorf("실행 파일이 아닌 것 같습니다 (--version에 버전 키가 비어 있음)")
+		return "", fmt.Errorf("not a valid executable (--version returned empty version key)")
 	}
 	if err := config.ValidateVersionKeyPath(key); err != nil {
-		return "", fmt.Errorf("실행 파일의 버전 키가 유효하지 않습니다: %w", err)
+		return "", fmt.Errorf("invalid version key from executable: %w", err)
 	}
 	return key, nil
 }

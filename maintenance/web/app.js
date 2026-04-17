@@ -5,6 +5,161 @@
   }
   var API_BASE = _api;
 
+  var remoteHealthState = {};
+
+  function getRemoteHealthCfg() {
+    var h = typeof window !== 'undefined' && window.__CONTRABASS_REMOTE_HEALTH__;
+    if (h && typeof h.intervalSec === 'number') {
+      return {
+        intervalSec: h.intervalSec,
+        timeoutSec: h.timeoutSec,
+        failureThreshold: h.failureThreshold,
+        jitterSec: h.jitterSec
+      };
+    }
+    return { intervalSec: 10, timeoutSec: 2, failureThreshold: 3, jitterSec: 2 };
+  }
+
+  function setRemoteHealthCardUI(card, dead, message) {
+    if (!card) return;
+    var banner = card.querySelector('.remote-health-banner');
+    var btn = card.querySelector('.remote-health-recheck-btn');
+    if (banner) {
+      banner.hidden = !dead;
+      banner.textContent = dead ? (message || 'HTTP 헬스체크 실패') : '';
+    }
+    if (btn) btn.hidden = !dead;
+    var row = card.closest && card.closest('.host-row');
+    if (row) row.classList.toggle('host-row--remote-health-dead', !!dead);
+  }
+
+  function scheduleRemoteHealthTick(ip) {
+    var st = remoteHealthState[ip];
+    if (!st) return;
+    if (st.timerId != null) {
+      clearTimeout(st.timerId);
+      st.timerId = null;
+    }
+    if (document.hidden) return;
+    var cfg = getRemoteHealthCfg();
+    var delayMs = cfg.intervalSec * 1000 + Math.random() * cfg.jitterSec * 1000;
+    st.timerId = setTimeout(function () {
+      st.timerId = null;
+      execRemoteHealthCheck(ip, false);
+    }, delayMs);
+  }
+
+  function refreshRemoteHostAfterHealthOk(card, ip) {
+    if (!card || !ip) return;
+    fetch(API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status === 'success' && body.data) {
+          updateHostCardDetails(card, body.data);
+          mergeHostIpsFromResponseIntoCard(card, body.data);
+          if (body.data.responded_from_ip) mergeRespondedFromIntoCard(card, body.data.responded_from_ip);
+          var row = card.closest && card.closest('.host-row');
+          if (row) updateHostRowLabel(row, body.data, false);
+          fetchUpdateLogForCard(card, ip);
+          fetchCurrentConfigForCard(card, ip);
+          fetchVersionsListForCard(card, ip);
+          fetchServiceStatus(card, ip);
+          fetchUpdateStatus();
+          updateAllHostApplyButtons();
+        }
+      })
+      .catch(function () {});
+  }
+
+  function onRemoteHealthTransportFail(ip, card, detail) {
+    var st = remoteHealthState[ip];
+    if (!st) return;
+    st.failures += 1;
+    var cfg = getRemoteHealthCfg();
+    if (st.failures >= cfg.failureThreshold) {
+      st.dead = true;
+      setRemoteHealthCardUI(
+        card,
+        true,
+        'HTTP 헬스체크가 ' + cfg.failureThreshold + '회 연속 실패했습니다. 원격 API(' + (detail || '응답 없음') + ')에 연결할 수 없습니다.'
+      );
+    }
+  }
+
+  function execRemoteHealthCheck(ip, manual) {
+    var list = el('discovered-hosts');
+    var card = list ? findHostCardByIp(list, ip) : null;
+    if (!card) {
+      delete remoteHealthState[ip];
+      return;
+    }
+    var btn = card.querySelector('.remote-health-recheck-btn');
+    if (manual && btn) btn.disabled = true;
+    fetch(API_BASE + '/remote-health-check?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        var st = remoteHealthState[ip];
+        if (body.status === 'success') {
+          if (st) {
+            st.failures = 0;
+            st.dead = false;
+          }
+          setRemoteHealthCardUI(card, false, '');
+          if (manual) {
+            refreshRemoteHostAfterHealthOk(card, ip);
+          }
+        } else {
+          onRemoteHealthTransportFail(ip, card, typeof body.data === 'string' ? body.data : '');
+        }
+      })
+      .catch(function () {
+        onRemoteHealthTransportFail(ip, card, '요청 실패');
+      })
+      .finally(function () {
+        if (manual && btn) btn.disabled = false;
+        if (!document.hidden) {
+          scheduleRemoteHealthTick(ip);
+        }
+      });
+  }
+
+  function ensureRemoteHealthForIp(ip) {
+    if (!ip) return;
+    if (!remoteHealthState[ip]) {
+      remoteHealthState[ip] = { failures: 0, timerId: null, dead: false };
+      scheduleRemoteHealthTick(ip);
+    }
+  }
+
+  function registerRemoteHealthMonitoring(card) {
+    if (!card || card.classList.contains('self-card')) return;
+    var ip = card.getAttribute('data-host-ip');
+    if (!ip) return;
+    ensureRemoteHealthForIp(ip);
+  }
+
+  function bindRemoteHealthForCard(cardEl) {
+    if (!cardEl || cardEl.classList.contains('self-card')) return;
+    var ip = cardEl.getAttribute('data-host-ip') || '';
+    var recheckBtn = cardEl.querySelector('.remote-health-recheck-btn');
+    if (recheckBtn) {
+      recheckBtn.addEventListener('click', function () {
+        if (!ip) return;
+        execRemoteHealthCheck(ip, true);
+      });
+    }
+    registerRemoteHealthMonitoring(cardEl);
+  }
+
+  function enumerateDiscoveredRemoteHealth() {
+    var list = el('discovered-hosts');
+    if (!list) return;
+    var cards = list.querySelectorAll('.host-card');
+    for (var i = 0; i < cards.length; i++) {
+      registerRemoteHealthMonitoring(cards[i]);
+    }
+  }
+
   const serverIconSvg = '<svg class="host-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="4" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="16" width="20" height="4" rx="1"/><circle cx="6" cy="6" r="0.8"/><circle cx="6" cy="12" r="0.8"/><circle cx="6" cy="18" r="0.8"/></svg>';
 
   function el(id) {
@@ -189,7 +344,12 @@
       '<div class="host-icon">' + serverIconSvg + '</div>' +
       hostDetailsDl +
       (isSelf ? rightColumnSelf : rightColumnRemote);
-    div.innerHTML = '<div class="self-card-top">' + topContent + '</div>' + statusRowHtml;
+    var remoteHealthRow = isSelf ? '' : (
+      '<div class="remote-health-row">' +
+      '<div class="remote-health-banner remote-health-warn" role="alert" aria-live="polite" hidden></div>' +
+      '<button type="button" class="service-btn remote-health-recheck-btn" hidden>헬스 수동 확인</button>' +
+      '</div>');
+    div.innerHTML = remoteHealthRow + '<div class="self-card-top">' + topContent + '</div>' + statusRowHtml;
     bindStatusToggle(div);
     return div;
   }
@@ -433,6 +593,7 @@
           .finally(recheckApplyButton);
       });
     }
+    bindRemoteHealthForCard(cardEl);
   }
 
   function getApplicableVersion() {
@@ -874,12 +1035,14 @@
           var primaryIp = existing.getAttribute('data-host-ip') || ip;
           fetchServiceStatus(existing, primaryIp);
           updateAllHostApplyButtons();
+          registerRemoteHealthMonitoring(existing);
         } else {
           var row = renderHostRow(host, false);
           list.appendChild(row);
           var card = row.querySelector('.host-card');
           bindServiceControlButtons(card);
           fetchServiceStatus(card, ip);
+          registerRemoteHealthMonitoring(card);
         }
         count = list.querySelectorAll('.host-card:not(.self-card)').length;
         status.textContent = 'Discovery 진행 중… (호스트 ' + count + '개, 응답 오는 대로 갱신)';
@@ -1449,4 +1612,21 @@
   fetchUpdateStatus();
   updateAllHostApplyButtons();
   loadSelf();
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      Object.keys(remoteHealthState).forEach(function (ip) {
+        var st = remoteHealthState[ip];
+        if (st && st.timerId != null) {
+          clearTimeout(st.timerId);
+          st.timerId = null;
+        }
+      });
+    } else {
+      Object.keys(remoteHealthState).forEach(function (ip) {
+        scheduleRemoteHealthTick(ip);
+      });
+    }
+  });
+  setTimeout(function () { enumerateDiscoveredRemoteHealth(); }, 0);
 })();

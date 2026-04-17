@@ -29,3 +29,9 @@ Maintenance:
   # SSHPort: 22   # SSH port for remote service start/stop (default 22)
   # SSHUser: "root"   # SSH user for remote start/stop (default "root")
   # MaxUploadBytes: "64 << 20"   # optional; bytes as integer or string (decimal or "M << N", e.g. "128 << 20"). Omit = DefaultMaxUploadBytes; server clamps 1 MiB–10 GiB.
+  # Remote health: HTTP GET …/health on remote Server.HTTPPort (웹 UI가 열려 있을 때만 폴링). 생략 시 바이너리 기본값.
+  RemoteHealth:
+    IntervalSeconds: 10      # 기본 간격(초); 매 주기마다 JitterSeconds 이내 랜덤 지연 추가
+    TimeoutSeconds: 2        # 원격 헬스 요청 타임아웃(초)
+    FailureThreshold: 3      # 연속 실패 횟수(이상이면 카드에 실패 표시 + 수동 확인 버튼)
+    JitterSeconds: 2         # 매 간격에 [0, JitterSeconds] 초 만큼 추가 지연

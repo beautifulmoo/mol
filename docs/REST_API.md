@@ -29,6 +29,8 @@
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
 | **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형). |
+| **GET** | `{API}/health` | 없음 | **200** `success`, `data`: `{ "ok": true }` — HTTP 헬스(원격 에이전트 `Server.HTTPPort` 경로 동일). |
+| **GET** | `{API}/remote-health-check` | **Query**: `ip` (필수, 원격 호스트 IP). 이 서버가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`). | **200** `success` (원격 헬스 OK) / `fail` (연결·HTTP·응답 형식 오류). |
 | **GET** | `{API}/host-info` | **Query**: `ip` (선택). 비어 있거나 `self`면 `/self`와 동일. 그 외 해당 IP로 **UDP 유니캐스트** Discovery. | **200** `success` + 단일 호스트 객체, 또는 `fail` + 메시지. |
 
 ### `GET {API}/discovery`
@@ -86,7 +88,7 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{WEB}/client-runtime.js` | 없음 | **200** `application/javascript`, `Cache-Control: no-store`. 본문: `window.__CONTRABASS_API_PREFIX__="<APIPrefix>";` |
+| **GET** | `{WEB}/client-runtime.js` | 없음 | **200** `application/javascript`, `Cache-Control: no-store`. 본문: `window.__CONTRABASS_API_PREFIX__`, `window.__CONTRABASS_REMOTE_HEALTH__`(원격 헬스 폴링 간격·타임아웃·임계값·지터, 설정 반영). |
 | **GET** | `{WEB}/` 및 하위 | 경로 = embed된 `web/` 파일 (`index.html`, `app.js`, `style.css` 등) | 정적 파일 서빙 (`StripPrefix`). |
 
 ---

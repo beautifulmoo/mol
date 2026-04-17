@@ -169,7 +169,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **프론트엔드 prefix**: `{serverUrl}{WebPrefix}` (기본 `/web`, 설정 `Maintenance.WebPrefix`)
 - **백엔드 API prefix**: `{serverUrl}{APIPrefix}` (기본 `/api/v1`, 설정 `Maintenance.APIPrefix`)
 - **프론트엔드 진입 URL**: `{serverUrl}{WebPrefix}/index.html`
-- prefix는 설정 파일에서 수정할 수 있어야 한다. 브라우저는 하드코딩된 `/api/v1`가 아니라, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)를 먼저 로드한 뒤 `app.js`가 API를 호출한다.
+- prefix는 설정 파일에서 수정할 수 있어야 한다. 브라우저는 하드코딩된 `/api/v1`가 아니라, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)와 **`window.__CONTRABASS_REMOTE_HEALTH__`**(원격 HTTP 헬스 폴링 간격·타임아웃·실패 임계·지터, §7.1 `Maintenance.RemoteHealth`)를 먼저 로드한 뒤 `app.js`가 API를 호출한다.
 
 ### 4.1 CLI (명령줄)
 
@@ -315,6 +315,8 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **업데이트 기록** `GET .../update-log` — `update_history.log` 최근 10줄, `recent_rollback`, 진행 중이면 롤백 플래그 완화 등 기존과 동일.
 - **current-cfg** `GET/POST .../current-cfg` — 기존과 동일.
 - **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(버전 키는 describe 전체일 수 있음, 예: `contrabass-moleU 0.4.4-4-gc44d420`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
+- **에이전트 HTTP 헬스(JSON)** `GET {APIPrefix}/health` — JSON `success`, `data`에 `{ "ok": true }` 수준의 최소 응답. **원격 가용성 모니터링** 시 로컬 에이전트가 같은 경로로 노출하며(Gin이 `Server.HTTPPort`로 프록시), 웹 UI의 원격 헬스 확인은 **이 경로**를 대상으로 한다(UDP 미사용).
+- **원격 헬스 프록시** `GET {APIPrefix}/remote-health-check?ip=<원격 IP>` — 요청을 받은 에이전트가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`, §7.1)을 수행하고 성공·실패를 JSON으로 반환한다.
 
 ### 5.6 설치된 버전(versions) API
 
@@ -407,6 +409,13 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **내 정보**: `GET /api/v1/self`로 응답을 받아 기존 카드 DOM의 항목(버전, IP, 호스트명, CPU, 메모리 등)만 갱신하고, 이어서 `GET /api/v1/service-status`로 systemctl status를 갱신한다.  
   - **발견된 호스트**: `GET /api/v1/host-info?ip=<해당 호스트 IP>`로 응답을 받아 기존 카드의 호스트 정보만 갱신하고, 적용 버튼 활성/비활성·툴팁을 갱신한 뒤, `GET /api/v1/service-status?ip=...`로 systemctl status를 갱신한다. host-info가 실패해도 service-status는 조회하여 상태 영역은 갱신한다.
 
+### 6.5 원격 HTTP 헬스 모니터링 (Discovery로 발견된 호스트)
+
+- **목적**: 브로드캐스트 Discovery로만 알려진 원격 에이전트가 **Gin(`Server.HTTPPort`)** 경로에서 여전히 응답하는지 **HTTP**로 주기적으로 확인한다(UDP Discovery와 별개).
+- **실행 조건**: **브라우저 탭이 열려 있고** `document.visibilityState`가 visible인 동안만 타이머로 폴링한다. 백그라운드 탭·에이전트 프로세스 단독에서는 수행하지 않는다.
+- **클라이언트 동작**: `GET {APIPrefix}/remote-health-check?ip=` 를 호출한다(동일 출처·프록시). 간격·지터·실패 임계는 `Maintenance.RemoteHealth`(§7.1)와 `client-runtime.js`에 실린 값을 따른다. 연속 실패가 임계 이상이면 원격 카드에 경고·**「헬스 수동 확인」** 버튼을 표시하고, 한 줄 요약 행의 상태 점 스타일을 실패에 맞게 조정할 수 있다. 수동 확인 성공 시 `GET .../host-info?ip=`(UDP 유니캐스트 Discovery)로 호스트 정보를 다시 받아 카드·관련 패널을 갱신한다.
+- **신규 Discovery**: 스트림으로 새 원격 카드가 추가되면 **동일 규칙**으로 해당 IP에 대한 헬스 모니터링을 시작한다.
+
 ---
 
 ## 7. 설정
@@ -423,6 +432,11 @@ Maintenance:
   DiscoveryUDPPort: 9999
   WebPrefix: "/web"
   APIPrefix: "/api/v1"
+  RemoteHealth:
+    IntervalSeconds: 10
+    TimeoutSeconds: 2
+    FailureThreshold: 3
+    JitterSeconds: 2
 ```
 
 ### 7.1 설정 항목 (최소)
@@ -446,6 +460,11 @@ Maintenance:
 | `Maintenance.SSHPort` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `Maintenance.SSHUser` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
 | `Maintenance.MaxUploadBytes` | (선택) `POST /upload` 및 multipart `apply-update`의 **최대 요청 본문 크기**(바이트). 생략 시 `internal/config.DefaultMaxUploadBytes`(코드상 `64 << 20`). YAML에서는 **정수** 또는 문자열 **`"M << N"`** / 십진 문자열(예: `"67108864"`) — `internal/config`의 `uploadBytesExpr`로 파싱. 구현상 **1 MiB–10 GiB**로 클램프 | `67108864`, `"64 << 20"` |
+| `Maintenance.RemoteHealth` | (선택) **원격 HTTP 헬스** 폴링(웹 UI, §6.5). 하위 키는 모두 정수. 생략 시 코드 기본값 적용 | 아래 표 참고 |
+| `Maintenance.RemoteHealth.IntervalSeconds` | 기본 간격(초); 매 주기마다 `JitterSeconds` 이내 균등 랜덤 지연을 더해 다음 체크 시각을 잡는다 | `10` |
+| `Maintenance.RemoteHealth.TimeoutSeconds` | `remote-health-check`가 원격 `GET …/health`를 기다리는 **HTTP 타임아웃**(초) | `2` |
+| `Maintenance.RemoteHealth.FailureThreshold` | 연속 실패 횟수가 이 값 이상이면 카드에 실패 UI·수동 확인 버튼 | `3` |
+| `Maintenance.RemoteHealth.JitterSeconds` | 매 간격에 `[0, JitterSeconds]` 초 범위의 추가 지연(초) | `2` |
 
 - **Discovery 브로드캐스트 주소**: **3.1.1**에 따라 sysfs `type`·브리지 `brif/`·`ip` 출력으로 brd를 자동 수집한다(이름 패턴으로 거르지 않음). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일)를 fallback으로 사용한다.
 - **contrabass-mole.service는 root로 실행**되며, 로컬 서비스 상태·제어 시 **sudo를 사용하지 않는다**. 원격 **서비스 상태** 조회는 요청을 받은 서버가 원격 에이전트의 API(**`Server.HTTPPort`**, Gin)를 호출하고, 원격 에이전트가 자체 `systemctl status`를 실행한 뒤 응답을 반환한다. 원격 **서비스 시작/중지**는 요청을 받은 서버가 해당 호스트로 **SSH** 접속하여 `systemctl start/stop`을 실행한다(원격 에이전트가 꺼져 있어도 시작 가능). SSH 포트·사용자는 `SSHPort`, `SSHUser`로 지정하며, 키 기반 인증이 필요하다. 원격 **서비스 재시작**은 SSH를 사용하지 않고, 요청을 받은 서버가 원격 에이전트 API로 `POST service-control` (ip: "self", action: "restart")를 호출하며, 원격 에이전트가 자기 서버에서 `systemctl restart`를 실행한다(SSH 공개키 등록 없이 가능).
@@ -477,6 +496,8 @@ Maintenance:
 - **자기 정보 API**: GET /api/v1/self — 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하고, `host_ip`는 그중 첫 번째. 버전, CPU UUID, CPU, 메모리 등 포함.
 - **cpu_uuid(호스트 식별자) 확보 순서(Linux)**: `/sys/class/dmi/id/product_uuid`(DMI가 있으면 `dmidecode -s system-uuid`와 동일 값; sysfs만 읽어 **dmidecode 바이너리 불필요**) → `/etc/machine-id` → `/var/lib/dbus/machine-id`(보통 `/etc/machine-id`와 동일). `/proc/cpuinfo`의 `Serial`은 사용하지 않는다(서버에서 비어 있는 경우가 많고, DMI 없는 환경은 machine-id로 식별). VM 템플릿 복제 시 여러 대가 동일 machine-id를 가질 수 있으니 운영 시 주의.
 - **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
+- **HTTP 헬스(JSON)**: GET {APIPrefix}/health — 최소 JSON 성공 응답(원격 모니터링·`remote-health-check` 프록시 대상).
+- **원격 헬스 프록시**: GET {APIPrefix}/remote-health-check?ip= — 로컬 에이전트가 원격 `Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃 `Maintenance.RemoteHealth.TimeoutSeconds`).
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, DoDiscoveryUnicast; 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
@@ -500,7 +521,7 @@ Maintenance:
 - [ ] Discovery 일괄: `GET {APIPrefix}/discovery`, data 배열(빈 경우 []); 쿼리 `exclude_self`·`timeout`; **웹 UI 미호출**
 - [ ] Discovery SSE: `GET {APIPrefix}/discovery/stream`, 동일 쿼리 지원; 웹 UI는 쿼리 없이 기본만 사용
 - [ ] Gin 프록시(루트 main): **`-cfg <파일>` 서비스 모드에서만** 기동(`ShouldStartGinReverseProxy`); `Server.HTTPPort`, `WebPrefix`·`APIPrefix`로 maintenance에 프록시; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
-- [ ] 웹: `client-runtime.js`로 `APIPrefix` 주입 후 `app.js` API 호출
+- [ ] 웹: `client-runtime.js`로 `APIPrefix`·`RemoteHealth` 설정 주입 후 `app.js` API 호출
 - [ ] URL prefix: `WebPrefix`·`APIPrefix`, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
@@ -513,7 +534,7 @@ Maintenance:
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`). 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 에이전트 API 호출**(SSH 키 불필요)
 - [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
-- [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열) (선택); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리 `--version`**
+- [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리 `--version`**
 - [ ] **CLI**: **`-cfg <파일>`** 로만 HTTP 서버 + Discovery 기동; 인자 없이 실행 시 안내 후 종료; `-h`/`--help`; `--version`/`-version`; `--nic-brd`; **`--discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`)
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`internal/updatescripts` embed, `Makefile` 동기화); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; 로컬 적용 후 **페이지 전체 새로고침 없이** `/self` 폴링 → 업데이트 기록·config·versions·상태·update-status 현행화; 원격 적용 후 host-info 폴링(최대 8회) → 동일 패널 현행화; 로그 폴링 2초 간격; **GET /version** 헬스; recent_rollback·update_in_progress

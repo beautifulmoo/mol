@@ -265,6 +265,10 @@ func Run(buildVersionKey string, args []string) int {
 		SSHPort:              cfg.SSHPort,
 		SSHUser:              cfg.SSHUser,
 		MaxUploadBytes:       cfg.MaxUploadBytes.Int(),
+		RemoteHealthCheckIntervalSeconds:  cfg.RemoteHealth.IntervalSeconds,
+		RemoteHealthCheckTimeoutSeconds:   cfg.RemoteHealth.TimeoutSeconds,
+		RemoteHealthCheckFailureThreshold: cfg.RemoteHealth.FailureThreshold,
+		RemoteHealthCheckJitterSeconds:    cfg.RemoteHealth.JitterSeconds,
 	})
 
 	// maintenance HTTP is typically internal-only; access via Gin(8888) reverse proxy.

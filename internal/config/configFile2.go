@@ -32,6 +32,16 @@ type Config struct {
 	// MaxUploadBytes is the max multipart body size for POST /upload and multipart apply-update (agent + config).
 	// YAML: integer bytes, or string "64 << 20" / "67108864". Omitted uses DefaultMaxUploadBytes. 0 → server default.
 	MaxUploadBytes uploadBytesExpr `yaml:"MaxUploadBytes"`
+	// RemoteHealth configures HTTP remote host health checks (maintenance web → remote Server.HTTPPort GET …/health). Browser polls only while the page is open.
+	RemoteHealth RemoteHealthConfig `yaml:"RemoteHealth"`
+}
+
+// RemoteHealthConfig holds nested Maintenance.RemoteHealth settings.
+type RemoteHealthConfig struct {
+	IntervalSeconds  int `yaml:"IntervalSeconds"`  // default 10; base seconds between checks (plus jitter)
+	TimeoutSeconds   int `yaml:"TimeoutSeconds"`   // default 2; per-request HTTP timeout
+	FailureThreshold int `yaml:"FailureThreshold"` // default 3; consecutive failures → UI "dead"
+	JitterSeconds    int `yaml:"JitterSeconds"`    // default 2; random [0,jitter] seconds added each interval
 }
 
 // FileConfig is the on-disk YAML shape:
@@ -56,7 +66,7 @@ const DefaultMaxUploadBytes = 64 << 20
 
 // Default returns default configuration values.
 func Default() Config {
-	return Config{
+	c := Config{
 		DiscoveryServiceName:      DefaultDiscoveryServiceName,
 		DiscoveryBroadcastAddress: "192.168.0.255",
 		DiscoveryUDPPort:          9999,
@@ -71,8 +81,16 @@ func Default() Config {
 		DeployBase:                "/var/lib/contrabass/mole",
 		SSHPort:                   22,
 		SSHUser:                   "root",
-		MaxUploadBytes:            uploadBytesExpr(DefaultMaxUploadBytes),
+		MaxUploadBytes: uploadBytesExpr(DefaultMaxUploadBytes),
+		RemoteHealth: RemoteHealthConfig{
+			IntervalSeconds:  10,
+			TimeoutSeconds:   2,
+			FailureThreshold: 3,
+			JitterSeconds:    2,
+		},
 	}
+	normalizeRemoteHealthCheck(&c)
+	return c
 }
 
 // Load reads config from path. If path is empty, "config.yaml" in the current directory is used.
@@ -95,7 +113,37 @@ func LoadFromBytes(data []byte) (*Config, error) {
 		return nil, configValidationError(err)
 	}
 	f.Maintenance.ServerHTTPPort = f.Server.HTTPPort
+	normalizeRemoteHealthCheck(&f.Maintenance)
 	return &f.Maintenance, nil
+}
+
+// normalizeRemoteHealthCheck applies defaults and sane bounds after YAML load.
+func normalizeRemoteHealthCheck(c *Config) {
+	rh := &c.RemoteHealth
+	if rh.IntervalSeconds <= 0 {
+		rh.IntervalSeconds = 10
+	}
+	if rh.IntervalSeconds > 86400 {
+		rh.IntervalSeconds = 86400
+	}
+	if rh.TimeoutSeconds <= 0 {
+		rh.TimeoutSeconds = 2
+	}
+	if rh.TimeoutSeconds > 120 {
+		rh.TimeoutSeconds = 120
+	}
+	if rh.FailureThreshold <= 0 {
+		rh.FailureThreshold = 3
+	}
+	if rh.FailureThreshold > 100 {
+		rh.FailureThreshold = 100
+	}
+	if rh.JitterSeconds < 0 {
+		rh.JitterSeconds = 0
+	}
+	if rh.JitterSeconds > 300 {
+		rh.JitterSeconds = 300
+	}
 }
 
 // configValidationError turns a YAML unmarshal error into a user-friendly message in Korean.

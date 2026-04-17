@@ -113,6 +113,10 @@ type Server struct {
 	sshPort              int
 	sshUser              string
 	maxUploadBytes       int64 // POST /upload & multipart apply-update: max body (tar.gz bundle field)
+	remoteHealthIntervalSec  int
+	remoteHealthTimeoutSec   int
+	remoteHealthThreshold    int
+	remoteHealthJitterSec    int
 }
 
 // Config for Server.
@@ -132,6 +136,10 @@ type Config struct {
 	SSHPort              int    // for remote service start/stop via SSH (default 22)
 	SSHUser              string // SSH user for remote (default "root")
 	MaxUploadBytes       int    // 0 or omit → config.DefaultMaxUploadBytes (64<<20); max multipart body for upload / multipart apply-update
+	RemoteHealthCheckIntervalSeconds  int
+	RemoteHealthCheckTimeoutSeconds   int
+	RemoteHealthCheckFailureThreshold int
+	RemoteHealthCheckJitterSeconds    int
 }
 
 // New creates a Server.
@@ -152,9 +160,25 @@ func New(cfg Config) *Server {
 		sshPort:              cfg.SSHPort,
 		sshUser:              cfg.SSHUser,
 		maxUploadBytes:       normalizeMaxUploadBytes(cfg.MaxUploadBytes),
+		remoteHealthIntervalSec:  cfg.RemoteHealthCheckIntervalSeconds,
+		remoteHealthTimeoutSec:   cfg.RemoteHealthCheckTimeoutSeconds,
+		remoteHealthThreshold:    cfg.RemoteHealthCheckFailureThreshold,
+		remoteHealthJitterSec:    cfg.RemoteHealthCheckJitterSeconds,
 	}
 	if s.installPrefix == "" {
 		s.installPrefix = s.deployBase
+	}
+	if s.remoteHealthIntervalSec <= 0 {
+		s.remoteHealthIntervalSec = 10
+	}
+	if s.remoteHealthTimeoutSec <= 0 {
+		s.remoteHealthTimeoutSec = 2
+	}
+	if s.remoteHealthThreshold <= 0 {
+		s.remoteHealthThreshold = 3
+	}
+	if s.remoteHealthJitterSec < 0 {
+		s.remoteHealthJitterSec = 0
 	}
 	return s
 }
@@ -270,7 +294,76 @@ func (s *Server) handleClientRuntime(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	healthCfg := map[string]int{
+		"intervalSec":       s.remoteHealthIntervalSec,
+		"timeoutSec":        s.remoteHealthTimeoutSec,
+		"failureThreshold":  s.remoteHealthThreshold,
+		"jitterSec":         s.remoteHealthJitterSec,
+	}
+	healthJSON, err := json.Marshal(healthCfg)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	fmt.Fprintf(w, "window.__CONTRABASS_API_PREFIX__=%s;\n", quoted)
+	fmt.Fprintf(w, "window.__CONTRABASS_REMOTE_HEALTH__=%s;\n", string(healthJSON))
+}
+
+// handleHealth returns a minimal JSON liveness payload for GET {APIPrefix}/health (remote agents use the same path via Gin proxy).
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	s.send(w, "success", map[string]interface{}{"ok": true}, http.StatusOK)
+}
+
+// handleRemoteHealthCheck proxies GET .../health to the discovered host's Server.HTTPPort (HTTP API, not UDP).
+func (s *Server) handleRemoteHealthCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip == "" || ip == "self" {
+		s.send(w, "fail", "ip 쿼리가 필요합니다", http.StatusOK)
+		return
+	}
+	baseURL, err := s.remoteBaseURL(ip)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	u := baseURL + s.apiPrefix + "/health"
+	timeout := time.Duration(s.remoteHealthTimeoutSec) * time.Second
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		s.send(w, "fail", fmt.Sprintf("HTTP %d", resp.StatusCode), http.StatusOK)
+		return
+	}
+	var out APIResponse
+	if json.Unmarshal(body, &out) == nil && out.Status == "success" {
+		s.send(w, "success", map[string]interface{}{"ok": true}, http.StatusOK)
+		return
+	}
+	s.send(w, "fail", "health 응답 형식이 아닙니다", http.StatusOK)
 }
 
 // Handler returns http.Handler that serves web and API.
@@ -280,6 +373,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleRoot)
 	// API
 	mux.HandleFunc(s.apiPrefix+"/self", s.handleSelf)
+	mux.HandleFunc(s.apiPrefix+"/health", s.handleHealth)
+	mux.HandleFunc(s.apiPrefix+"/remote-health-check", s.handleRemoteHealthCheck)
 	mux.HandleFunc(s.apiPrefix+"/host-info", s.handleHostInfo)
 	mux.HandleFunc(s.apiPrefix+"/discovery", s.handleDiscovery)
 	mux.HandleFunc(s.apiPrefix+"/discovery/stream", s.handleDiscoveryStream)

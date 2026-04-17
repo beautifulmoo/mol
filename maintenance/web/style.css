@@ -425,6 +425,31 @@ h3 {
   border: none;
   border-top: none;
 }
+.remote-health-row {
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.remote-health-warn:not([hidden]) {
+  flex: 1;
+  min-width: 10rem;
+}
+.remote-health-warn {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #b45309;
+  background: #451a03;
+  color: #fcd34d;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.host-row--remote-health-dead .host-row__dot {
+  background: #991b1b !important;
+  box-shadow: 0 0 0 2px rgba(153, 27, 27, 0.45);
+}
 .host-list {
   display: flex;
   flex-direction: column;

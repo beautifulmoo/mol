@@ -287,6 +287,13 @@ func maxBundleUnpackedBytes(maxRequest int64) int64 {
 	return u
 }
 
+// PrepareAgentBundleFromReader runs the same validation as POST /upload: extract tar.gz, manifest, hashes, config YAML, ELF, and version from the agent binary.
+// baseDir is only used as the parent for a temporary work directory (e.g. os.TempDir()).
+// Caller must os.RemoveAll(workDir) when done.
+func PrepareAgentBundleFromReader(baseDir string, bundleReader io.Reader, maxRequestBytes int64) (versionKey string, configData []byte, bundlePath string, workDir string, agentExtractPath string, err error) {
+	return prepareAgentBundle(baseDir, bundleReader, maxRequestBytes)
+}
+
 // prepareAgentBundle reads a tar.gz stream into base/.bundle-*/, extracts it, validates manifest, hashes, config YAML, ELF, and --version.
 // agentExtractPath is the absolute path to the agent binary inside the extracted tree (for copying to staging).
 // Caller must os.RemoveAll(workDir) when done (after remote POST if bundlePath is needed).

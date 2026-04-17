@@ -51,6 +51,11 @@ func isELFExecutable(header []byte) bool {
 	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
 }
 
+// VersionKeyFromAgentBinary runs binPath --version and returns the version key after "<BinaryName> " (same as POST /upload validation). Exported for CLI.
+func VersionKeyFromAgentBinary(binPath string) (string, error) {
+	return versionKeyFromAgentBinary(binPath)
+}
+
 // versionKeyFromAgentBinary runs binPath --version and returns the version key after "<BinaryName> " (same string as GET /version).
 func versionKeyFromAgentBinary(binPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

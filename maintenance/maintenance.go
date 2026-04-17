@@ -18,6 +18,7 @@ import (
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/internal/config"
 	"contrabass-agent/maintenance/discovery"
+	"contrabass-agent/maintenance/applycli"
 	"contrabass-agent/maintenance/discoverycli"
 	"contrabass-agent/maintenance/hostinfo"
 	"contrabass-agent/maintenance/server"
@@ -34,6 +35,7 @@ const helpText = `Contrabass agent — Discovery 및 웹 UI
   -version, --version    버전 출력 후 종료
   --nic-brd              Discovery와 동일 규칙으로 인터페이스별 IPv4 brd 출력 (확인용) 후 종료
   --discovery [flags]    설정 없이 UDP Discovery만 수행 (<bin> --discovery -h)
+  --apply-update [flags] 번들 업로드·적용 한 번에 수행 (<bin> --apply-update -h)
 
 `
 
@@ -102,6 +104,8 @@ func Run(buildVersionKey string, args []string) int {
 			return 0
 		case "--discovery":
 			return discoverycli.Run(args[2:])
+		case "--apply-update":
+			return applycli.Run(args[2:])
 		}
 	}
 	if args[1] != "-cfg" {

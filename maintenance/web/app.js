@@ -410,7 +410,10 @@
           .then(function (body) {
             if (body.status === 'success' && body.data) {
               updateHostCardDetails(cardEl, body.data);
-              if (!isSelf) updateAllHostApplyButtons();
+              if (!isSelf) {
+                fetchUpdateStatusForRemote(ip);
+                updateAllHostApplyButtons();
+              }
             } else {
               if (summary) summary.textContent = isSelf ? (body.data || '내 정보를 불러올 수 없습니다.') : (body.data || '호스트 정보를 불러올 수 없습니다.');
             }
@@ -516,7 +519,13 @@
       applyHostBtn.addEventListener('click', function () {
         var card = applyHostBtn.closest && applyHostBtn.closest('.host-card');
         var hostVersion = card ? (card.getAttribute('data-host-version') || '') : '';
-        if (!canApplyToThisRemoteHost(hostVersion)) {
+        var stPre = remoteUpdateStatusByIP[ip];
+        var canProceed = hasUploadableSelection()
+          ? true
+          : (stPre && stPre.ok
+            ? !!(stPre.can_apply && stPre.apply_version)
+            : canApplyToThisRemoteHostLegacy(hostVersion));
+        if (!canProceed) {
           if (summary) summary.textContent = '이 호스트에 적용할 스테이징 버전이 없거나 이미 동일 버전입니다.';
           return;
         }
@@ -525,8 +534,23 @@
 
         function recheckApplyButton() {
           var c = applyHostBtn.closest && applyHostBtn.closest('.host-card');
-          var hv = c ? (c.getAttribute('data-host-version') || '') : '';
-          applyHostBtn.disabled = !canApplyToThisRemoteHost(hv);
+          if (!c) return;
+          var hv = c.getAttribute('data-host-version') || '';
+          var hip = c.getAttribute('data-host-ip') || '';
+          var st = remoteUpdateStatusByIP[hip];
+          if (hasUploadableSelection()) {
+            applyHostBtn.disabled = false;
+            return;
+          }
+          if (st && st.ok) {
+            applyHostBtn.disabled = !(st.can_apply && st.apply_version);
+            return;
+          }
+          if (!st || st.pending) {
+            applyHostBtn.disabled = true;
+            return;
+          }
+          applyHostBtn.disabled = !canApplyToThisRemoteHostLegacy(hv);
         }
 
         function doApplyToHost(version) {
@@ -552,7 +576,8 @@
             .finally(recheckApplyButton);
         }
 
-        var applicableVersion = getApplicableVersion();
+        var stV = remoteUpdateStatusByIP[ip];
+        var applicableVersion = (stV && stV.ok && stV.apply_version) ? stV.apply_version : getApplicableVersion();
         if (applicableVersion) {
           doApplyToHost(applicableVersion);
           return;
@@ -597,13 +622,17 @@
   }
 
   function getApplicableVersion() {
+    if (lastUpdateStatus.apply_version) {
+      return lastUpdateStatus.apply_version;
+    }
     if (lastUpdateStatus.staging_versions && lastUpdateStatus.staging_versions.length > 0) {
       return lastUpdateStatus.staging_versions[0];
     }
     return lastUploadedVersion || '';
   }
 
-  function canApplyToThisRemoteHost(hostVersion) {
+  /** Fallback when /update-status?ip= failed: approximate using newest staging vs card version (may disagree with server). */
+  function canApplyToThisRemoteHostLegacy(hostVersion) {
     if (hasUploadableSelection()) return true;
     var applicable = getApplicableVersion();
     if (!applicable) return false;
@@ -740,15 +769,46 @@
   }
 
   function updateAllHostApplyButtons() {
-    var applicableVersion = getApplicableVersion();
+    var localApplicable = getApplicableVersion();
     var btns = document.querySelectorAll('.apply-update-host');
     for (var i = 0; i < btns.length; i++) {
       var btn = btns[i];
       var card = btn.closest && btn.closest('.host-card');
-      var hostVersion = card ? (card.getAttribute('data-host-version') || '') : '';
-      var canApply = canApplyToThisRemoteHost(hostVersion);
+      if (!card) continue;
+      var hostVersion = card.getAttribute('data-host-version') || '';
+
+      if (hasUploadableSelection()) {
+        btn.disabled = false;
+        btn.title = localApplicable
+          ? (localApplicable + ' 번들로 원격 전송 가능')
+          : 'tar.gz 번들로 원격 적용';
+        continue;
+      }
+
+      var ip = card.getAttribute('data-host-ip') || '';
+      var st = remoteUpdateStatusByIP[ip];
+
+      if (!st || st.pending) {
+        btn.disabled = true;
+        btn.title = '로컬 스테이징과 원격 버전 비교 중…';
+        continue;
+      }
+
+      var applicableVersion;
+      var canApply;
+      if (st.ok) {
+        canApply = !!st.can_apply && !!st.apply_version;
+        applicableVersion = st.apply_version || '';
+        btn.disabled = !canApply;
+        btn.title = getApplyButtonTitle(hostVersion, canApply, applicableVersion || localApplicable);
+        continue;
+      }
+
+      applicableVersion = localApplicable;
+      canApply = canApplyToThisRemoteHostLegacy(hostVersion);
       btn.disabled = !canApply;
-      btn.title = getApplyButtonTitle(hostVersion, canApply, applicableVersion);
+      btn.title = (st && st.err ? '원격 상태 확인 실패 — 표시는 추정입니다. ' : '') +
+        getApplyButtonTitle(hostVersion, canApply, applicableVersion);
     }
   }
 
@@ -1034,6 +1094,7 @@
           if (row) updateHostRowLabel(row, host, false);
           var primaryIp = existing.getAttribute('data-host-ip') || ip;
           fetchServiceStatus(existing, primaryIp);
+          fetchUpdateStatusForRemote(primaryIp);
           updateAllHostApplyButtons();
           registerRemoteHealthMonitoring(existing);
         } else {
@@ -1042,6 +1103,7 @@
           var card = row.querySelector('.host-card');
           bindServiceControlButtons(card);
           fetchServiceStatus(card, ip);
+          fetchUpdateStatusForRemote(ip);
           registerRemoteHealthMonitoring(card);
         }
         count = list.querySelectorAll('.host-card:not(.self-card)').length;
@@ -1052,6 +1114,7 @@
       evtSource.close();
       btn.disabled = false;
       status.textContent = count ? '호스트 ' + count + '개 발견.' : 'Discovery 완료 (결과 없음).';
+      fetchUpdateStatusForAllRemoteHosts();
       updateAllHostApplyButtons();
     });
     evtSource.onerror = function () {
@@ -1072,6 +1135,47 @@
 
   var lastUploadedVersion = '';
   var lastUpdateStatus = { can_apply: false, apply_version: '', staging_versions: [], remove_version: '' };
+
+  /** Per remote host: GET /update-status?ip= — same StagingUpdateAvailable logic as server (local staging vs that host's running version). */
+  var remoteUpdateStatusByIP = {};
+
+  function fetchUpdateStatusForRemote(ip) {
+    if (!ip) return;
+    remoteUpdateStatusByIP[ip] = { pending: true, ok: false };
+    fetch(API_BASE + '/update-status?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status !== 'success' || !body.data) {
+          remoteUpdateStatusByIP[ip] = { pending: false, ok: false, err: true, can_apply: false, apply_version: '' };
+          updateAllHostApplyButtons();
+          return;
+        }
+        var d = body.data;
+        remoteUpdateStatusByIP[ip] = {
+          pending: false,
+          ok: true,
+          can_apply: !!d.can_apply,
+          apply_version: d.apply_version || ''
+        };
+        updateAllHostApplyButtons();
+      })
+      .catch(function () {
+        remoteUpdateStatusByIP[ip] = { pending: false, ok: false, err: true, can_apply: false, apply_version: '' };
+        updateAllHostApplyButtons();
+      });
+  }
+
+  function fetchUpdateStatusForAllRemoteHosts() {
+    var cards = document.querySelectorAll('#discovered-hosts .host-card:not(.self-card)');
+    var seen = {};
+    for (var i = 0; i < cards.length; i++) {
+      var hip = cards[i].getAttribute('data-host-ip');
+      if (hip && !seen[hip]) {
+        seen[hip] = true;
+        fetchUpdateStatusForRemote(hip);
+      }
+    }
+  }
 
   function fetchUpdateStatus() {
     fetch(API_BASE + '/update-status')
@@ -1096,6 +1200,7 @@
             : '';
         }
         updateAllHostApplyButtons();
+        fetchUpdateStatusForAllRemoteHosts();
       })
       .catch(function () {});
   }

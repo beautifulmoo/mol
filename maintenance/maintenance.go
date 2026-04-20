@@ -20,8 +20,10 @@ import (
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/applycli"
 	"contrabass-agent/maintenance/discoverycli"
+	"contrabass-agent/maintenance/hostinfocli"
 	"contrabass-agent/maintenance/hostinfo"
 	"contrabass-agent/maintenance/server"
+	"contrabass-agent/maintenance/versionscli"
 )
 
 const helpText = `Contrabass agent — Discovery and maintenance web UI
@@ -33,9 +35,12 @@ Usage:
 Options:
   -h, --help             Show this help
   -version, --version    Print version and exit
+  --host-info [flags] Show host info (local /self or unicast discovery) (<bin> --host-info -h)
   --nic-brd              Print per-interface IPv4 broadcast addresses (same rules as Discovery), then exit
   --discovery [flags]    Run UDP Discovery only, no config (<bin> --discovery -h)
   --apply-update [flags] Upload bundle and apply in one step (<bin> --apply-update -h)
+  --versions-list [flags] List installed versions (local or remote) (<bin> --versions-list -h)
+  --versions-switch [flags] Switch current version via maintenance API (<bin> --versions-switch -h)
 
 `
 
@@ -106,6 +111,12 @@ func Run(buildVersionKey string, args []string) int {
 			return discoverycli.Run(args[2:])
 		case "--apply-update":
 			return applycli.Run(args[2:])
+		case "--versions-list":
+			return versionscli.RunList(args[2:])
+		case "--versions-switch":
+			return versionscli.RunSwitch(args[2:])
+		case "--host-info":
+			return hostinfocli.Run(args[2:])
 		}
 	}
 	if args[1] != "-cfg" {

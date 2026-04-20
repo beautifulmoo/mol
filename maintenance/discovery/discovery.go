@@ -634,9 +634,9 @@ func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 		if !ok {
 			return nil, fmt.Errorf("no response from %s", ip)
 		}
-		if r.HostIP != ip {
-			return nil, fmt.Errorf("response from wrong host: %s", r.HostIP)
-		}
+		// Do not require r.HostIP == ip: on multi-homed hosts the DISCOVERY_RESPONSE
+		// host_ip (and UDP source) can be another local address than the unicast
+		// destination. request_id already ties this packet to our request.
 		return r, nil
 	case <-timer.C:
 		return nil, fmt.Errorf("timeout waiting for response from %s", ip)

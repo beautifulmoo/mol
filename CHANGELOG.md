@@ -2,10 +2,21 @@
 
 ## 레이아웃
 
-- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`Run`: `--discovery` CLI, 반환 코드), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
+- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`--discovery`), `applycli`, `versionscli`(`--versions-list` / `--versions-switch`), `hostinfocli`(`--host-info`), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
 - **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `contrabass-agent/internal/config`.
 
 ## Discovery / CLI (최근)
+
+### 유지보수 REST 대응 CLI (`-cfg` 필요)
+
+- **`--versions-list`**: `GET …/versions/list` — 로컬 또는 `?ip=` 원격 프록시. `maintenance/versionscli`.
+- **`--versions-switch`**: `POST …/versions/switch-current` — 원격 시 `Server.HTTPPort` TCP 확인 후 프록시. `maintenance/versionscli`.
+- **`--host-info`**: `GET …/host-info` — `self`는 `/self`와 동일, 원격 IP는 서버가 **UDP 유니캐스트**만 수행(Gin 프록시 아님). `maintenance/hostinfocli`.
+- 위 CLI는 **`MaintenanceListenAddress`·`MaintenancePort`·`APIPrefix`** 등을 설정 YAML에서 읽는다(파일명은 임의 경로 가능). `-h` 옵션 나열 순서에서 **`--host-info`** 는 **`--version`과 `--nic-brd` 사이**.
+
+### Discovery 유니캐스트(멀티홈)
+
+- **`DoDiscoveryUnicast`**: 응답의 `host_ip`가 유니캐스트 목적지 IP와 다를 수 있음(동일 호스트·다중 NIC). **`request_id`로만** 응답을 매칭하고 `host_ip` 문자열 일치를 요구하지 않는다.
 
 ### `mol --apply-update` (번들 한 번에 업로드·적용)
 

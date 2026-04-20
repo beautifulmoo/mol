@@ -185,7 +185,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ## 5. API
 
-**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를 본다.
+**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를, **CLI 옵션·`--discovery`·`--apply-update`** 는 [`docs/CLI.md`](docs/CLI.md)를 본다.
 
 ### 5.1 공통 응답 형식 (일반 API)
 

@@ -1,5 +1,7 @@
 # Maintenance HTTP API 명세
 
+**CLI(명령줄)** 는 **[CLI.md](./CLI.md)** 를 참고한다.
+
 `maintenance/server/server.go`의 `Handler()`에 등록된 엔드포인트를 정리한다.  
 **기본 URL**은 `http://<호스트>:<Maintenance.MaintenancePort>`이며, 경로 앞에는 설정값 **`Maintenance.APIPrefix`**(기본 `/api/v1`), **`Maintenance.WebPrefix`**(기본 `/web`)가 붙는다. 아래 표에서는 `{API}`, `{WEB}`로 표기한다.
 

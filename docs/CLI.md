@@ -41,7 +41,44 @@ contrabass-moleU -cfg /path/to/config.yaml
 
 ## `-h` / `--help`
 
-표준 도움말 출력(영문). 서비스 미기동.
+표준 도움말 출력(영문). 서비스 미기동. 아래 **개별 명령 절 순서**는 **`contrabass-moleU -h`** 에 나오는 옵션 순서와 같다(`--version` 다음 **`--host-info`**, 그다음 **`--nic-brd`** …).
+
+---
+
+## `--host-info`
+
+**로컬 maintenance HTTP는 필요 없다.** 동작은 **`GET …/host-info`** 와 같은 규칙으로, 공유 패키지 **`maintenance/hostinfoapi`** 에서 서버 핸들러와 같은 핵심 로직을 쓴다.
+
+- **`self`**: 로컬 `hostinfo`와 설정(버전 문자열·`MaintenancePort`·`DiscoveryServiceName` 등)으로 **`GET /self`** 와 동일한 `DISCOVERY_RESPONSE` 형을 만든다. `VERSION` 은 빌드 시 주입된 **`main.VersionKey`**(인자 없을 때 `0.0.0-0`)를 쓴다.
+- **원격 IP**: **`OpenDiscoveryClientUDP`** 로 **`-src-port`**(기본 `9998`)에 바인드하고, 요청은 **`DiscoveryUDPPort`**(기본 9999)로 보낸다. 로컬 에이전트가 9999를 쓰는 경우와 충돌하지 않도록 기본 소스 포트를 9998로 둔다(`--discovery`와 동일한 발상). **`--src-port`를 `DiscoveryUDPPort`와 같게 주면** 에이전트가 떠 있을 때 바인드에 실패할 수 있다.
+
+### 사용법
+
+```text
+contrabass-moleU --host-info -cfg /path/to/config.yaml [flags] <self|remote-ip>
+contrabass-moleU --host-info -h
+```
+
+### 플래그 (원격 IP일 때만 의미 있음)
+
+| 플래그 | 기본값 | 설명 |
+|--------|--------|------|
+| **`-src-port`** | `9998` | 유니캐스트용 **로컬 UDP 바인드 포트**. 생략 시 항상 **9998**. 에이전트가 이미 `DiscoveryUDPPort`(보통 9999)를 쓰는 경우와 충돌하지 않게 하려는 값이다. **`--discovery`** 와 같은 패턴. |
+
+**`-cfg`**, **`-src-port`**, **`<self|remote-ip>`** 는 **순서와 무관**하게 줄 수 있다(예: `<ip> -cfg path` 도 유효).
+
+목적지 UDP 포트는 설정의 **`DiscoveryUDPPort`**(원격 에이전트 listen 포트)를 쓴다.
+
+### 인자
+
+| 위치 | 설명 |
+|------|------|
+| **`-cfg`** | **필수.** 설정 파일 경로(Discovery·표시용 메타·버전 키 외 필드 로드). |
+| **첫 번째 인자** | **`self`**: 로컬. **IPv4/IPv6 주소**: 유니캐스트 대상(호스트명 불가). |
+
+표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, `CPU_UUID` 등 라벨·값 테이블(영문 헤더).
+
+구현: `maintenance/hostinfocli/hostinfocli.go` → `maintenance/hostinfoapi`.
 
 ---
 
@@ -93,7 +130,7 @@ contrabass-moleU --discovery -h
 
 ## `--apply-update`
 
-번들 **tar.gz** 를 검증한 뒤, **업데이트 정책**(`internal/config.StagingUpdateAvailable`)을 만족할 때만 **업로드·적용**을 한 번에 수행한다. **로컬 maintenance HTTP**가 실행 중이어야 한다(원격 대상이어도 요청은 **이 머신의 maintenance**로 보낸다).
+번들 **tar.gz** 를 검증한 뒤, **업데이트 정책**(`internal/config.StagingUpdateAvailable`)을 만족할 때만 **스테이징·적용**을 한 번에 수행한다. **로컬 maintenance(8889)는 필요 없다** — **`self`** 는 디스크에 스테이징 후 `systemd-run` 적용(`server.ApplyUpdateSelfFromBundleExtract`), **원격 IP** 는 해당 호스트 **Gin**에 multipart `POST …/apply-update`만 보낸다.
 
 ### 사용법
 
@@ -114,27 +151,28 @@ contrabass-moleU --apply-update -h
 
 1. 설정 로드 및 **`Maintenance.MaxUploadBytes`** 범위 안에서 번들 크기 확인.
 2. 번들을 임시 디렉터리에 풀어 **서버 `POST /upload` 와 동일한 검증**(`server.PrepareAgentBundleFromReader`) — manifest·해시·ELF·바이너리 `--version` 등.
-3. **현재 버전**: `GET {APIPrefix}/self`  
-   - **self**: `http://<MaintenanceListenAddress 또는 0.0.0.0→127.0.0.1>:MaintenancePort` + `APIPrefix`  
-   - **remote**: `http://<remote-ip>:Server.HTTPPort` + `APIPrefix` — 적용 전 **`TCP`로 `<ip>:Server.HTTPPort` 연결** 가능 여부를 확인한다.
+3. **현재 버전**  
+   - **self**: 실행 중인 CLI 바이너리의 빌드 버전 키(`main.VersionKey`)와 동일한 규칙으로 비교; 비어 있으면 `DeployBase` 의 `current` 심볼릭 대상( `versionsapi.ResolveSymlinkVersion` )을 사용한다 — **`GET /self` HTTP 없음**.  
+   - **remote**: `http://<remote-ip>:Server.HTTPPort` + `APIPrefix` + `/self` — 적용 전 **`TCP`로 `<ip>:Server.HTTPPort` 연결** 가능 여부를 확인한다.
 4. **`StagingUpdateAvailable(번들 버전 키, 현재 버전 키)`** 가 거짓이면 업로드하지 않고 종료 코드 `1`.
 
 ### 적용 경로
 
 | 대상 | 동작 |
 |------|------|
-| **self** | `POST …/upload` (multipart 필드 **`bundle`**) → `POST …/apply-update` JSON `{"version":"<버전 키>"}` (ip 생략). |
-| **remote** | `POST …/apply-update` **multipart**: 필드 **`ip`**(원격 IP), **`bundle`**(번들 파일). 서버가 원격에 **`POST …/upload`** 후 원격 **`apply-update`(self)** 를 호출한다 — **로컬 스테이징 없이 원격만** 갱신(PRD §5.5.3 multipart 원격 적용과 동일). |
+| **self** | 검증된 번들을 `DeployBase` 아래 스테이징한 뒤 `versionsapi.RunSwitchCurrentWithRoots` 와 동일한 로컬 적용(웹 `POST /upload` + 로컬 `apply-update` 와 동등). **`DeployBase/current` 등에 쓰기·`systemd-run` 은 보통 `sudo` 필요.** |
+| **remote** | `http://<ip>:Server.HTTPPort` + `{APIPrefix}` + **`POST …/apply-update`** multipart: 필드 **`ip`**, **`bundle`**. 요청은 **원격 Gin**에서 처리되며, 원격이 **`POST …/upload`** 후 로컬 **`apply-update`(self)** 를 이어서 호출한다(PRD §5.5.3 multipart 원격 적용과 동일). **로컬 에이전트·maintenance 불필요.** |
 
 HTTP 클라이언트 타임아웃은 **300초** 수준(대용량 번들·느린 링크 대비).
 
-구현: `maintenance/applycli/applycli.go`.
+구현: `maintenance/applycli/applycli.go`, 로컬 적용 공유: `maintenance/server/applylocal.go` · `maintenance/versionsapi/switchlocal.go`.
 
 ---
 
 ## `--versions-list`
 
-**로컬 maintenance HTTP**가 실행 중이어야 한다. `GET …/versions/list`와 동일하게, **`self`**면 이 호스트의 `versions/` 목록을, **원격 IP**면 `?ip=` 프록시로 해당 호스트 목록을 조회한다.
+- **`self`**: **로컬 maintenance HTTP 없이** 동작한다. 설정의 **`InstallPrefix`**(비어 있으면 **`DeployBase`**, 둘 다 없으면 기본 `/var/lib/contrabass/mole`) 아래 `versions/` 를 읽어, HTTP `GET …/versions/list`(로컬)과 동일한 규칙으로 목록을 만든다(`maintenance/versionsapi`).
+- **원격 IP**: 해당 호스트의 **Gin**(`Server.HTTPPort`, 기본 8888)으로 `GET http://<ip>:<port>{APIPrefix}/versions/list` 를 직접 호출한다. **로컬 에이전트·maintenance(8889)는 필요 없다** — 원격만 리슨 중이면 된다(적용 전 `--versions-switch`와 같이 TCP 연결 가능 여부를 확인).
 
 ### 사용법
 
@@ -143,22 +181,27 @@ contrabass-moleU --versions-list -cfg /path/to/config.yaml <self|remote-ip>
 contrabass-moleU --versions-list -h
 ```
 
+`-cfg` 와 `<self|remote-ip>` 는 **순서 무관**(위치 인자 한 개).
+
 ### 인자
 
 | 위치 | 설명 |
 |------|------|
 | **`-cfg`** | **필수.** 설정 파일 경로. |
-| **첫 번째 인자** | **`self`**: 로컬. **IPv4/IPv6 주소**: 원격(호스트명 불가). |
+| **첫 번째 인자** | **`self`**: 로컬 디스크. **IPv4/IPv6 주소**: 원격(호스트명 불가). |
 
 표준 출력: `host …` 한 줄 후 `VERSION` / `CURRENT` / `PREVIOUS` 컬럼 테이블.
 
-구현: `maintenance/versionscli/versionscli.go` (`RunList`).
+구현: `maintenance/versionscli/versionscli.go` (`RunList`) → `maintenance/versionsapi`.
 
 ---
 
 ## `--versions-switch`
 
-스테이징 또는 `versions/`에 있는 **버전 키**를 **current**로 바꾸기 위해 `POST …/versions/switch-current`를 호출한다(서버가 내장 `update.sh`를 `systemd-run`으로 실행). **로컬 maintenance HTTP** 필요. 원격 대상이면 적용 전 **`TCP`로 `<ip>:Server.HTTPPort`** 연결 가능 여부를 확인한다(`--apply-update`와 동일한 패턴).
+스테이징 또는 `versions/`에 있는 **버전 키**를 **current**로 바꾸기 위해 `POST …/versions/switch-current`를 호출한다(서버가 내장 `update.sh`를 `systemd-run`으로 실행).
+
+- **`self`**: **로컬 HTTP 없이** 동작한다(스테이징/versions 해석·필요 시 복사·`current/`에 embedded 스크립트 기록 후 `systemd-run` — 서버 `POST …/versions/switch-current` 로컬 처리와 동일). **로컬 에이전트·maintenance(8889) 불필요.**
+- **원격 IP**: 해당 호스트 **Gin**으로 `POST http://<ip>:<port>{APIPrefix}/versions/switch-current` 를 **직접** 호출한다. 바디는 `version`만. **로컬 에이전트는 필요 없다.** 적용 전 **`TCP`로 `<ip>:Server.HTTPPort`** 연결 가능 여부를 확인한다.
 
 ### 사용법
 
@@ -176,33 +219,6 @@ contrabass-moleU --versions-switch -h
 | **두 번째 인자** | 전환할 **버전 키** (`--versions-list` 첫 컬럼과 동일). |
 
 구현: `maintenance/versionscli/versionscli.go` (`RunSwitch`).
-
----
-
-## `--host-info`
-
-**로컬 maintenance HTTP**가 실행 중이어야 한다. 요청은 항상 설정의 **`MaintenanceListenAddress`**·**`MaintenancePort`** 로 보낸다. **`GET …/host-info`** 와 동일하다.
-
-- **`self`**: `ip` 없이 조회 — 서버가 **`/self`** 와 같은 로컬 호스트 정보(`DISCOVERY_RESPONSE` 형)를 반환한다.
-- **원격 IP**: `?ip=` — 이 에이전트가 해당 주소로 **UDP 유니캐스트 Discovery** 를 보내 응답 한 건을 반환한다(HTTP로 원격 에이전트에 프록시하는 방식이 **아님**).
-
-### 사용법
-
-```text
-contrabass-moleU --host-info -cfg /path/to/config.yaml <self|remote-ip>
-contrabass-moleU --host-info -h
-```
-
-### 인자
-
-| 위치 | 설명 |
-|------|------|
-| **`-cfg`** | **필수.** 설정 파일 경로. |
-| **첫 번째 인자** | **`self`**: 로컬. **IPv4/IPv6 주소**: 유니캐스트 대상(호스트명 불가). |
-
-표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, `CPU_UUID` 등 라벨·값 테이블(영문 헤더).
-
-구현: `maintenance/hostinfocli/hostinfocli.go`.
 
 ---
 

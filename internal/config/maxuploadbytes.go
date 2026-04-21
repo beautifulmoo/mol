@@ -94,3 +94,21 @@ func (u *uploadBytesExpr) UnmarshalYAML(n *yaml.Node) error {
 	*u = uploadBytesExpr(v)
 	return nil
 }
+
+// ClampMaxUploadBytes returns Maintenance.MaxUploadBytes as int64 clamped to [1 MiB, 10 GiB].
+// n <= 0 means use DefaultMaxUploadBytes (same as server and apply CLI).
+func ClampMaxUploadBytes(n int) int64 {
+	const minB = int64(1 << 20)  // 1 MiB
+	const maxB = int64(10 << 30) // 10 GiB
+	if n <= 0 {
+		return int64(DefaultMaxUploadBytes)
+	}
+	v := int64(n)
+	if v < minB {
+		return minB
+	}
+	if v > maxB {
+		return maxB
+	}
+	return v
+}

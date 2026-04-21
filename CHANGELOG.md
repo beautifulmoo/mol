@@ -2,29 +2,30 @@
 
 ## 레이아웃
 
-- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`--discovery`), `applycli`, `versionscli`(`--versions-list` / `--versions-switch`), `hostinfocli`(`--host-info`), `hostinfo`, `server`, `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
-- **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. Go import는 `contrabass-agent/internal/config`.
+- **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`--discovery`), `applycli`, `versionscli`(`--versions-list` / `--versions-switch`), **`cliutil`**(CLI 공용: 원격 Gin URL·`APIPrefix`·TCP 확인), `versionsapi`(로컬 `versions/`·로컬 switch/apply 공통), `hostinfoapi`, `hostinfocli`(`--host-info`), `hostinfo`, `server`(HTTP·`applylocal` 로컬 번들 스테이징), `svcstatus`, `web` 패키지가 여기에 있다. 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
+- **`internal/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `configFile2.go`. **`ClampMaxUploadBytes`** 로 업로드/번들 크기 한도를 서버와 apply CLI가 공유. Go import는 `contrabass-agent/internal/config`.
 
 ## Discovery / CLI (최근)
 
 ### 유지보수 REST 대응 CLI (`-cfg` 필요)
 
-- **`--versions-list`**: `GET …/versions/list` — 로컬 또는 `?ip=` 원격 프록시. `maintenance/versionscli`.
-- **`--versions-switch`**: `POST …/versions/switch-current` — 원격 시 `Server.HTTPPort` TCP 확인 후 프록시. `maintenance/versionscli`.
-- **`--host-info`**: `GET …/host-info` — `self`는 `/self`와 동일, 원격 IP는 서버가 **UDP 유니캐스트**만 수행(Gin 프록시 아님). `maintenance/hostinfocli`.
-- 위 CLI는 **`MaintenanceListenAddress`·`MaintenancePort`·`APIPrefix`** 등을 설정 YAML에서 읽는다(파일명은 임의 경로 가능). `-h` 옵션 나열 순서에서 **`--host-info`** 는 **`--version`과 `--nic-brd` 사이**.
+- **`--versions-list`**: **`self`** 는 **`versionsapi`** 로 디스크만 읽음; **원격 IP** 는 **`http://<ip>:Server.HTTPPort` + `APIPrefix` + `GET …/versions/list`** (대상 Gin에 직접, 로컬 에이전트·maintenance 불필요). `maintenance/versionscli`, 공용 주소·TCP 확인은 **`cliutil`**.
+- **`--versions-switch`**: **`self`** 는 **`versionsapi.RunSwitchCurrentWithRoots`**(로컬 maintenance HTTP 불필요, 보통 sudo); **원격** 은 동일 Gin에 `POST …/versions/switch-current`. `maintenance/versionscli`.
+- **`--host-info`**: `GET …/host-info` 와 동일 규칙 — `self`는 로컬 hostinfo, 원격은 UDP 유니캐스트; **로컬 maintenance HTTP 불필요**. 핵심 로직은 **`maintenance/hostinfoapi`** 에서 HTTP 핸들러와 공유. `maintenance/hostinfocli`.
+- 위 CLI는 **`APIPrefix`**·**`Server.HTTPPort`**(원격 호출 시) 등을 설정 YAML에서 읽는다. `-h` 옵션 나열 순서에서 **`--host-info`** 는 **`--version`과 `--nic-brd` 사이**.
 
 ### Discovery 유니캐스트(멀티홈)
 
 - **`DoDiscoveryUnicast`**: 응답의 `host_ip`가 유니캐스트 목적지 IP와 다를 수 있음(동일 호스트·다중 NIC). **`request_id`로만** 응답을 매칭하고 `host_ip` 문자열 일치를 요구하지 않는다.
 
-### `mol --apply-update` (번들 한 번에 업로드·적용)
+### `mol --apply-update` (번들 한 번에 검증·적용)
 
-- **`-cfg`**, **`<self|remote-ip>`**, **`<bundle.tar.gz>`** — 로컬 유지보수 HTTP가 실행 중이어야 함.
-- 번들은 서버와 동일하게 임시 풀기·검증 후 **`StagingUpdateAvailable`** 으로만 진행.
-- **self**: `POST /upload` → `POST /apply-update` JSON.
-- **remote**: `POST /apply-update` multipart(`ip`, `bundle`) — 서버가 원격에 직접 업로드 후 적용(§5.5.3).
-- **CLI 출력**: 영문(로캘 없는 OS 대비). 설정·번들 검증 오류 메시지도 CLI 경로는 영문 정책.
+- **`-cfg`**, **`<self|remote-ip>`**, **`<bundle.tar.gz>`** — **로컬 maintenance(8889) 불필요.**
+- 번들은 서버와 동일하게 임시 풀기·검증 후 **`StagingUpdateAvailable`** 으로만 진행. **self** 의 “현재 버전” 비교는 **`DeployBase/current` 심볼릭** 우선(개발용 CLI 빌드 키와 배포 트리 불일치 방지).
+- **self**: **`ApplyUpdateSelfFromBundleExtract`** 로 스테이징 후 **`RunSwitchCurrentWithRoots`**(웹 `POST /upload` + 로컬 적용과 동등; 배포 경로 쓰기·`systemd-run` 은 보통 sudo).
+- **remote**: **`http://<ip>:Server.HTTPPort` + `APIPrefix` + `POST …/apply-update`** multipart(`ip`, `bundle`) — 요청은 **원격 Gin**에서 처리(§5.5.3).
+- **업로드 한도**: **`config.ClampMaxUploadBytes`** 를 서버와 공유.
+- **CLI 출력**: 영문(로캘 없는 OS 대비). 원격 주소·TCP 확인은 **`cliutil`**.
 
 ### `mol --discovery` (설정 파일 없이 UDP Discovery만)
 

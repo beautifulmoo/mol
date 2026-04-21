@@ -10,51 +10,42 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"contrabass-agent/internal/config"
 	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/maintenance/cliutil"
 	"contrabass-agent/maintenance/server"
+	"contrabass-agent/maintenance/versionsapi"
 )
 
 // RunList runs: <bin> --versions-list -cfg <config> <self|remote-ip>
 func RunList(args []string) int {
-	fs := flag.NewFlagSet("versions-list", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	cfgPath := fs.String("cfg", "", "path to config file (required)")
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s --versions-list -cfg <config.yaml> <self|remote-ip>\n\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "  Lists installed versions under versions/ (current / previous flags).\n")
-		fmt.Fprintf(os.Stderr, "  self: local agent. remote-ip: proxied GET .../versions/list?ip=...\n\n")
-		fs.PrintDefaults()
+	cfgPath, pos, showHelp, err := parseVersionsListArgs(args)
+	if showHelp {
+		printVersionsListUsage()
+		return 0
 	}
-	for _, a := range args {
-		if a == "-h" || a == "--help" {
-			fs.Usage()
-			return 0
-		}
-	}
-	if err := fs.Parse(args); err != nil {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+		printVersionsListUsage()
 		return 1
 	}
-	pos := fs.Args()
 	if len(pos) != 1 {
-		fmt.Fprintf(os.Stderr, "%s: expected one argument: <self|remote-ip>\n", appmeta.BinaryName)
-		fs.Usage()
+		fmt.Fprintf(os.Stderr, "%s: expected exactly one argument: <self|remote-ip>\n", appmeta.BinaryName)
+		printVersionsListUsage()
 		return 1
 	}
-	if strings.TrimSpace(*cfgPath) == "" {
+	if strings.TrimSpace(cfgPath) == "" {
 		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
-		fs.Usage()
+		printVersionsListUsage()
 		return 1
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1
@@ -66,20 +57,28 @@ func RunList(args []string) int {
 		return 1
 	}
 
-	base := maintenanceHTTPBase(cfg)
-	api := normalizeAPIPrefix(cfg.APIPrefix)
-	listURL := base + api + "/versions/list"
-	var remoteIP string
 	if strings.EqualFold(target, "self") {
-		// local: no ip query (same as web)
-	} else {
-		if net.ParseIP(target) == nil {
-			fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, target)
+		base := versionsapi.VersionsBaseFromConfig(cfg)
+		rows, err := versionsapi.ListInstalledVersions(base)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: list versions: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
-		remoteIP = target
-		listURL += "?ip=" + url.QueryEscape(remoteIP)
+		printVersionsTable(os.Stdout, "", rows)
+		return 0
 	}
+
+	if net.ParseIP(target) == nil {
+		fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, target)
+		return 1
+	}
+	remoteIP := target
+	dialAddr := cliutil.RemoteDialAddr(cfg, target)
+	if err := cliutil.DialTCP(dialAddr, 5*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: cannot connect to %s: %v\n", appmeta.BinaryName, dialAddr, err)
+		return 1
+	}
+	listURL := cliutil.RemoteBaseURL(cfg, target) + cliutil.NormalizeAPIPrefix(cfg.APIPrefix) + "/versions/list"
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, nil)
@@ -120,7 +119,7 @@ func RunList(args []string) int {
 	}
 
 	var payload struct {
-		Versions []versionRow `json:"versions"`
+		Versions []versionsapi.VersionEntry `json:"versions"`
 	}
 	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: parse versions: %v\n", appmeta.BinaryName, err)
@@ -130,13 +129,43 @@ func RunList(args []string) int {
 	return 0
 }
 
-type versionRow struct {
-	Version    string `json:"version"`
-	IsCurrent  bool   `json:"is_current"`
-	IsPrevious bool   `json:"is_previous"`
+func printVersionsListUsage() {
+	fmt.Fprintf(os.Stderr, "Usage: %s --versions-list -cfg <config.yaml> <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "  self: list from local disk (DeployBase/InstallPrefix; no HTTP).\n")
+	fmt.Fprintf(os.Stderr, "  remote IP: GET http://<ip>:Server.HTTPPort{APIPrefix}/versions/list on that host (Gin; no local agent required).\n\n")
 }
 
-func printVersionsTable(w io.Writer, remoteIP string, rows []versionRow) {
+func parseVersionsListArgs(args []string) (cfgPath string, pos []string, showHelp bool, err error) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			showHelp = true
+			i++
+		case a == "-cfg" || a == "--cfg":
+			if i+1 >= len(args) {
+				return "", nil, false, fmt.Errorf("-cfg requires a path argument")
+			}
+			cfgPath = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "-cfg="):
+			cfgPath = strings.TrimSpace(strings.TrimPrefix(a, "-cfg="))
+			i++
+		case strings.HasPrefix(a, "--cfg="):
+			cfgPath = strings.TrimSpace(strings.TrimPrefix(a, "--cfg="))
+			i++
+		case strings.HasPrefix(a, "-"):
+			return "", nil, false, fmt.Errorf("unknown flag %q", a)
+		default:
+			pos = append(pos, a)
+			i++
+		}
+	}
+	return cfgPath, pos, showHelp, nil
+}
+
+func printVersionsTable(w io.Writer, remoteIP string, rows []versionsapi.VersionEntry) {
 	if remoteIP != "" {
 		fmt.Fprintf(w, "host %s\n", remoteIP)
 	} else {
@@ -169,6 +198,8 @@ func RunSwitch(args []string) int {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s --versions-switch -cfg <config.yaml> <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST .../versions/switch-current — run embedded update.sh via systemd-run (same as web).\n")
+		fmt.Fprintf(os.Stderr, "  self: run embedded update.sh via systemd-run (same as API); no local HTTP service required.\n")
+		fmt.Fprintf(os.Stderr, "  remote IP: POST to that host's Gin (Server.HTTPPort); no local agent required.\n")
 		fmt.Fprintf(os.Stderr, "  The version must already exist under versions/ (or staging) on the target host.\n\n")
 		fs.PrintDefaults()
 	}
@@ -210,35 +241,38 @@ func RunSwitch(args []string) int {
 		return 1
 	}
 
-	var body map[string]string
 	if strings.EqualFold(target, "self") {
-		body = map[string]string{"version": version, "ip": "self"}
-	} else {
-		if net.ParseIP(target) == nil {
-			fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, target)
+		if err := versionsapi.RunSwitchCurrentWithRoots(
+			versionsapi.DeployRootFromConfig(cfg),
+			cfg.InstallPrefix,
+			cfg.DeployBase,
+			version,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
-		httpPort := cfg.ServerHTTPPort
-		if httpPort <= 0 {
-			httpPort = 8888
-		}
-		addr := net.JoinHostPort(target, strconv.Itoa(httpPort))
-		if err := dialTCP(addr, 5*time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: cannot connect to %s: %v\n", appmeta.BinaryName, addr, err)
-			return 1
-		}
-		body = map[string]string{"version": version, "ip": target}
+		fmt.Println("systemd-run started update.sh. Restart may take tens of seconds; check update_history.log or journal on failure.")
+		return 0
 	}
+
+	if net.ParseIP(target) == nil {
+		fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, target)
+		return 1
+	}
+	addr := cliutil.RemoteDialAddr(cfg, target)
+	if err := cliutil.DialTCP(addr, 5*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: cannot connect to %s: %v\n", appmeta.BinaryName, addr, err)
+		return 1
+	}
+	api := cliutil.NormalizeAPIPrefix(cfg.APIPrefix)
+	switchURL := cliutil.RemoteBaseURL(cfg, target) + api + "/versions/switch-current"
+	body := map[string]string{"version": version}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
-
-	base := maintenanceHTTPBase(cfg)
-	api := normalizeAPIPrefix(cfg.APIPrefix)
-	switchURL := base + api + "/versions/switch-current"
 
 	client := &http.Client{Timeout: 300 * time.Second}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, switchURL, bytes.NewReader(payload))
@@ -279,36 +313,4 @@ func RunSwitch(args []string) int {
 		fmt.Println("Switch-current requested successfully.")
 	}
 	return 0
-}
-
-func maintenanceHTTPBase(cfg *config.Config) string {
-	host := strings.TrimSpace(cfg.MaintenanceListenAddress)
-	if host == "" || host == "0.0.0.0" {
-		host = "127.0.0.1"
-	}
-	port := cfg.MaintenancePort
-	if port <= 0 {
-		port = 8889
-	}
-	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
-}
-
-func normalizeAPIPrefix(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return "/api/v1"
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	return strings.TrimSuffix(p, "/")
-}
-
-func dialTCP(addr string, timeout time.Duration) error {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return err
-	}
-	_ = conn.Close()
-	return nil
 }

@@ -1,60 +1,49 @@
-// Package hostinfocli implements --host-info CLI (GET .../host-info, same as /self when ip empty or self; else UDP unicast Discovery via server).
+// Package hostinfocli implements --host-info CLI using shared hostinfoapi logic (no local maintenance HTTP required).
 package hostinfocli
 
 import (
-	"context"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"contrabass-agent/internal/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
-	"contrabass-agent/maintenance/server"
+	"contrabass-agent/maintenance/hostinfoapi"
 )
 
-// Run runs: <bin> --host-info -cfg <config> <self|remote-ip>
-func Run(args []string) int {
-	fs := flag.NewFlagSet("host-info", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	cfgPath := fs.String("cfg", "", "path to config file (required)")
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s --host-info -cfg <config.yaml> <self|remote-ip>\n\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "  GET .../host-info — same as /self when target is self; otherwise UDP unicast Discovery to that IP.\n")
-		fmt.Fprintf(os.Stderr, "  Requests always go to the local maintenance HTTP server from config.\n\n")
-		fs.PrintDefaults()
+const defaultHostInfoSrcUDP = 9998
+
+// Run runs: <bin> --host-info -cfg <config> [flags] <self|remote-ip>
+// buildVersionKey is the same ldflags-injected value as main (used for Self VERSION field when target is self).
+// Flag/positional order is flexible: e.g. <ip> -cfg path works as well as -cfg path <ip>.
+func Run(buildVersionKey string, args []string) int {
+	cfgPath, srcPort, pos, showHelp, err := parseHostInfoArgs(args)
+	if showHelp {
+		printUsage()
+		return 0
 	}
-	for _, a := range args {
-		if a == "-h" || a == "--help" {
-			fs.Usage()
-			return 0
-		}
-	}
-	if err := fs.Parse(args); err != nil {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+		printUsage()
 		return 1
 	}
-	pos := fs.Args()
 	if len(pos) != 1 {
-		fmt.Fprintf(os.Stderr, "%s: expected one argument: <self|remote-ip>\n", appmeta.BinaryName)
-		fs.Usage()
+		fmt.Fprintf(os.Stderr, "%s: expected exactly one argument: <self|remote-ip>\n", appmeta.BinaryName)
+		printUsage()
 		return 1
 	}
-	if strings.TrimSpace(*cfgPath) == "" {
+	if strings.TrimSpace(cfgPath) == "" {
 		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
-		fs.Usage()
+		printUsage()
 		return 1
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1
@@ -66,67 +55,110 @@ func Run(args []string) int {
 		return 1
 	}
 
-	base := maintenanceHTTPBase(cfg)
-	api := normalizeAPIPrefix(cfg.APIPrefix)
-	infoURL := base + api + "/host-info"
-	var label string
-	if strings.EqualFold(target, "self") {
-		label = "host self (local)"
-	} else {
-		if net.ParseIP(target) == nil {
-			fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, target)
-			return 1
-		}
-		label = "host " + target + " (unicast discovery)"
-		infoURL += "?ip=" + url.QueryEscape(target)
+	displayVersion := strings.TrimSpace(buildVersionKey)
+	if displayVersion == "" {
+		displayVersion = "0.0.0-0"
 	}
 
-	// Unicast discovery can take up to ~5s server-side; allow headroom.
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, infoURL, nil)
+	if strings.EqualFold(target, "self") {
+		info, err := hostinfoapi.LocalSelfInfo()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: host info: %v\n", appmeta.BinaryName, err)
+			return 1
+		}
+		meta := hostinfoapi.SelfMetaFromConfig(cfg, displayVersion)
+		data := hostinfoapi.SelfDiscoveryResponse(info, meta)
+		printHostInfo(os.Stdout, "host self (local)", data)
+		return 0
+	}
+
+	if net.ParseIP(target) == nil {
+		fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, target)
+		return 1
+	}
+
+	disc, cleanup, err := hostinfoapi.StartEphemeralDiscovery(cfg, displayVersion, srcPort)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: discovery UDP: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
+	defer cleanup()
+
+	resp, err := hostinfoapi.RemoteHostInfo(disc, target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: request failed: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: read body: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-
-	var envelope struct {
-		Status string          `json:"status"`
-		Data   json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: parse response: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-	if envelope.Status != "success" {
-		var fail server.APIResponse
-		if json.Unmarshal(body, &fail) == nil {
-			if s, ok := fail.Data.(string); ok && s != "" {
-				fmt.Fprintf(os.Stderr, "%s: %s\n", appmeta.BinaryName, s)
-				return 1
-			}
-		}
-		fmt.Fprintf(os.Stderr, "%s: host-info failed: status=%s body=%s\n", appmeta.BinaryName, envelope.Status, strings.TrimSpace(string(body)))
-		return 1
-	}
-
-	var data discovery.DiscoveryResponse
-	if err := json.Unmarshal(envelope.Data, &data); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: parse host data: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-	printHostInfo(os.Stdout, label, data)
+	printHostInfo(os.Stdout, "host "+target+" (unicast discovery)", *resp)
 	return 0
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "Usage: %s --host-info -cfg <config.yaml> [flags] <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "  Same behavior as GET .../host-info: self → local hostinfo; remote → UDP unicast to <ip>:DiscoveryUDPPort.\n")
+	fmt.Fprintf(os.Stderr, "  Flags and <self|remote-ip> can appear in any order. Local maintenance HTTP does not need to be running.\n\n")
+	fmt.Fprintf(os.Stderr, "Flags:\n")
+	fmt.Fprintf(os.Stderr, "  -cfg path       path to config file (required)\n")
+	fmt.Fprintf(os.Stderr, "  -src-port N     local UDP bind port for remote unicast (default %d; use another port if busy)\n", defaultHostInfoSrcUDP)
+	fmt.Fprintf(os.Stderr, "  -h, --help      show this help\n")
+}
+
+// parseHostInfoArgs parses -cfg, -src-port, help, and one positional (IP or self). Order-independent.
+func parseHostInfoArgs(args []string) (cfgPath string, srcPort int, pos []string, showHelp bool, err error) {
+	srcPort = defaultHostInfoSrcUDP
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			showHelp = true
+			i++
+		case a == "-cfg" || a == "--cfg":
+			if i+1 >= len(args) {
+				return "", 0, nil, false, fmt.Errorf("-cfg requires a path argument")
+			}
+			cfgPath = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "-cfg="):
+			cfgPath = strings.TrimPrefix(a, "-cfg=")
+			cfgPath = strings.TrimSpace(cfgPath)
+			i++
+		case strings.HasPrefix(a, "--cfg="):
+			cfgPath = strings.TrimPrefix(a, "--cfg=")
+			cfgPath = strings.TrimSpace(cfgPath)
+			i++
+		case a == "-src-port" || a == "--src-port":
+			if i+1 >= len(args) {
+				return "", 0, nil, false, fmt.Errorf("-src-port requires a port number")
+			}
+			p, e := strconv.Atoi(strings.TrimSpace(args[i+1]))
+			if e != nil || p < 1 || p > 65535 {
+				return "", 0, nil, false, fmt.Errorf("-src-port must be an integer 1..65535")
+			}
+			srcPort = p
+			i += 2
+		case strings.HasPrefix(a, "-src-port="):
+			p, e := strconv.Atoi(strings.TrimPrefix(a, "-src-port="))
+			if e != nil || p < 1 || p > 65535 {
+				return "", 0, nil, false, fmt.Errorf("-src-port must be an integer 1..65535")
+			}
+			srcPort = p
+			i++
+		case strings.HasPrefix(a, "--src-port="):
+			p, e := strconv.Atoi(strings.TrimPrefix(a, "--src-port="))
+			if e != nil || p < 1 || p > 65535 {
+				return "", 0, nil, false, fmt.Errorf("--src-port must be an integer 1..65535")
+			}
+			srcPort = p
+			i++
+		case strings.HasPrefix(a, "-"):
+			return "", 0, nil, false, fmt.Errorf("unknown flag %q", a)
+		default:
+			pos = append(pos, a)
+			i++
+		}
+	}
+	return cfgPath, srcPort, pos, showHelp, nil
 }
 
 func printHostInfo(w io.Writer, label string, d discovery.DiscoveryResponse) {
@@ -158,27 +190,4 @@ func printHostInfo(w io.Writer, label string, d discovery.DiscoveryResponse) {
 		row("SELF", "true")
 	}
 	_ = tw.Flush()
-}
-
-func maintenanceHTTPBase(cfg *config.Config) string {
-	host := strings.TrimSpace(cfg.MaintenanceListenAddress)
-	if host == "" || host == "0.0.0.0" {
-		host = "127.0.0.1"
-	}
-	port := cfg.MaintenancePort
-	if port <= 0 {
-		port = 8889
-	}
-	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
-}
-
-func normalizeAPIPrefix(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return "/api/v1"
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	return strings.TrimSuffix(p, "/")
 }

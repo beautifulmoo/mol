@@ -586,6 +586,7 @@ func (d *Discovery) DoDiscoveryStream(opts DiscoveryRunOptions) (<-chan Discover
 
 // DoDiscoveryUnicast sends a DISCOVERY_REQUEST to the given IP (unicast) and returns that host's DiscoveryResponse, or error on timeout/no response.
 // The IP should be the host's address; the request is sent to ip:DiscoveryUDPPort.
+// ReplyUDPPort in the JSON is the local bound port of conns[0] when available, so clients can bind a different src port (e.g. 9998) while sending to dest DiscoveryUDPPort (e.g. 9999).
 func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
@@ -596,11 +597,15 @@ func (d *Discovery) DoDiscoveryUnicast(ip string) (*DiscoveryResponse, error) {
 		return nil, err
 	}
 	requestID := NewRequestID()
+	replyUDPPort := d.cfg.DiscoveryUDPPort
+	if la, ok := d.conns[0].LocalAddr().(*net.UDPAddr); ok && la != nil && la.Port > 0 {
+		replyUDPPort = la.Port
+	}
 	req := DiscoveryRequest{
 		Type:         "DISCOVERY_REQUEST",
 		Service:      d.cfg.DiscoveryServiceName,
 		RequestID:    requestID,
-		ReplyUDPPort: d.cfg.DiscoveryUDPPort,
+		ReplyUDPPort: replyUDPPort,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {

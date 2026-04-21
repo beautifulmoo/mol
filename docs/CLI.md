@@ -152,7 +152,7 @@ contrabass-moleU --apply-update -h
 1. 설정 로드 및 **`Maintenance.MaxUploadBytes`** 범위 안에서 번들 크기 확인.
 2. 번들을 임시 디렉터리에 풀어 **서버 `POST /upload` 와 동일한 검증**(`server.PrepareAgentBundleFromReader`) — manifest·해시·ELF·바이너리 `--version` 등.
 3. **현재 버전**  
-   - **self**: 실행 중인 CLI 바이너리의 빌드 버전 키(`main.VersionKey`)와 동일한 규칙으로 비교; 비어 있으면 `DeployBase` 의 `current` 심볼릭 대상( `versionsapi.ResolveSymlinkVersion` )을 사용한다 — **`GET /self` HTTP 없음**.  
+   - **self**: **`DeployBase/current` → `versions/…` 의 버전 키**(디스크 기준 설치 current). CLI 바이너리의 `main.VersionKey` 는 **`current` 심볼릭을 읽을 수 없을 때만** 보조로 사용한다(개발용 바이너리와 배포 트리가 어긋나는 경우 구분). **`GET /self` HTTP 없음**.  
    - **remote**: `http://<remote-ip>:Server.HTTPPort` + `APIPrefix` + `/self` — 적용 전 **`TCP`로 `<ip>:Server.HTTPPort` 연결** 가능 여부를 확인한다.
 4. **`StagingUpdateAvailable(번들 버전 키, 현재 버전 키)`** 가 거짓이면 업로드하지 않고 종료 코드 `1`.
 

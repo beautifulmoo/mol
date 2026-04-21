@@ -20,10 +20,11 @@ import (
 	"time"
 
 	"contrabass-agent/internal/config"
-	"contrabass-agent/internal/updatescripts"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
+	"contrabass-agent/maintenance/hostinfoapi"
+	"contrabass-agent/maintenance/versionsapi"
 	"contrabass-agent/maintenance/svcstatus"
 )
 
@@ -164,7 +165,7 @@ func New(cfg Config) *Server {
 		installPrefix:        strings.TrimSuffix(cfg.InstallPrefix, "/"),
 		sshPort:              cfg.SSHPort,
 		sshUser:              cfg.SSHUser,
-		maxUploadBytes:       normalizeMaxUploadBytes(cfg.MaxUploadBytes),
+		maxUploadBytes:       config.ClampMaxUploadBytes(cfg.MaxUploadBytes),
 		remoteHealthIntervalSec:  cfg.RemoteHealthCheckIntervalSeconds,
 		remoteHealthTimeoutSec:   cfg.RemoteHealthCheckTimeoutSeconds,
 		remoteHealthThreshold:    cfg.RemoteHealthCheckFailureThreshold,
@@ -186,22 +187,6 @@ func New(cfg Config) *Server {
 		s.remoteHealthJitterSec = 0
 	}
 	return s
-}
-
-func normalizeMaxUploadBytes(n int) int64 {
-	const minB = int64(1 << 20)  // 1 MiB
-	const maxB = int64(10 << 30) // 10 GiB
-	if n <= 0 {
-		return int64(config.DefaultMaxUploadBytes)
-	}
-	v := int64(n)
-	if v < minB {
-		return minB
-	}
-	if v > maxB {
-		return maxB
-	}
-	return v
 }
 
 func (s *Server) remoteBaseURL(ip string) (string, error) {
@@ -411,22 +396,11 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := discovery.DiscoveryResponse{
-		Type:                "DISCOVERY_RESPONSE",
-		Service:             s.discoveryServiceName,
-		HostIP:              info.HostIP,
-		HostIPs:             info.HostIPs,
-		Hostname:            info.Hostname,
-		ServicePort:         s.servicePort,
-		Version:             s.version,
-		RequestID:           "",
-		CPUInfo:             info.CPUInfo,
-		CPUUsagePercent:     info.CPUUsagePercent,
-		CPUUUID:             info.CPUUUID,
-		MemoryTotalMB:       info.MemoryTotalMB,
-		MemoryUsedMB:        info.MemoryUsedMB,
-		MemoryUsagePercent:  info.MemoryUsagePercent,
-	}
+	data := hostinfoapi.SelfDiscoveryResponse(info, hostinfoapi.SelfDiscoveryMeta{
+		Version:              s.version,
+		ServicePort:          s.servicePort,
+		DiscoveryServiceName: s.discoveryServiceName,
+	})
 	s.send(w, "success", data, http.StatusOK)
 }
 
@@ -440,7 +414,7 @@ func (s *Server) handleHostInfo(w http.ResponseWriter, r *http.Request) {
 		s.handleSelf(w, r)
 		return
 	}
-	resp, err := s.discovery.DoDiscoveryUnicast(ip)
+	resp, err := hostinfoapi.RemoteHostInfo(s.discovery, ip)
 	if err != nil {
 		log.Printf("discovery: ERROR: DoDiscoveryUnicast(ip=%s) failed: %v", ip, err)
 		s.send(w, "fail", err.Error(), http.StatusOK)
@@ -737,14 +711,7 @@ func (s *Server) versionsDir(base, version string) string {
 
 // versionsBase returns the base path for versions/ (install_prefix or deploy_base). Used for list/remove and installer.
 func (s *Server) versionsBase() string {
-	base := s.installPrefix
-	if base == "" {
-		base = s.deployBase
-	}
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
-	return base
+	return versionsapi.VersionsBaseFromParts(s.installPrefix, s.deployBase)
 }
 
 // writeToStaging writes the agent binary from execReader and configData to base/staging/version/. Returns the staging dir path.
@@ -774,77 +741,6 @@ func (s *Server) writeToStaging(base, version string, execReader io.Reader, conf
 		return "", fmt.Errorf("config.yaml 저장 실패: %w", err)
 	}
 	return stagingDir, nil
-}
-
-// copyStagingToVersions replaces versionsBase()/versions/version/ with a full copy of base/staging/version/
-// (every extracted file and subdirectory), then removes only StagedBundleFileName so versions/ holds
-// the installed tree without the original tar.gz. Future manifest-added files are included automatically.
-func (s *Server) copyStagingToVersions(base, version string) error {
-	stg := s.stagingDir(base, version)
-	ver := filepath.Join(s.versionsBase(), "versions", version)
-	if _, err := os.Stat(stg); err != nil {
-		return fmt.Errorf("스테이징 디렉터리: %w", err)
-	}
-	if err := os.RemoveAll(ver); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(ver, 0755); err != nil {
-		return err
-	}
-	if err := copyStagingTreeInto(stg, ver); err != nil {
-		return err
-	}
-	_ = os.Remove(filepath.Join(ver, StagedBundleFileName))
-	return nil
-}
-
-// copyStagingTreeInto recursively copies files and directories from stg to ver (both must exist; ver is empty).
-func copyStagingTreeInto(stg, ver string) error {
-	return filepath.WalkDir(stg, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(stg, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		dst := filepath.Join(ver, rel)
-		if d.IsDir() {
-			return os.MkdirAll(dst, 0755)
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		mode := info.Mode().Perm()
-		if mode == 0 {
-			mode = 0644
-		}
-		return copyFileRobust(path, dst, mode)
-	})
-}
-
-func copyFileRobust(src, dst string, perm fs.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, in)
-	if cerr := out.Close(); cerr != nil && err == nil {
-		err = cerr
-	}
-	return err
 }
 
 // resolveVersionDir returns the directory that contains the agent binary + config for this version: staging first (under base/deploy), then versions/ under versionsBase() (same tree as GET /versions/list).
@@ -1082,46 +978,10 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 }
 
 // postApplyUpdateToTarget tells the target agent to apply the given version from its staging (ip=self).
-// runUpdateViaEmbeddedScript writes embedded update.sh/rollback.sh under current/ and starts systemd-run
-// with update.sh <version>, matching internal/updatescripts/update.sh behavior. base is DeployBase.
+// runUpdateViaEmbeddedScript delegates to versionsapi.RunSwitchCurrentWithRoots (embedded update.sh via systemd-run).
+// base is the normalized DeployBase (same as apply-update local path).
 func (s *Server) runUpdateViaEmbeddedScript(base, version string) error {
-	versionDir, fromStaging := s.resolveVersionDir(base, version)
-	if versionDir == "" {
-		return fmt.Errorf("해당 버전이 스테이징 또는 versions에 없습니다: %s", version)
-	}
-	if fromStaging {
-		if err := s.copyStagingToVersions(base, version); err != nil {
-			return fmt.Errorf("스테이징→versions 복사 실패: %w", err)
-		}
-	}
-	currentPath := filepath.Join(base, "current")
-	if _, err := os.Stat(currentPath); err != nil {
-		return fmt.Errorf("배포 루트에 current가 없습니다. 업데이트를 적용할 수 없습니다: %s", currentPath)
-	}
-	updateScript := filepath.Join(currentPath, "update.sh")
-	rollbackScript := filepath.Join(currentPath, "rollback.sh")
-	if err := os.WriteFile(updateScript, []byte(updatescripts.UpdateSh), 0755); err != nil {
-		return fmt.Errorf("update.sh 쓰기 실패: %w", err)
-	}
-	if err := os.WriteFile(rollbackScript, []byte(updatescripts.RollbackSh), 0755); err != nil {
-		_ = os.Remove(updateScript)
-		return fmt.Errorf("rollback.sh 쓰기 실패: %w", err)
-	}
-	exec.Command("systemctl", "reset-failed", appmeta.UpdateTransientUnit).Run()
-	exec.Command("systemctl", "stop", appmeta.UpdateTransientUnit).Run()
-	cmd := exec.Command("systemd-run",
-		"--unit="+appmeta.UpdateTransientUnitStem,
-		"--property=RemainAfterExit=yes",
-		"/bin/bash", updateScript, version)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		_ = os.Remove(updateScript)
-		_ = os.Remove(rollbackScript)
-		return fmt.Errorf("systemd-run(update.sh) 실패: %w", err)
-	}
-	log.Printf("runUpdateViaEmbeddedScript: systemd-run --unit=%s /bin/bash %s %s", appmeta.UpdateTransientUnitStem, updateScript, version)
-	return nil
+	return versionsapi.RunSwitchCurrentWithRoots(base, s.installPrefix, s.deployBase, version)
 }
 
 func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version string) (status string, data interface{}, err error) {
@@ -1402,13 +1262,6 @@ func isUpdateUnitActive() bool {
 	return err == nil && strings.TrimSpace(string(out)) == "active"
 }
 
-// versionEntry is one item in GET /api/v1/versions/list response.
-type versionEntry struct {
-	Version    string `json:"version"`
-	IsCurrent  bool   `json:"is_current"`
-	IsPrevious bool   `json:"is_previous"`
-}
-
 func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
@@ -1438,81 +1291,17 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := s.versionsBase()
-	versionsParent := filepath.Join(base, "versions")
-	entries, err := os.ReadDir(versionsParent)
+	list, err := versionsapi.ListInstalledVersions(base)
 	if err != nil {
-		if os.IsNotExist(err) {
-			s.send(w, "success", map[string]interface{}{"versions": []versionEntry{}}, http.StatusOK)
-			return
-		}
 		s.send(w, "fail", "versions 디렉터리를 읽을 수 없습니다: "+err.Error(), http.StatusOK)
 		return
 	}
-	currentVer := s.resolveSymlinkVersion(base, "current")
-	previousVer := s.resolveSymlinkVersion(base, "previous")
-	var list []versionEntry
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		ver := e.Name()
-		if ver == "." || ver == ".." {
-			continue
-		}
-		if !dirHasAgentBinary(filepath.Join(versionsParent, ver)) {
-			continue
-		}
-		list = append(list, versionEntry{
-			Version:    ver,
-			IsCurrent:  ver == currentVer,
-			IsPrevious: ver == previousVer,
-		})
-	}
-	sort.Slice(list, func(i, j int) bool {
-		return versionsListEntryBefore(list[i], list[j])
-	})
 	s.send(w, "success", map[string]interface{}{"versions": list}, http.StatusOK)
-}
-
-// versionsListEntryBefore defines display order: current → previous → others by semver descending (newest first).
-func versionsListEntryBefore(a, b versionEntry) bool {
-	rank := func(e versionEntry) int {
-		if e.IsCurrent {
-			return 2
-		}
-		if e.IsPrevious {
-			return 1
-		}
-		return 0
-	}
-	ra, rb := rank(a), rank(b)
-	if ra != rb {
-		return ra > rb
-	}
-	return config.CompareVersionKeys(a.Version, b.Version) > 0
 }
 
 // resolveSymlinkVersion returns the version name (dir under base/versions/) that the symlink base/name points to, or "".
 func (s *Server) resolveSymlinkVersion(base, name string) string {
-	linkPath := filepath.Join(base, name)
-	resolved, err := filepath.EvalSymlinks(linkPath)
-	if err != nil {
-		return ""
-	}
-	versionsDir := filepath.Join(base, "versions")
-	rel, err := filepath.Rel(versionsDir, resolved)
-	if err != nil {
-		return ""
-	}
-	// rel should be like "0.3.0" or "0.3.0/something" — we want the top-level version dir only
-	if rel == ".." || strings.HasPrefix(rel, "..") {
-		return ""
-	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	if len(parts) >= 1 && parts[0] != "" {
-		return parts[0]
-	}
-	return ""
+	return versionsapi.ResolveSymlinkVersion(base, name)
 }
 
 func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {

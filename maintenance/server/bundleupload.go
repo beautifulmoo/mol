@@ -3,7 +3,7 @@ package server
 import (
 	"archive/tar"
 	"compress/gzip"
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"crypto/sha256"
 	"encoding/hex"
@@ -32,7 +32,7 @@ const StagedBundleFileName = "upload.bundle.tar.gz"
 // maxBundleMembers limits entries processed from a tar.gz (defense in depth).
 const maxBundleMembers = 512
 
-// bundleManifestDoc matches packaging/contrabass.manifest.yaml (manifestVersion 1).
+// bundleManifestDoc matches maintenance/packaging/contrabass.manifest.yaml (manifestVersion 1).
 type bundleManifestDoc struct {
 	ManifestVersion int `yaml:"manifestVersion"`
 	Agent           struct {

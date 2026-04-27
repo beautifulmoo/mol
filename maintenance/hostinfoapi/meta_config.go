@@ -3,7 +3,7 @@ package hostinfoapi
 import (
 	"strings"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 )
 
 // SelfMetaFromConfig builds SelfDiscoveryMeta from a loaded config and the running binary's version key (same role as server.Config.Version / Maintenance fields).

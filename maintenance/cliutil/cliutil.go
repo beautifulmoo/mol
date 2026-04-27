@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 )
 
 // NormalizeAPIPrefix returns a path prefix for Gin API routes (leading slash, no trailing slash).

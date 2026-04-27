@@ -1,4 +1,4 @@
-// Package applycli implements `contrabass-moleU --apply-update` (bundle preflight + upload + apply in one shot).
+// Package applycli implements `contrabass-moleU agent --apply-update` (bundle preflight + upload + apply in one shot).
 package applycli
 
 import (
@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/cliutil"
 	"contrabass-agent/maintenance/server"
@@ -27,13 +27,13 @@ const bundleFormField = "bundle" // same as server.uploadBundleField
 
 // Run parses flags and runs apply-update CLI. buildVersionKey is the running binary's version (ldflags), used for local policy like GET /self.
 //
-//	<bin> --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>
+//	<bin> agent --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>
 func Run(buildVersionKey string, args []string) int {
 	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("cfg", "", "path to config file (required)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
 		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP; typically sudo for /var/lib/... and systemd-run).\n")
 		fmt.Fprintf(os.Stderr, "  remote-ip: multipart POST to that host's Gin (Server.HTTPPort); no local agent required.\n\n")

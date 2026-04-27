@@ -1,5 +1,5 @@
 # Example only — values are illustrative. Build a real bundle with:
-#   ./scripts/pack-agent-tarball.sh
+#   ./maintenance/scripts/pack-agent-tarball.sh
 # Or copy contrabass.manifest.yaml.template and set sha256 from `sha256sum <file>`.
 
 manifestVersion: 1

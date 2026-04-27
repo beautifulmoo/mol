@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfoapi"
@@ -18,7 +18,7 @@ import (
 
 const defaultHostInfoSrcUDP = 9998
 
-// Run runs: <bin> --host-info -cfg <config> [flags] <self|remote-ip>
+// Run runs: <bin> agent --host-info -cfg <config> [flags] <self|remote-ip>
 // buildVersionKey is the same ldflags-injected value as main (used for Self VERSION field when target is self).
 // Flag/positional order is flexible: e.g. <ip> -cfg path works as well as -cfg path <ip>.
 func Run(buildVersionKey string, args []string) int {
@@ -94,7 +94,7 @@ func Run(buildVersionKey string, args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s --host-info -cfg <config.yaml> [flags] <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "Usage: %s agent --host-info -cfg <config.yaml> [flags] <self|remote-ip>\n\n", appmeta.BinaryName)
 	fmt.Fprintf(os.Stderr, "  Same behavior as GET .../host-info: self → local hostinfo; remote → UDP unicast to <ip>:DiscoveryUDPPort.\n")
 	fmt.Fprintf(os.Stderr, "  Flags and <self|remote-ip> can appear in any order. Local maintenance HTTP does not need to be running.\n\n")
 	fmt.Fprintf(os.Stderr, "Flags:\n")

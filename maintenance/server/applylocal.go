@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/versionsapi"
 )

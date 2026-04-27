@@ -6,7 +6,7 @@ import (
 	"strings"
 	"syscall"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
 )

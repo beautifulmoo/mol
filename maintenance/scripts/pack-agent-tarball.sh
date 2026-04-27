@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build a deployment tar.gz containing contrabass.manifest.yaml, contrabass-moleU, config.yaml.
-# Manifest paths are ./contrabass-moleU and ./config.yaml (see packaging/contrabass.manifest.yaml.template).
+# Manifest paths are ./contrabass-moleU and ./config.yaml (see maintenance/packaging/contrabass.manifest.yaml.template).
 #
 # Usage:
-#   ./scripts/pack-agent-tarball.sh [binary-path] [config-path] [output.tar.gz]
+#   ./maintenance/scripts/pack-agent-tarball.sh [binary-path] [config-path] [output.tar.gz]
 #
 # Defaults:
 #   binary:   ./contrabass-moleU
@@ -13,14 +13,14 @@
 # Requires: sha256sum, tar
 
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 BINARY="${1:-./contrabass-moleU}"
 CONFIG="${2:-./config.yaml}"
 OUT_ARG="${3:-}"
 
-TEMPLATE="$ROOT/packaging/contrabass.manifest.yaml.template"
+TEMPLATE="$ROOT/maintenance/packaging/contrabass.manifest.yaml.template"
 MANIFEST_NAME="contrabass.manifest.yaml"
 
 for cmd in sha256sum tar; do
@@ -64,7 +64,7 @@ if [[ -n "$OUT_ARG" ]]; then
 		OUT="$ROOT/$OUT_ARG"
 	fi
 else
-	VERSION_KEY=$("$ROOT/scripts/build-version.sh" 2>/dev/null || echo "0.0.0-0")
+	VERSION_KEY=$("$ROOT/maintenance/scripts/build-version.sh" 2>/dev/null || echo "0.0.0-0")
 	SAFE_VER=${VERSION_KEY//\//-}
 	mkdir -p "$ROOT/dist"
 	OUT="$ROOT/dist/contrabass-agent-${SAFE_VER}.tar.gz"

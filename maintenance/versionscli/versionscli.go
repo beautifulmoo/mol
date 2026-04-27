@@ -1,4 +1,4 @@
-// Package versionscli implements --versions-list and --versions-switch CLIs (GET versions/list, POST versions/switch-current).
+// Package versionscli implements `agent --versions-list` and `agent --versions-switch` (GET versions/list, POST versions/switch-current).
 package versionscli
 
 import (
@@ -15,14 +15,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/cliutil"
 	"contrabass-agent/maintenance/server"
 	"contrabass-agent/maintenance/versionsapi"
 )
 
-// RunList runs: <bin> --versions-list -cfg <config> <self|remote-ip>
+// RunList runs: <bin> agent --versions-list -cfg <config> <self|remote-ip>
 func RunList(args []string) int {
 	cfgPath, pos, showHelp, err := parseVersionsListArgs(args)
 	if showHelp {
@@ -130,7 +130,7 @@ func RunList(args []string) int {
 }
 
 func printVersionsListUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s --versions-list -cfg <config.yaml> <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-list -cfg <config.yaml> <self|remote-ip>\n\n", appmeta.BinaryName)
 	fmt.Fprintf(os.Stderr, "  self: list from local disk (DeployBase/InstallPrefix; no HTTP).\n")
 	fmt.Fprintf(os.Stderr, "  remote IP: GET http://<ip>:Server.HTTPPort{APIPrefix}/versions/list on that host (Gin; no local agent required).\n\n")
 }
@@ -190,13 +190,13 @@ func printVersionsTable(w io.Writer, remoteIP string, rows []versionsapi.Version
 	_ = tw.Flush()
 }
 
-// RunSwitch runs: <bin> --versions-switch -cfg <config> <self|remote-ip> <version-key>
+// RunSwitch runs: <bin> agent --versions-switch -cfg <config> <self|remote-ip> <version-key>
 func RunSwitch(args []string) int {
 	fs := flag.NewFlagSet("versions-switch", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("cfg", "", "path to config file (required)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s --versions-switch -cfg <config.yaml> <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch -cfg <config.yaml> <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST .../versions/switch-current — run embedded update.sh via systemd-run (same as web).\n")
 		fmt.Fprintf(os.Stderr, "  self: run embedded update.sh via systemd-run (same as API); no local HTTP service required.\n")
 		fmt.Fprintf(os.Stderr, "  remote IP: POST to that host's Gin (Server.HTTPPort); no local agent required.\n")

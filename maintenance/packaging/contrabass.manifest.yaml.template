@@ -1,8 +1,8 @@
 # Contrabass agent deployment bundle — manifest template for tar.gz packages.
 # - Paths are relative to the archive root (flat ./name layout; subdirs allowed if paths match).
-# - The two TOKEN lines below are substituted by scripts/pack-agent-tarball.sh (64-char hex).
+# - The two TOKEN lines below are substituted by maintenance/scripts/pack-agent-tarball.sh (64-char hex).
 #   Hand-made bundles: set sha256 from `sha256sum` on each file.
-# - See packaging/contrabass.manifest.example.yaml for a filled-out sample.
+# - See maintenance/packaging/contrabass.manifest.example.yaml for a filled-out sample.
 
 manifestVersion: 1
 

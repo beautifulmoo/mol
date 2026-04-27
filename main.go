@@ -9,21 +9,18 @@ import (
 	"os"
 	"strings"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
-// VersionKey is the full agent version key "<semver>-<patch>" from git describe at build time (see Makefile, scripts/build-version.sh).
+// VersionKey is the full agent version key "<semver>-<patch>" from git describe at build time (see Makefile, maintenance/scripts/build-version.sh).
 var VersionKey string
 
 func configPathFromArgs(args []string) string {
-	if len(args) >= 3 && args[1] == "-cfg" {
-		return args[2]
-	}
-	return ""
+	return maintenance.ConfigPathForServiceMode(args)
 }
 
 // ginProxyConfig loads Maintenance.WebPrefix, APIPrefix, ports for the outer Gin (Server.HTTPPort → maintenance proxy).
@@ -172,7 +169,7 @@ func TestGETWeb(c *gin.Context) {
 }
 
 func main() {
-	// Gin은 `-cfg <파일>` 서비스 모드에서만 띄운다. --nic-brd / --discovery 등은 설정을 읽지 않고 Gin도 바인딩하지 않는다.
+	// Gin은 `-cfg <파일>`(또는 레거시 `agent -cfg <파일>`) 서비스 모드에서만 띄운다. agent --nic-brd 등은 Gin을 바인딩하지 않는다.
 	if maintenance.ShouldStartGinReverseProxy(os.Args) {
 		gcfg := ginProxyConfig(os.Args)
 		httpPort := gcfg.ServerHTTPPort

@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"contrabass-agent/maintenance/appmeta"
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/applycli"
 	"contrabass-agent/maintenance/discoverycli"
@@ -29,18 +29,20 @@ import (
 const helpText = `Contrabass agent — Discovery and maintenance web UI
 
 Usage:
-  <bin> -cfg <file>     Start HTTP server + Discovery (config file required)
-  <bin>                 Print version hint and exit (no service)
+  <bin> -cfg <file>         Start HTTP server + Discovery (config file required)
+  <bin>                     Print version hint and exit (no service)
 
-Options:
-  -h, --help             Show this help
-  -version, --version    Print version and exit
-  --host-info [flags] Show host info (local /self or unicast discovery) (<bin> --host-info -h)
-  --nic-brd              Print per-interface IPv4 broadcast addresses (same rules as Discovery), then exit
-  --discovery [flags]    Run UDP Discovery only, no config (<bin> --discovery -h)
-  --apply-update [flags] Validate bundle and apply locally or to remote Gin (<bin> --apply-update -h)
-  --versions-list [flags] List installed versions (local or remote) (<bin> --versions-list -h)
-  --versions-switch [flags] Switch current version via maintenance API (<bin> --versions-switch -h)
+Other commands require the "agent" subcommand first (not used for HTTP service).
+
+Options (after "agent"):
+  -h, --help               Show this help
+  -version, --version      Print version and exit
+  --host-info [flags]      Host info (local /self or unicast discovery) (<bin> agent --host-info -h)
+  --nic-brd                Print per-interface IPv4 broadcast addresses (same rules as Discovery), then exit
+  --discovery [flags]      Run UDP Discovery only, no config (<bin> agent --discovery -h)
+  --apply-update [flags]   Validate bundle and apply locally or to remote Gin (<bin> agent --apply-update -h)
+  --versions-list [flags]  List installed versions (local or remote) (<bin> agent --versions-list -h)
+  --versions-switch [flags] Switch current version (<bin> agent --versions-switch -h)
 
 `
 
@@ -61,9 +63,8 @@ func printMustSpecifyConfig(binVersion string) {
 	fmt.Println("To start HTTP service and Discovery, pass a config file:")
 	fmt.Printf("  %s -cfg <config.yaml>\n", appmeta.BinaryName)
 	fmt.Println()
-	fmt.Println("For more options:")
-	fmt.Printf("  %s -h\n", appmeta.BinaryName)
-	fmt.Printf("  %s --help\n", appmeta.BinaryName)
+	fmt.Println("For discovery, host-info, and other CLI commands:")
+	fmt.Printf("  %s agent --help\n", appmeta.BinaryName)
 }
 
 // setSOReuseport sets SO_REUSEPORT on a socket (Linux only).
@@ -72,64 +73,27 @@ func setSOReuseport(fd int) error {
 	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReuseport, 1)
 }
 
-// ShouldStartGinReverseProxy returns true only for `program -cfg <path>` with a non-empty path.
-// That is the long-running service mode where main also starts the Gin reverse proxy (Server.HTTPPort).
-// Any other invocation does not start Gin: --discovery, --nic-brd, -h/--help, --version, no args, or unknown first arg
-// (because args[1] must be exactly "-cfg").
-func ShouldStartGinReverseProxy(args []string) bool {
-	if len(args) < 3 {
-		return false
-	}
-	if args[1] != "-cfg" {
-		return false
-	}
-	return strings.TrimSpace(args[2]) != ""
-}
-
-// Run starts the maintenance HTTP server and Discovery. buildVersionKey is the full key from main (ldflags -X main.VersionKey=…, see Makefile / scripts/build-version.sh).
-// args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit). Does not call os.Exit.
-func Run(buildVersionKey string, args []string) int {
-	if len(args) <= 1 {
-		printMustSpecifyConfig(buildVersionKey)
-		return 0
-	}
-	if len(args) >= 2 {
-		switch args[1] {
-		case "-h", "--help":
-			fmt.Print(strings.ReplaceAll(helpText, "<bin>", appmeta.BinaryName))
-			return 0
-		case "--version", "-version":
-			fmt.Println(versionLine(buildVersionKey))
-			return 0
-		case "--nic-brd":
-			pairs := hostinfo.GetPhysicalNICBrdPairs()
-			for _, p := range pairs {
-				fmt.Printf("%s : %s\n", p.Iface, p.Brd)
-			}
-			return 0
-		case "--discovery":
-			return discoverycli.Run(args[2:])
-		case "--apply-update":
-			return applycli.Run(buildVersionKey, args[2:])
-		case "--versions-list":
-			return versionscli.RunList(args[2:])
-		case "--versions-switch":
-			return versionscli.RunSwitch(args[2:])
-		case "--host-info":
-			return hostinfocli.Run(buildVersionKey, args[2:])
+// ConfigPathForServiceMode returns the config file path for long-running HTTP+Discovery service, or "".
+// Accepted forms: `program -cfg <path>` (preferred) or legacy `program agent -cfg <path>`.
+func ConfigPathForServiceMode(args []string) string {
+	if len(args) >= 3 && args[1] == "-cfg" {
+		if p := strings.TrimSpace(args[2]); p != "" {
+			return p
 		}
 	}
-	if args[1] != "-cfg" {
-		fmt.Fprintf(os.Stderr, "unknown argument: %q\n\n", args[1])
-		printMustSpecifyConfig(buildVersionKey)
-		return 1
+	if len(args) >= 4 && strings.EqualFold(args[1], "agent") && args[2] == "-cfg" {
+		return strings.TrimSpace(args[3])
 	}
-	if len(args) < 3 {
-		fmt.Fprintf(os.Stderr, "%s: path to config file required after -cfg\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
-		return 1
-	}
-	cfgPath := args[2]
+	return ""
+}
+
+// ShouldStartGinReverseProxy is true when main should start the Gin reverse proxy (Server.HTTPPort).
+func ShouldStartGinReverseProxy(args []string) bool {
+	return ConfigPathForServiceMode(args) != ""
+}
+
+// runServiceWithConfigPath starts maintenance HTTP, UDP discovery, and embedded web UI.
+func runServiceWithConfigPath(buildVersionKey, cfgPath string) int {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Printf("config: %v", err)
@@ -313,4 +277,78 @@ func Run(buildVersionKey string, args []string) int {
 	}
 	log.Printf("%s stopped", appmeta.BinaryName)
 	return 0
+}
+
+// Run starts the maintenance HTTP server and Discovery. buildVersionKey is the full key from main (ldflags -X main.VersionKey=…, see Makefile / maintenance/scripts/build-version.sh).
+// args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit). Does not call os.Exit.
+func Run(buildVersionKey string, args []string) int {
+	if len(args) <= 1 {
+		printMustSpecifyConfig(buildVersionKey)
+		return 0
+	}
+
+	if args[1] == "-cfg" {
+		if len(args) < 3 || strings.TrimSpace(args[2]) == "" {
+			fmt.Fprintf(os.Stderr, "%s: path to config file required after -cfg\n", appmeta.BinaryName)
+			fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
+			return 1
+		}
+		return runServiceWithConfigPath(buildVersionKey, args[2])
+	}
+
+	// Transitional: root --version for older update flows; prefer agent --version long-term.
+	if args[1] == "--version" || args[1] == "-version" {
+		fmt.Println(versionLine(buildVersionKey))
+		return 0
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(args[1]), "agent") {
+		fmt.Fprintf(os.Stderr, "%s: start HTTP+Discovery with %s -cfg <config.yaml>, or use %q for other commands (e.g. %s agent --help)\n", appmeta.BinaryName, appmeta.BinaryName, "agent", appmeta.BinaryName)
+		printMustSpecifyConfig(buildVersionKey)
+		return 1
+	}
+	if len(args) == 2 {
+		fmt.Fprintf(os.Stderr, "%s: %q requires a command after it (e.g. %s agent --help)\n", appmeta.BinaryName, "agent", appmeta.BinaryName)
+		return 1
+	}
+	args = append([]string{args[0]}, args[2:]...)
+
+	if args[1] == "-cfg" {
+		if len(args) < 3 || strings.TrimSpace(args[2]) == "" {
+			fmt.Fprintf(os.Stderr, "%s: path to config file required after -cfg\n", appmeta.BinaryName)
+			fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
+			return 1
+		}
+		return runServiceWithConfigPath(buildVersionKey, args[2])
+	}
+
+	if len(args) >= 2 {
+		switch args[1] {
+		case "-h", "--help":
+			fmt.Print(strings.ReplaceAll(helpText, "<bin>", appmeta.BinaryName))
+			return 0
+		case "--version", "-version":
+			fmt.Println(versionLine(buildVersionKey))
+			return 0
+		case "--nic-brd":
+			pairs := hostinfo.GetPhysicalNICBrdPairs()
+			for _, p := range pairs {
+				fmt.Printf("%s : %s\n", p.Iface, p.Brd)
+			}
+			return 0
+		case "--discovery":
+			return discoverycli.Run(args[2:])
+		case "--apply-update":
+			return applycli.Run(buildVersionKey, args[2:])
+		case "--versions-list":
+			return versionscli.RunList(args[2:])
+		case "--versions-switch":
+			return versionscli.RunSwitch(args[2:])
+		case "--host-info":
+			return hostinfocli.Run(buildVersionKey, args[2:])
+		}
+	}
+	fmt.Fprintf(os.Stderr, "unknown argument: %q\n\n", args[1])
+	printMustSpecifyConfig(buildVersionKey)
+	return 1
 }

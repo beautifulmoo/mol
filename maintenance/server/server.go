@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
@@ -52,39 +52,51 @@ func isELFExecutable(header []byte) bool {
 	return len(header) >= 4 && header[0] == elfMagic[0] && header[1] == elfMagic[1] && header[2] == elfMagic[2] && header[3] == elfMagic[3]
 }
 
-// VersionKeyFromAgentBinary runs binPath --version and returns the version key after "<BinaryName> " (same as POST /upload validation). Exported for CLI.
+// VersionKeyFromAgentBinary runs binPath --version, or on failure agent --version, and returns the version key after "<BinaryName> " (same as POST /upload validation). Exported for CLI.
 func VersionKeyFromAgentBinary(binPath string) (string, error) {
 	return versionKeyFromAgentBinary(binPath)
 }
 
-// versionKeyFromAgentBinary runs binPath --version and returns the version key after "<BinaryName> " (same string as GET /version).
+// versionKeyFromAgentBinary tries root --version first (legacy / transitional updates), then agent --version.
 func versionKeyFromAgentBinary(binPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binPath, "--version")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("executable check timed out (--version did not finish within 5s)")
+	try := func(argv ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, argv...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return "", fmt.Errorf("%v timed out (5s)", argv)
+			}
+			return "", err
 		}
-		return "", fmt.Errorf("not a valid executable (--version failed): %w", err)
+		line := strings.TrimSpace(string(out))
+		want := appmeta.BinaryName + " "
+		if !strings.HasPrefix(line, want) {
+			return "", fmt.Errorf("prefix want %q, got %q", want, line)
+		}
+		key := strings.TrimSpace(strings.TrimPrefix(line, want))
+		if key == "" {
+			return "", fmt.Errorf("empty version key")
+		}
+		if err := config.ValidateVersionKeyPath(key); err != nil {
+			return "", err
+		}
+		return key, nil
 	}
-	line := strings.TrimSpace(string(out))
-	want := appmeta.BinaryName + " "
-	if !strings.HasPrefix(line, want) {
-		return "", fmt.Errorf("not a valid executable (--version prefix want %q, got %q)", want, line)
+
+	key, errRoot := try("--version")
+	if errRoot == nil {
+		return key, nil
 	}
-	key := strings.TrimSpace(strings.TrimPrefix(line, want))
-	if key == "" {
-		return "", fmt.Errorf("not a valid executable (--version returned empty version key)")
+	key, errAgent := try("agent", "--version")
+	if errAgent == nil {
+		return key, nil
 	}
-	if err := config.ValidateVersionKeyPath(key); err != nil {
-		return "", fmt.Errorf("invalid version key from executable: %w", err)
-	}
-	return key, nil
+	return "", fmt.Errorf("not a valid executable (--version: %v; agent --version: %v)", errRoot, errAgent)
 }
 
-// validateAgentBinary runs binPath --version and checks output shape and version key.
+// validateAgentBinary runs the same version checks as bundle upload (root --version, then agent --version).
 func validateAgentBinary(binPath string) error {
 	_, err := versionKeyFromAgentBinary(binPath)
 	return err

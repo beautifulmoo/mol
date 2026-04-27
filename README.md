@@ -26,7 +26,7 @@ go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 ```
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
-- **버전 키**는 `make`/`make build` 시 `scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
+- **버전 키**는 `make`/`make build` 시 `maintenance/scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
 
 ## 배포
 
@@ -55,29 +55,29 @@ go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 ## 실행
 
 ```bash
-# 서비스 기동(설정 파일 필수)
+# 서비스 기동(설정 파일 필수; 첫 인자 -cfg)
 ./contrabass-moleU -cfg /path/to/config.yaml
 # 또는 systemd 등에서
 ./contrabass-moleU -cfg /var/lib/contrabass/mole/config.yaml
 ```
 
-인자 없이 `./contrabass-moleU`만 실행하면 버전과 `-cfg` 안내가 출력되고 **서비스는 시작하지 않습니다.**
+인자 없이 `./contrabass-moleU`만 실행하면 버전과 **`-cfg` / `agent`** 안내가 출력되고 **서비스는 시작하지 않습니다.** Discovery·host-info 등은 **`agent` 다음**에 옵션을 둡니다(예: `contrabass-moleU agent --discovery -h`).
 
 **CLI**
 
 | 옵션 | 설명 |
 |------|------|
-| `-cfg <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동 |
-| (인자 없음) | 버전·`-cfg` 안내 출력 후 종료 |
-| `-h`, `--help` | 사용법 출력 |
-| `--version`, `-version` | 빌드 버전 한 줄 출력 후 종료 |
-| `--nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
-| `--discovery` | 설정 파일 없이 UDP Discovery만 수행. `contrabass-moleU --discovery -h` 로 플래그 확인 |
+| `-cfg <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동(첫 인자; 레거시 `agent -cfg` 허용) |
+| (인자 없음) | 버전·`-cfg` / `agent` 안내 출력 후 종료 |
+| `agent -h`, `agent --help` | 사용법 출력 |
+| `agent --version`, `agent -version` | 빌드 버전 한 줄 출력 후 종료 |
+| `agent --nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
+| `agent --discovery` | 설정 파일 없이 UDP Discovery만 수행. `contrabass-moleU agent --discovery -h` 로 플래그 확인 |
 
 **`--discovery` 예** (로컬 에이전트 서비스 없이 원격만 탐색):
 
 ```bash
-contrabass-moleU --discovery --dest-port=9999 --src-port=9998 --timeout=10
+contrabass-moleU agent --discovery --dest-port=9999 --src-port=9998 --timeout=10
 ```
 
 - 시작 시 **브로드캐스트(brd) 주소**를 모두 출력합니다. **다중 NIC**에서는 에이전트 서비스와 같이 **인터페이스별로 `로컬IP:src-port` UDP 소켓**을 열어 각 brd로 보냅니다(단일 `0.0.0.0`만 쓸 때보다 src≠dest·다중 서브넷에서 안정적).
@@ -94,7 +94,7 @@ contrabass-moleU --discovery --dest-port=9999 --src-port=9998 --timeout=10
 
 ## 설정
 
-설정 파일 경로는 실행 시 **`-cfg <파일>`** 로 지정한다(예: `config.yaml`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
+설정 파일 경로는 서비스 기동 시 **`-cfg <파일>`** 로 지정한다(예: `config.yaml`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
 
 - 모든 설정은 최상위 `Maintenance:` 아래에 둔다.
 
@@ -108,8 +108,8 @@ Maintenance:
   APIPrefix: "/api/v1"
 ```
 
-- **버전 문자열**(로그·Discovery·`GET /version` 등)은 **config가 아니라 빌드 시 주입된 `main.VersionKey`** 를 쓴다(`make` → `scripts/build-version.sh`).
-- **Discovery 브로드캐스트**: 기본은 **PRD §3.1.1과 동일 규칙으로 brd 자동 수집**(sysfs `type`·브리지 `brif`·`ip` 출력; `contrabass-moleU --nic-brd`로 확인; Gin은 `-cfg` 서비스 모드에서만 기동). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음. 참고용 셸 **`brd_for_bm.sh`**(저장소 루트)로 동일 의도의 목록을 확인할 수 있다.
+- **버전 문자열**(로그·Discovery·`GET /version` 등)은 **config가 아니라 빌드 시 주입된 `main.VersionKey`** 를 쓴다(`make` → `maintenance/scripts/build-version.sh`).
+- **Discovery 브로드캐스트**: 기본은 **PRD §3.1.1과 동일 규칙으로 brd 자동 수집**(sysfs `type`·브리지 `brif`·`ip` 출력; `contrabass-moleU agent --nic-brd`로 확인; Gin은 **`-cfg` 서비스 모드**에서만 기동). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음. 참고용 셸 **`brd_for_bm.sh`**(저장소 루트)로 동일 의도의 목록을 확인할 수 있다.
 - `Maintenance.DiscoveryServiceName`: Discovery JSON의 `service` 값(기본 `Mole-Discovery`) · `Maintenance.DiscoveryUDPPort`: 9999 · `Maintenance.MaintenancePort`: (설정값) · `Maintenance.DiscoveryTimeoutSeconds` · `Maintenance.DiscoveryDeduplicate`
 - `Maintenance.DeployBase` / `Maintenance.InstallPrefix`(비우면 DeployBase): 스테이징·versions·update.sh 경로
 - `Maintenance.SystemctlServiceName`: 기본 `contrabass-mole.service`

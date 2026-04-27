@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
 )
 
 // Run runs standalone UDP discovery (no config file, no HTTP server).
-// Invoked as: <binary> --discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name] (binary name is appmeta.BinaryName).
+// Invoked as: <binary> agent --discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name] (binary name is appmeta.BinaryName).
 // Returns 0 on success, 1 on error.
 func Run(args []string) int {
 	fs := flag.NewFlagSet("discovery", flag.ContinueOnError)
@@ -30,7 +30,7 @@ func Run(args []string) int {
 	timeoutSec := fs.Int("timeout", 10, "discovery duration in seconds")
 	serviceName := fs.String("service", config.DefaultDiscoveryServiceName, "service name in DISCOVERY_REQUEST")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s --discovery [flags]\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --discovery [flags]\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n")
 		fmt.Fprintf(os.Stderr, "  Each line: [Local|Remote] hostname - primary : [response IPs] version=<agent version>\n\n")
 		fs.PrintDefaults()

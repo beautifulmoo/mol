@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"contrabass-agent/internal/config"
+	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
 )
 
@@ -32,7 +32,7 @@ func VersionsBaseFromParts(installPrefix, deployBase string) string {
 	return base
 }
 
-// VersionsBaseFromConfig uses YAML fields (same defaults as internal/config.Default().DeployBase when unset).
+// VersionsBaseFromConfig uses YAML fields (same defaults as maintenance/config.Default().DeployBase when unset).
 func VersionsBaseFromConfig(cfg *config.Config) string {
 	if cfg == nil {
 		return "/var/lib/contrabass/mole"

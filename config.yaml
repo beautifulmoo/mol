@@ -1,5 +1,5 @@
 # Agent configuration (YAML)
-# At runtime, pass this file with -cfg <path> (required to start HTTP + Discovery).
+# At runtime: contrabass-moleU -cfg <this-file> (required to start HTTP + Discovery; legacy: agent -cfg).
 
 Server:
   RunMode: debug
@@ -22,7 +22,7 @@ Maintenance:
   APIPrefix: "/maintenance/api/v1"
   DiscoveryTimeoutSeconds: 10
   DiscoveryDeduplicate: true
-  # Version key is injected at build (Makefile → scripts/build-version.sh → main.VersionKey), not from this file.
+  # Version key is injected at build (Makefile → maintenance/scripts/build-version.sh → main.VersionKey), not from this file.
   # SystemctlServiceName: "contrabass-mole.service"   # for service-status API (self + discovered hosts)
   # DeployBase: "/var/lib/contrabass/mole"   # base for staging/, update.sh
   # InstallPrefix: "/var/lib/contrabass/mole"   # contrabass-moleU 설치 경로 prefix (versions 목록·삭제, installer). 비면 DeployBase 사용

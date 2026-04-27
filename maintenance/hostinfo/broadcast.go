@@ -123,7 +123,7 @@ type NicBrdPair struct {
 }
 
 // GetPhysicalNICBrdPairs returns (interface name, brd) for each distinct brd per interface.
-// For CLI: contrabass-moleU --nic-brd (same rules as automatic discovery brd collection).
+// For CLI: contrabass-moleU agent --nic-brd (same rules as automatic discovery brd collection).
 func GetPhysicalNICBrdPairs() []NicBrdPair {
 	return getInterfaceBrdPairs()
 }

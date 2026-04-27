@@ -28,7 +28,7 @@
     </div>
     <aside class="update-section">
       <h2>업데이트</h2>
-      <p class="update-desc">배포 번들(<strong>tar.gz</strong>: <code>contrabass.manifest.yaml</code> + 에이전트 + config 등)을 한 파일로 업로드합니다. 로컬에서 패키지를 만들려면 저장소의 <code>scripts/pack-agent-tarball.sh</code> 를 사용하세요. 스테이징 후 「업데이트 적용」으로 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>가 <code>{deploy_base}/current/</code>에 기록되고 <code>systemd-run --unit=contrabass-mole-update</code> 로 적용됩니다.</p>
+      <p class="update-desc">배포 번들(<strong>tar.gz</strong>: <code>contrabass.manifest.yaml</code> + 에이전트 + config 등)을 한 파일로 업로드합니다. 로컬에서 패키지를 만들려면 저장소의 <code>maintenance/scripts/pack-agent-tarball.sh</code> 를 사용하세요. 스테이징 후 「업데이트 적용」으로 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>가 <code>{deploy_base}/current/</code>에 기록되고 <code>systemd-run --unit=contrabass-mole-update</code> 로 적용됩니다.</p>
       <div class="update-form">
         <div class="update-fields">
           <div class="update-file-row">

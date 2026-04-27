@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"contrabass-agent/internal/config"
-	"contrabass-agent/internal/updatescripts"
+	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/updatescripts"
 	"contrabass-agent/maintenance/appmeta"
 )
 

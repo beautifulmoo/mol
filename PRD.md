@@ -6,10 +6,23 @@
 - **언어**: Go
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
-- **소스 레이아웃**: Discovery·Discovery CLI(`discoverycli`)·**업데이트 적용 CLI(`applycli`)**·**설치 버전 CLI(`versionscli`: `--versions-list` / `--versions-switch`)**·**CLI 공용(`cliutil`: 원격 Gin `Server.HTTPPort`·`APIPrefix`·TCP 도달 확인 등)**·**공유 로직(`versionsapi`: 로컬 `versions/` 목록·로컬 버전 전환 `RunSwitchCurrentWithRoots` 등)**·**로컬 apply 번들 스테이징(`server/applylocal.go`의 `ApplyUpdateSelfFromBundleExtract`)**·**호스트 정보 CLI(`hostinfocli`: `--host-info`)**·**공유 로직(`hostinfoapi`: `/self`·`/host-info` 핵심과 CLI)**·로컬 `hostinfo` 패키지·HTTP API·서비스 상태·웹 정적 파일은 **`maintenance/`** 아래 패키지로 구성된다. 루트 `main.go`는 `contrabass-agent/maintenance` 만 import한다. **설정(YAML)** 은 **`internal/config`** 에서 로드한다(**`ClampMaxUploadBytes`** 로 `Maintenance.MaxUploadBytes` 를 서버 업로드 한도와 **`--apply-update`** 가 동일 규칙으로 사용). **업데이트/롤백 셸**은 루트 `update.sh`·`rollback.sh` 를 소스로 하여 **`internal/updatescripts/`** 에 복사 후 **`//go:embed`** 로 바이너리에 포함한다(`Makefile`이 빌드 전 동기화). Discovery용 IPv4 brd 자동 수집 규칙과 동일한 의도의 **참고 셸** `brd_for_bm.sh` 를 저장소 루트에 둔다(§3.1.1).
-- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.VersionKey`**(ldflags `-X main.VersionKey=…`, `Makefile` 기본값은 **`./scripts/build-version.sh`** 가 출력하는 **`git describe --tags --long --always` 전체 문자열**, 예: `0.4.4-4-gc44d420`; 필요 시 **`make build VERSION_KEY=…`** 로 덮어쓸 수 있음)과 **`main()`** 만 두고, **`contrabass-moleU -cfg <파일>`**(비어 있지 않은 경로)인 **서비스 모드**에서만 Gin 리버스 프록시(`Server.HTTPPort`)를 `go`로 기동한 뒤 **`maintenance.Run(main.VersionKey, os.Args)`** 를 호출하고, 그 반환값으로 **`os.Exit`** 한다. `--nic-brd`·`--discovery`·`--apply-update`·`--versions-list`·`--versions-switch`·`--host-info`·`-h` 등 **CLI 전용** 실행 시에는 Gin을 띄우지 않는다. **`maintenance.Run(buildVersionKey, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`--apply-update`·`--versions-list`·`--versions-switch`·`--host-info`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 **`contrabass-moleU --discovery`**, **`applycli.Run`** 은 **`--apply-update`**, **`versionscli.RunList` / `RunSwitch`** 는 **`--versions-list` / `--versions-switch`**, **`hostinfocli.Run`** 은 **`--host-info`** 경로에서 각각 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
+- **소스 레이아웃**: 런타임 Go·웹·내장 스크립트·빌드 보조는 **`maintenance/`** 단일 트리 아래에 둔다(§1.1). 루트에는 **`main.go`**, **`go.mod`**, 루트 **`update.sh`·`rollback.sh`**(내장용으로 `maintenance/updatescripts/`에 복사되는 원본), **`config.yaml`**, 참고 **`brd_for_bm.sh`** 등만 둔다. **설정(YAML)** 은 패키지 **`maintenance/config`**(`maintenance_config.go` 등)에서 로드한다. **업데이트/롤백 셸**은 루트 스크립트를 **`maintenance/updatescripts/`** 로 복사한 뒤 **`//go:embed`** 로 바이너리에 포함한다(`Makefile` 빌드 전 동기화). **버전 키 스크립트**·**배포 번들 패키징**은 각각 **`maintenance/scripts/`**, **`maintenance/packaging/`** 에 둔다.
+- **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.VersionKey`**(ldflags `-X main.VersionKey=…`, `Makefile` 기본값은 **`./maintenance/scripts/build-version.sh`** 가 출력하는 **`git describe --tags --long --always` 전체 문자열**, 예: `0.4.4-4-gc44d420`; 필요 시 **`make build VERSION_KEY=…`** 로 덮어쓸 수 있음)과 **`main()`** 만 두고, **`contrabass-moleU -cfg <파일>`**(비어 있지 않은 경로; 레거시 **`agent -cfg <파일>`** 도 동일)인 **서비스 모드**에서만 Gin 리버스 프록시(`Server.HTTPPort`)를 `go`로 기동한 뒤 **`maintenance.Run(main.VersionKey, os.Args)`** 를 호출하고, 그 반환값으로 **`os.Exit`** 한다. 에이전트 **CLI 전용**(`agent` 다음에 `--nic-brd`·`--discovery`·`--apply-update`·`--versions-list`·`--versions-switch`·`--host-info`·`-h` 등) 실행 시에는 Gin을 띄우지 않는다. **`maintenance.Run(buildVersionKey, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`--apply-update`·`--versions-list`·`--versions-switch`·`--host-info`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모은다. **`discoverycli.Run`** 은 **`contrabass-moleU agent --discovery`**, **`applycli.Run`** 은 **`agent --apply-update`**, **`versionscli.RunList` / `RunSwitch`** 는 **`agent --versions-list` / `agent --versions-switch`**, **`hostinfocli.Run`** 은 **`agent --host-info`** 경로에서 각각 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
 - **소스 트리와 테스트**: 배포용 저장소에는 Go **`*_test.go`** 단위 테스트 파일을 두지 않는다(단일 바이너리 산출물에는 원래 테스트가 포함되지 않으며, 소스 정책상 별도 테스트 파일 없이 유지한다). 회귀 검증이 필요하면 `go test`용 파일을 로컬·CI에서만 두거나 이력에서 복구한다.
 - **웹 서버**: Go 표준 라이브러리 **net/http** 만 사용 (외부 웹 프레임워크 미사용)
+
+### 1.1 `maintenance/` 소스 트리 (병합·정리 기준)
+
+| 경로 | 역할 |
+|------|------|
+| **`maintenance/maintenance.go`** | `Run` — 서비스(`-cfg`)·`agent` CLI 분기, embed `web/*` |
+| **`maintenance/config/`** | YAML `Config`, `Load`, 버전 키 비교, `MaxUploadBytes` 등. 핵심 파일명 **`maintenance_config.go`**(구 `configFile2.go`), `maxuploadbytes.go`, `versionkey.go`. Go import: **`contrabass-agent/maintenance/config`**. |
+| **`maintenance/updatescripts/`** | 루트 `update.sh`·`rollback.sh` 복사본 + `embed.go`(`//go:embed`) — 바이너리 내장 스크립트 |
+| **`maintenance/scripts/`** | `build-version.sh`(Makefile `VERSION_KEY`), `pack-agent-tarball.sh`(배포 tar.gz 생성) |
+| **`maintenance/packaging/`** | `contrabass.manifest.yaml.template` 등 번들 manifest 참고 |
+| **`maintenance/server`**, **`discovery`**, **`web/`** 등 | 기존과 동일 — HTTP·Discovery·정적 UI |
+
+**`internal` 디렉터리 이름을 쓰지 않는 이유**: Go는 **`…/internal/…`** 패키지를 해당 `internal`의 **부모 디렉터리 이하**에서만 import할 수 있다. 루트 **`main.go`** 가 설정 패키지를 import해야 하므로, 저장소 루트에 `internal/config`를 두면 **가시성 규칙 위반**이 된다. 따라서 **`maintenance/config`**·**`maintenance/updatescripts`** 로 경로를 통일한다.
 
 ---
 
@@ -70,7 +83,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 **9. 확인용 CLI**
 
-- **`contrabass-moleU --nic-brd`** 는 위 규칙과 동일하게 **(인터페이스 이름 : brd)** 를 한 줄씩 출력한다. Gin(`Server.HTTPPort`)은 서비스 모드(`-cfg <파일>`)에서만 기동되므로, **`--nic-brd`·`--discovery`·`-h` 등 CLI 전용 실행에서는 Gin이 바인딩되지 않는다**(루트 `maintenance.ShouldStartGinReverseProxy`: 첫 인자가 `-cfg`일 때만 true).
+- **`contrabass-moleU agent --nic-brd`** 는 위 규칙과 동일하게 **(인터페이스 이름 : brd)** 를 한 줄씩 출력한다. Gin(`Server.HTTPPort`)은 서비스 모드(`-cfg <파일>` 또는 레거시 `agent -cfg <파일>`)에서만 기동되므로, **`agent` 다음의** `--nic-brd`·`--discovery`·`-h` 등 **CLI 전용 실행에서는 Gin이 바인딩되지 않는다**(루트 `maintenance.ShouldStartGinReverseProxy` / `ConfigPathForServiceMode`).
 
 **10. 참고 스크립트 `brd_for_bm.sh` (저장소 루트)**
 
@@ -173,14 +186,18 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 4.1 CLI (명령줄)
 
-- **인자 없이 실행**: **`contrabass-moleU`** — 버전과 `-cfg <파일>` 필요 안내를 출력하고 종료한다. HTTP 서비스는 **`-cfg`로 설정 파일을 지정했을 때만** 기동한다.
-- **`-cfg <파일>`**: 설정 파일 경로(필수 인자). 이 옵션으로만 HTTP·Discovery가 기동한다. systemd 등에서는 `ExecStart=.../contrabass-moleU -cfg /path/to/config.yaml` 형태로 지정한다.
-- **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료.
-- **`-version`, `--version`**: 버전 문자열 출력 후 종료.
+- **인자 없이 실행**: **`contrabass-moleU`** — 버전과 **`-cfg <파일>`**(HTTP·Discovery 기동) 및 **`agent …`**(기타 CLI) 안내를 출력하고 종료한다. HTTP 서비스는 **첫 인자 `-cfg`** 로 설정 파일을 지정했을 때만 기동한다(레거시: **`agent -cfg <파일>`** 도 허용).
+- **`-cfg <파일>`**(서비스): 설정 파일 경로(필수 인자). **`contrabass-moleU`의 첫 인자로 `-cfg`** 와 경로를 두면 HTTP·Discovery가 기동한다. systemd 등에서는 `ExecStart=.../contrabass-moleU -cfg /path/to/config.yaml` 형태를 권장한다(기존 **`agent -cfg`** 도 동작).
+- **접두**: **`-h`·`--host-info`·`--discovery` 등**(서비스용 `-cfg` 제외)은 모두 **`contrabass-moleU agent …`** 형태(첫 인자 **`agent`**)로 호출한다.
+- **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료. **`agent` 다음**에만 지원(`contrabass-moleU agent --help`).
+- **`-version`, `--version` (두 경로)**  
+  - **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** — 다른 CLI와 동일하게 `agent` 접두.  
+  - **전환용(루트)**: **`contrabass-moleU --version`** / **`-version`** — 구버전 업데이트·외부 스크립트가 루트 플래그만 호출하는 경우를 위해 **`agent` 없이** 한 줄 출력을 허용한다. 향후 제거·비권장으로 좁힐 수 있다.  
+  - 출력 형식은 동일: **`<BinaryName> <main.VersionKey>`** 한 줄.
 - **`--host-info`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`** 한 인자. **`maintenance/hostinfoapi`** 의 `SelfDiscoveryResponse`·`RemoteHostInfo`·(원격 시) `StartEphemeralDiscovery` 로 **HTTP `GET …/host-info` 핸들러와 동일한 규칙**을 따른다 — **`self`**는 로컬 hostinfo·빌드 버전 키·설정 메타로 `/self`와 같은 페이로드; **원격 IP**는 로컬에 UDP 리스너를 잠시 올린 뒤 **유니캐스트 Discovery**만 수행. **CLI는 로컬 maintenance HTTP를 띄우지 않아도 동작**한다(같은 호스트에서 에이전트가 이미 `DiscoveryUDPPort`를 쓰 중이면 UDP 바인드가 실패할 수 있음). 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨로 표 형태로 출력한다. **`-h` 도움말 순서**: `-h` 다음에 `-version` 다음 **`--host-info`** 가 오고 그 다음 **`--nic-brd`**(그 외 옵션은 기존과 동일).
 - **`--nic-brd`**: §3.1.1과 동일 규칙으로 IPv4 브로드캐스트(brd)를 `NIC이름 : brd주소` 형식으로 출력(확인용) 후 종료.
 - **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만] version=<에이전트 버전 키>` 형식으로, **`responded_from_ip`**만 취합하고 **버전**은 DISCOVERY_RESPONSE JSON의 **`version`** 필드(§3.4·§9)를 표시한다(없으면 `version=?`). Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
-- **`--apply-update`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**, **`<bundle.tar.gz>`** 두 인자가 필요하다. **로컬 유지보수 HTTP는 필요 없다.** (1) 번들을 임시 디렉터리에 풀어 **서버와 동일한 검증**(manifest·해시·ELF·`--version`, §5.5.3) 후 **번들 버전 키**를 얻는다. (2) **현재 버전**: **self**는 **`DeployBase`의 `current` 심볼릭 → `versions/` 대상 버전 키**로 비교(CLI 바이너리 ldflags는 심볼릭을 읽을 수 없을 때만 보조); **원격 IP**는 `http://<ip>:Server.HTTPPort` + `APIPrefix` + `/self` (적용 전 **TCP** 연결 확인). (3) **`StagingUpdateAvailable`** 가 참일 때만 진행. (4) **self**: 스테이징 후 로컬 적용(`ApplyUpdateSelfFromBundleExtract`·`RunSwitchCurrentWithRoots`, 웹 `POST /upload`+로컬 적용과 동등; 배포 경로 쓰기·`systemd-run`은 보통 **sudo**). (5) **원격**: `http://<ip>:Server.HTTPPort` + `APIPrefix`에 **`POST …/apply-update` multipart**(`ip`, `bundle`) — 요청은 **원격 Gin**에서 처리되어 원격 `POST …/upload` 후 원격 apply-update(self)(§5.5.3과 동일). **CLI 도움말·진단 메시지**는 **영문** 정책을 따른다.
+- **`--apply-update`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**, **`<bundle.tar.gz>`** 두 인자가 필요하다. **로컬 유지보수 HTTP는 필요 없다.** (1) 번들을 임시 디렉터리에 풀어 **서버와 동일한 검증**(manifest·해시·ELF·바이너리 버전 키, §5.5.3) 후 **번들 버전 키**를 얻는다. (2) **현재 버전**: **self**는 **`DeployBase`의 `current` 심볼릭 → `versions/` 대상 버전 키**로 비교(CLI 바이너리 ldflags는 심볼릭을 읽을 수 없을 때만 보조); **원격 IP**는 `http://<ip>:Server.HTTPPort` + `APIPrefix` + `/self` (적용 전 **TCP** 연결 확인). (3) **`StagingUpdateAvailable`** 가 참일 때만 진행. (4) **self**: 스테이징 후 로컬 적용(`ApplyUpdateSelfFromBundleExtract`·`RunSwitchCurrentWithRoots`, 웹 `POST /upload`+로컬 적용과 동등; 배포 경로 쓰기·`systemd-run`은 보통 **sudo**). (5) **원격**: `http://<ip>:Server.HTTPPort` + `APIPrefix`에 **`POST …/apply-update` multipart**(`ip`, `bundle`) — 요청은 **원격 Gin**에서 처리되어 원격 `POST …/upload` 후 원격 apply-update(self)(§5.5.3과 동일). **CLI 도움말·진단 메시지**는 **영문** 정책을 따른다.
 - **`--versions-list`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**. **`self`** 는 **`versionsapi`** 로 `DeployBase`/`InstallPrefix` 기준 디스크 스캔 — **로컬 유지보수 HTTP 불필요**. **원격 IP** 는 `http://<ip>:Server.HTTPPort` + `APIPrefix` + `GET …/versions/list` 를 **그 호스트의 Gin에 직접** 호출(로컬 에이전트·유지보수 프록시 불필요). 설치된 버전·current/previous 플래그를 표로 출력(영문 헤더). `-cfg` 와 위치 인자 **순서 무관**.
 - **`--versions-switch`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**, **`<버전 키>`**. **`self`**: 유지보수 HTTP 없이 로컬 전환(`systemd-run`, 서버 `switch-current` 로컬 분기와 동일). **원격 IP**: `http://<ip>:Server.HTTPPort` + `APIPrefix` 로 **그 호스트 Gin에 직접** `POST`(JSON `version`만). 적용 전 **`TCP`로 `<ip>:Server.HTTPPort`** 연결 확인. 내장 `update.sh`를 `systemd-run`으로 실행하는 경로는 웹 UI와 동일.
 
@@ -270,7 +287,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 #### 5.5.2 update.sh·rollback.sh (소스·내장·실행 위치)
 
-- **소스**: 저장소 루트에 `update.sh`, `rollback.sh` 가 있으며, 빌드 시 **`internal/updatescripts/`** 로 복사한 뒤 Go **`//go:embed`** 로 바이너리에 포함한다. **`Makefile`** 의 `build` 타깃이 루트 스크립트를 해당 디렉터리로 동기화한 다음 `go build` 하므로, 릴리스 빌드는 항상 최신 스크립트가 내장된다.
+- **소스**: 저장소 루트에 `update.sh`, `rollback.sh` 가 있으며, 빌드 시 **`maintenance/updatescripts/`** 로 복사한 뒤 Go **`//go:embed`** 로 바이너리에 포함한다. **`Makefile`** 의 `build` 타깃이 루트 스크립트를 해당 디렉터리로 동기화한 다음 `go build` 하므로, 릴리스 빌드는 항상 최신 스크립트가 내장된다.
 - **배포 베이스에 별도 복사 불필요**: 운영 호스트에 `scp` 로 스크립트만 갱신할 필요가 없다. 에이전트 바이너리를 교체하면 내장 스크립트도 함께 갱신된다.
 - **BASE 산정**: 스크립트는 **`{DeployBase}/current/`** 옆이 아니라, **실행 시 `current` 심볼릭 링크가 가리키는 버전 디렉터리**(`versions/<버전 키>/`)에 놓인다.  
   - `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` — 스크립트 파일이 있는 디렉터리(현재 버전 트리).  
@@ -288,11 +305,11 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 #### 5.5.3 업로드·삭제·적용
 
 - **업로드** `POST {serverUrl}/api/v1/upload`  
-  - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + manifest에 명시된 에이전트·config 등; `packaging/contrabass.manifest.yaml.template`, `scripts/pack-agent-tarball.sh` 참고). **브라우저·CLI·다른 에이전트가 원격에 배포할 때도 동일 경로·동일 필드명**으로 호출한다.  
-  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, GNU tar의 `./` 디렉터리 항목 등은 건너뜀, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **config.yaml** 구조체 파싱, **에이전트 ELF**·`--version`(§12) 검증을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 `config.yaml`을 두고, **요청 본문으로 받은 tar.gz 원본 전체**를 **`upload.bundle.tar.gz`** 로 저장한다(원격 재전송·manifest 확장 시 서버가 번들 레이아웃을 재하드코딩하지 않도록).  
-  - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 `--version` 실행(5초), 출력이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`, 기본 `contrabass-moleU`)로 시작·종료 0.  
-  - **config 검증**: `internal/config` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
-  - **버전 키(스테이징 디렉터리명)**: 추출·검증된 **실행 파일**을 임시 경로에서 **`--version`** 실행하여, 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 읽는다. config에는 버전을 두지 않는다.  
+  - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + manifest에 명시된 에이전트·config 등; `maintenance/packaging/contrabass.manifest.yaml.template`, `maintenance/scripts/pack-agent-tarball.sh` 참고). **브라우저·CLI·다른 에이전트가 원격에 배포할 때도 동일 경로·동일 필드명**으로 호출한다.  
+  - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, GNU tar의 `./` 디렉터리 항목 등은 건너뜀, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **config.yaml** 구조체 파싱, **에이전트 ELF**·바이너리 버전 키 검증(§12, `--version`→`agent --version` 폴백)을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 `config.yaml`을 두고, **요청 본문으로 받은 tar.gz 원본 전체**를 **`upload.bundle.tar.gz`** 로 저장한다(원격 재전송·manifest 확장 시 서버가 번들 레이아웃을 재하드코딩하지 않도록).  
+  - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 바이너리 실행으로 버전 키 확인(각 시도 **5초** 타임아웃). **먼저 `<path> --version`**, 실패 시 **`<path> agent --version`** 순으로 시도한다(`maintenance/server.versionKeyFromAgentBinary`). 출력 한 줄이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`)로 시작하고, 뒤의 버전 키가 유효해야 하며 종료 코드 0.  
+  - **config 검증**: `maintenance/config` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
+  - **버전 키(스테이징 디렉터리명)**: 추출·검증된 **실행 파일**에 대해 위와 동일하게 **`--version` → `agent --version`** 폴백으로 버전 키를 읽는다. 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 스테이징 디렉터리명으로 쓴다. config에는 버전을 두지 않는다.  
   - **성공**: `{ "status": "success", "data": { "version": "<버전 키>" } }`.
 - **업로드 삭제** `POST .../upload/remove` — Body `{ "version": "<버전 키>" }`. **스테이징** 만 삭제; `versions/` 는 유지.
 - **적용 (로컬)** `POST .../apply-update`, Body `{ "version": "<버전 키>", "ip": "self" 또는 생략 }`  
@@ -386,7 +403,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 6.3 업데이트 (업로드·적용·로그)
 
-- **업로드**: `scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리의 **`--version`** 출력에서 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + `--version`, §12)·**config.yaml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
+- **업로드**: `maintenance/scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리에 대해 **`versionKeyFromAgentBinary`**(§5.5.3·§12)로 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + 버전 한 줄, §12)·**config.yaml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
   - **config 변경**: 번들을 만들기 전에 로컬에서 `config.yaml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
 - **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, 적용 버튼으로 `POST /api/v1/apply-update` (`{ "version": "..." }`). 성공 시 에이전트(`contrabass-mole.service`) 재시작으로 연결이 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 약 4초 후부터 `GET /api/v1/self`를 **2초 간격 최대 15회** 폴링하여 서버가 다시 뜨면 **업데이트 기록·config.yaml·설치된 버전·서비스 상태·update-status**를 모두 다시 불러와 현행화한다. 대기 중 업데이트 로그는 **2초 간격**으로 조용히 갱신한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다. 실패 시 에러 메시지.
 - **적용 (원격)**  
@@ -425,7 +442,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 ## 7. 설정
 
 - **포맷**: **YAML**
-- **위치**: 구현 시 결정. 실행 시 **`-cfg <경로>`** 로 지정한다(인자 없이 기본 `config.yaml` 자동 로드는 하지 않음).
+- **위치**: 구현 시 결정. 실행 시 **`-cfg <경로>`**(서비스 첫 인자)로 지정한다(인자 없이 기본 `config.yaml` 자동 로드는 하지 않음).
 - **구조**: 모든 설정은 최상위 `Maintenance:` 아래에 둔다. 예:
 
 ```yaml
@@ -463,7 +480,7 @@ Maintenance:
 | `Maintenance.InstallPrefix` | (선택) 에이전트(`BinaryName`) 설치 경로 prefix. `versions/` 목록·삭제 API 및 installer에서 사용. 비면 `DeployBase` 사용 | `"/var/lib/contrabass/mole"` |
 | `Maintenance.SSHPort` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `Maintenance.SSHUser` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
-| `Maintenance.MaxUploadBytes` | (선택) `POST /upload` 및 multipart `apply-update`의 **최대 요청 본문 크기**(바이트). 생략 시 `internal/config.DefaultMaxUploadBytes`(코드상 `64 << 20`). YAML에서는 **정수** 또는 문자열 **`"M << N"`** / 십진 문자열(예: `"67108864"`) — `internal/config`의 `uploadBytesExpr`로 파싱. 구현상 **1 MiB–10 GiB**로 클램프 | `67108864`, `"64 << 20"` |
+| `Maintenance.MaxUploadBytes` | (선택) `POST /upload` 및 multipart `apply-update`의 **최대 요청 본문 크기**(바이트). 생략 시 `maintenance/config.DefaultMaxUploadBytes`(코드상 `64 << 20`). YAML에서는 **정수** 또는 문자열 **`"M << N"`** / 십진 문자열(예: `"67108864"`) — `maintenance/config`의 `uploadBytesExpr`로 파싱. 구현상 **1 MiB–10 GiB**로 클램프 | `67108864`, `"64 << 20"` |
 | `Maintenance.RemoteHealth` | (선택) **원격 HTTP 헬스** 폴링(웹 UI, §6.5). 하위 키는 모두 정수. 생략 시 코드 기본값 적용 | 아래 표 참고 |
 | `Maintenance.RemoteHealth.IntervalSeconds` | 기본 간격(초); 매 주기마다 `JitterSeconds` 이내 균등 랜덤 지연을 더해 다음 체크 시각을 잡는다 | `10` |
 | `Maintenance.RemoteHealth.TimeoutSeconds` | `remote-health-check`가 원격 `GET …/health`를 기다리는 **HTTP 타임아웃**(초) | `2` |
@@ -483,11 +500,11 @@ Maintenance:
 
 ## 9. 버전 정보
 
-- **CLI `--version`**: **`-version` / `--version`** 은 빌드 **ldflags** `main.VersionKey`(전체 버전 키 문자열)와 `appmeta.BinaryName` 을 한 줄로 출력한다(설정 파일 없음). 미주입 시 `0.0.0-0` 으로 표시된다.
+- **CLI 버전 출력**: **`-version` / `--version`** 은 빌드 **ldflags** `main.VersionKey`(전체 버전 키 문자열)와 `appmeta.BinaryName` 을 **한 줄**로 출력한다(설정 파일 없음). 미주입 시 `0.0.0-0` 으로 표시된다. **호출 형태**: 권장은 **`contrabass-moleU agent --version`**; 구 스크립트 호환을 위해 **루트** `contrabass-moleU --version`(및 `-version`)도 허용한다(§4.1).
 - **HTTP·Discovery 노출 문자열**: 서비스 기동 시(`-cfg`)에는 **`main.VersionKey`** 를 그대로 쓴다. 이 문자열이 **자기 정보 API**, **DISCOVERY_RESPONSE의 `version`**, **`GET /version`**, 시작 로그(§8)에 일관되게 쓰인다.
-- **빌드 시 버전 키 주입**: 기본은 **`scripts/build-version.sh`** 가 **`git describe --tags --long --always` 전체**를 표준 출력한다(`Makefile` 의 `VERSION_KEY ?= $(shell ./scripts/build-version.sh)` → `go build -ldflags "-X main.VersionKey=…"`). 태그 없음·빈 저장소 등 예외는 스크립트 주석·구현과 동일하다. **수동 문자열**을 넣으려면 **`make build VERSION_KEY=<원하는 문자열>`** 이거나, 동일한 `-ldflags "-X main.VersionKey=…"` 를 직접 `go build` 에 넘긴다.
-- **업데이트 판단**: 스테이징·`versions/` 디렉터리명·비교 API는 모두 **버전 키** 문자열을 사용한다(§5.5). 키는 위 파이프라인 또는 수동 주입으로 결정된다. **문자열 비교가 아니라** `internal/config` 의 비교 로직에서 describe 접미사 **`-g<해시>`** 를 제거한 뒤 시맨틱·패치로 순서를 정한다(§5.5.1).
-- **실행 파일 검증**: 업로드된 바이너리는 `--version` 으로 실행해 출력이 **`<BinaryName> `** 로 시작하는지 확인한다(§12). 에이전트는 `--version` / `-version` 시 버전 한 줄 출력 후 종료한다.
+- **빌드 시 버전 키 주입**: 기본은 **`maintenance/scripts/build-version.sh`** 가 **`git describe --tags --long --always` 전체**를 표준 출력한다(`Makefile` 의 `VERSION_KEY ?= $(shell ./maintenance/scripts/build-version.sh)` → `go build -ldflags "-X main.VersionKey=…"`). 태그 없음·빈 저장소 등 예외는 스크립트 주석·구현과 동일하다. **수동 문자열**을 넣으려면 **`make build VERSION_KEY=<원하는 문자열>`** 이거나, 동일한 `-ldflags "-X main.VersionKey=…"` 를 직접 `go build` 에 넘긴다.
+- **업데이트 판단**: 스테이징·`versions/` 디렉터리명·비교 API는 모두 **버전 키** 문자열을 사용한다(§5.5). 키는 위 파이프라인 또는 수동 주입으로 결정된다. **문자열 비교가 아니라** `maintenance/config` 의 비교 로직에서 describe 접미사 **`-g<해시>`** 를 제거한 뒤 시맨틱·패치로 순서를 정한다(§5.5.1).
+- **실행 파일 검증**: 업로드·번들 검증 시 바이너리에 대해 **`--version` 실패 후 `agent --version`** 순으로 시도해 출력이 **`<BinaryName> `** 로 시작하는지 확인한다(`versionKeyFromAgentBinary`, §5.5.3·§12). 에이전트 자체는 루트 및 `agent` 경로 모두에서 버전 한 줄 출력 후 종료한다(§4.1).
 
 ---
 
@@ -505,7 +522,7 @@ Maintenance:
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, `DoDiscoveryUnicast`; 응답은 **`request_id`로 요청과만 매칭**한다. **멀티홈 호스트**에서는 유니캐스트 목적지 IP와 DISCOVERY_RESPONSE의 `host_ip`(또는 UDP 출발지)가 다를 수 있으므로, **`host_ip` 문자열이 목적지와 일치하지 않아도** 동일 응답으로 처리한다. 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
-- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리의 `--version` 에서 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + `--version`, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 의 프록시 동작은 기존과 같다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
+- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리에 대해 §5.5.3과 동일한 **`--version`→`agent --version`** 폴백으로 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + 버전 한 줄, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 의 프록시 동작은 기존과 같다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
 - **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
 
@@ -519,12 +536,12 @@ Maintenance:
 - [ ] Discovery: UDP broadcast 요청(목적지 포트 discovery_udp_port), 응답은 요청자 IP:**요청 소스 포트**로 unicast; pending 등록 후 전송, 타임아웃 시 drain
 - [ ] Discovery 메시지: DISCOVERY_REQUEST / DISCOVERY_RESPONSE (JSON), 호스트 정보(CPU, MEMORY, cpu_uuid) 포함; 응답에는 host_ip 하나만(요청자 기준 outbound IP); 수신 측이 responded_from_ip(UDP 발신지) 설정; 수신 측에서 같은 호스트의 여러 응답으로 IP·응답한 IP 취합
 - [ ] Discovery 자기 응답: 기본 **포함**(`"self": true`); 쿼리 **`exclude_self`** 시 CPU UUID(또는 IP+ServicePort 폴백)로 제외
-- [ ] Discovery 브로드캐스트: **3.1.1** (type=1, 브리지는 brif 슬레이브 존재, IPv4 brd; 이름 필터 없음); 송신 목록은 brd 문자열 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; **`contrabass-moleU --nic-brd`**로 확인; 참고 셸 **`brd_for_bm.sh`**
+- [ ] Discovery 브로드캐스트: **3.1.1** (type=1, 브리지는 brif 슬레이브 존재, IPv4 brd; 이름 필터 없음); 송신 목록은 brd 문자열 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; **`contrabass-moleU agent --nic-brd`**로 확인; 참고 셸 **`brd_for_bm.sh`**
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
 - [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, **event: discoveryfail** 시 서버 메시지 표시·**journalctl** 안내; 응답 오는 대로 화면 갱신; 기존 카드 매칭은 **cpu_uuid → IP** 순서만 사용(**hostname 미사용**, 동일 hostname 다른 호스트 병합 방지), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
 - [ ] Discovery 일괄: `GET {APIPrefix}/discovery`, data 배열(빈 경우 []); 쿼리 `exclude_self`·`timeout`; **웹 UI 미호출**
 - [ ] Discovery SSE: `GET {APIPrefix}/discovery/stream`, 동일 쿼리 지원; 웹 UI는 쿼리 없이 기본만 사용
-- [ ] Gin 프록시(루트 main): **`-cfg <파일>` 서비스 모드에서만** 기동(`ShouldStartGinReverseProxy`); `Server.HTTPPort`, `WebPrefix`·`APIPrefix`로 maintenance에 프록시; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
+- [ ] Gin 프록시(루트 main): **`-cfg <파일>`(또는 레거시 `agent -cfg`) 서비스 모드에서만** 기동(`ShouldStartGinReverseProxy`); `Server.HTTPPort`, `WebPrefix`·`APIPrefix`로 maintenance에 프록시; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
 - [ ] 웹: `client-runtime.js`로 `APIPrefix`·`RemoteHealth` 설정 주입 후 `app.js` API 호출
 - [ ] URL prefix: `WebPrefix`·`APIPrefix`, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼
@@ -538,10 +555,10 @@ Maintenance:
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`). 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 에이전트 API 호출**(SSH 키 불필요)
 - [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
-- [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리 `--version`**
-- [ ] **CLI**: **`-cfg <파일>`** 로만 HTTP 서버 + Discovery 기동; 인자 없이 실행 시 안내 후 종료; `-h`/`--help`(도움말 본문은 영문; 옵션 순서: `-h`, `-version`, **`--host-info`**, `--nic-brd`, …); `--version`/`-version`; **`--host-info -cfg <file> <self|ip>`**(GET host-info, 원격은 유니캐스트 Discovery); `--nic-brd`; **`--discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`, 결과에 **`version=`**); **`--apply-update -cfg <file> <self|ip> <bundle.tar.gz>`**(번들 사전 검증·`StagingUpdateAvailable`·self는 디스크 스테이징+적용·원격은 대상 Gin에 multipart 직접, 메시지 영문); **`--versions-list -cfg <file> <self|ip>`** / **`--versions-switch -cfg <file> <self|ip> <version-key>`**(REST `versions/list`, `versions/switch-current` 대응, 메시지 영문)
+- [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
+- [ ] **CLI**: **`-cfg <파일>`** 로 HTTP 서버 + Discovery 기동(첫 인자; 레거시 **`agent -cfg`** 도 허용); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; 인자 없이 실행 시 안내 후 종료; `agent -h`/`agent --help`(도움말 본문은 영문; 옵션 순서: `-h`, `-version`, **`--host-info`**, `--nic-brd`, …); **`agent --version` / `agent -version`**(권장); **루트 `--version`/`-version`**(전환용 호환); **`agent --host-info -cfg <file> <self|ip>`**(GET host-info, 원격은 유니캐스트 Discovery); `agent --nic-brd`; **`agent --discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`, 결과에 **`version=`**); **`agent --apply-update -cfg <file> <self|ip> <bundle.tar.gz>`**(번들 사전 검증·`StagingUpdateAvailable`·self는 디스크 스테이징+적용·원격은 대상 Gin에 multipart 직접, 메시지 영문); **`agent --versions-list -cfg <file> <self|ip>`** / **`agent --versions-switch -cfg <file> <self|ip> <version-key>`**(REST `versions/list`, `versions/switch-current` 대응, 메시지 영문); 번들·ELF 검증 시 바이너리 **`--version` → `agent --version`** 폴백
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
-- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`internal/updatescripts` embed, `Makefile` 동기화); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; 로컬 적용 후 **페이지 전체 새로고침 없이** `/self` 폴링 → 업데이트 기록·config·versions·상태·update-status 현행화; 원격 적용 후 host-info 폴링(최대 8회) → 동일 패널 현행화; 로그 폴링 2초 간격; **GET /version** 헬스; recent_rollback·update_in_progress
+- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; 로컬 적용 후 **페이지 전체 새로고침 없이** `/self` 폴링 → 업데이트 기록·config·versions·상태·update-status 현행화; 원격 적용 후 host-info 폴링(최대 8회) → 동일 패널 현행화; 로그 폴링 2초 간격; **GET /version** 헬스; recent_rollback·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(실행 파일+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 실행 파일·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답
 - [ ] 원격 적용: 호스트별 **`GET …/update-status?ip=`** 의 **`can_apply`·`apply_version`** 으로 버튼·툴팁(스테이징 최신 문자열만과 카드 버전 문자열 비교에만 의존하지 않음), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신
@@ -551,7 +568,7 @@ Maintenance:
 - [ ] 일반 API 응답: status + data
 - [ ] 자기 정보 API: GET /api/v1/self
 - [ ] 설정: YAML, 항목 7.1 반영
-- [ ] 버전: **`main.VersionKey`**(`Makefile`·`scripts/build-version.sh`의 전체 describe, 또는 `VERSION_KEY=` 수동 주입)로 노출·업데이트 경로와 일치; 업로드는 바이너리 `--version`; 비교 시 `-g<해시>` 제거(§5.5.1)
+- [ ] 버전: **`main.VersionKey`**(`Makefile`·`maintenance/scripts/build-version.sh`의 전체 describe, 또는 `VERSION_KEY=` 수동 주입)로 노출·업데이트 경로와 일치; 업로드·번들 검증은 바이너리 **`--version`→`agent --version`** 폴백(§12); 비교 시 `-g<해시>` 제거(§5.5.1)
 - [ ] 프론트: embed 정적 파일, Vanilla JS, EventSource로 Discovery 스트림 수신
 
 ---
@@ -566,13 +583,13 @@ Maintenance:
 | 실행 파일(바이너리) 이름 | `maintenance/appmeta.BinaryName` — 기본 **`contrabass-moleU`** (Makefile·배포 스크립트와 동일) |
 | 상시 systemd 유닛 (에이전트) | 기본 **`contrabass-mole.service`** (`Maintenance.SystemctlServiceName`) — `contrabass-moleU` 프로세스를 띄우는 서비스 |
 | 임시 업데이트 유닛 | **`contrabass-mole-update.service`** — `systemd-run --unit=contrabass-mole-update` 로 `current/update.sh` 만 실행하는 **transient** 작업용. 메인 유닛과 별개이며 외부 연동용 이름이 아님. 코드 상수: `appmeta.UpdateTransientUnitStem` / `appmeta.UpdateTransientUnit` |
-| Discovery `service` 문자열 | 기본 **`Mole-Discovery`** (`Maintenance.DiscoveryServiceName`, `internal/config.DefaultDiscoveryServiceName`) |
-| 설정 파일 지정 | **` -cfg <경로>`** 필수로 HTTP+Discovery 기동. **`MOL_CONFIG` 환경 변수는 사용하지 않음** (`config.Load` 빈 경로 시 현재 디렉터리 `config.yaml`) |
+| Discovery `service` 문자열 | 기본 **`Mole-Discovery`** (`Maintenance.DiscoveryServiceName`, `maintenance/config.DefaultDiscoveryServiceName`) |
+| 설정 파일 지정 | **`-cfg <경로>`**(서비스 첫 인자; 레거시 `agent -cfg` 허용)로 HTTP+Discovery 기동. **`MOL_CONFIG` 환경 변수는 사용하지 않음** (`config.Load` 빈 경로 시 현재 디렉터리 `config.yaml`) |
 | 업로드 multipart | 필드 **`bundle`** — tar.gz(manifest + 에이전트 + config 등). 스테이징에 실행 파일명 **`BinaryName`**·`config.yaml`·원본 바이트 **`upload.bundle.tar.gz`** |
 | 원격 배포 upload | 로컬 에이전트가 호출하는 **`POST .../upload`는 업로드 API와 동일**; 소스 바이트는 스테이징의 `upload.bundle.tar.gz` 우선, 없으면 바이너리+config로 재패킹 |
 | 배포 디렉터리 내 실행 파일 | `staging/`·`versions/<버전 키>/` 아래 파일명은 **`BinaryName`** (과거 단일 바이너리 파일명 규칙은 사용하지 않음). `update.sh` 도 동일 파일명을 기대 |
 | `GET /version` | 한 줄: **`<BinaryName> <버전 키>`** (버전 키는 `git describe` 전체 문자열일 수 있음) |
-| 업로드 시 `--version` 검증 | 표준 출력 한 줄이 **`<BinaryName> `** 로 시작해야 함 (`maintenance/server.validateAgentBinary`) |
+| 업로드 시 바이너리 버전 검증 | `<path> --version` 후 실패 시 `<path> agent --version` — 표준 출력 한 줄이 **`<BinaryName> `** 로 시작 (`validateAgentBinary` / `versionKeyFromAgentBinary`) |
 
 ---
 

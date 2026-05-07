@@ -815,7 +815,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versionKey, configData, _, workDir, agentSrc, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
+	versionKey, configData, cfgName, _, workDir, agentSrc, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
@@ -854,9 +854,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "실행 파일 복사 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(finalDir, appmeta.ConfigFileName), configData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(finalDir, cfgName), configData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
-		s.send(w, "fail", appmeta.ConfigFileName+" 저장 실패: "+err.Error(), http.StatusInternalServerError)
+		s.send(w, "fail", cfgName+" 저장 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -1084,7 +1084,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		versionKey, _, bundlePath, workDir, _, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
+		versionKey, _, _, bundlePath, workDir, _, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return

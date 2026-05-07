@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"contrabass-agent/maintenance/config"
 	"contrabass-agent/maintenance/appmeta"
@@ -15,7 +16,7 @@ import (
 // (same effect as POST /upload then POST /apply-update with ip:self). Caller must have already run
 // PrepareAgentBundleFromReader with the same raw tar.gz bytes; agentSrc is the extracted binary path inside workDir.
 // raw is the original bundle bytes (for StagedBundleFileName). Caller typically needs root/sudo for deploy tree and systemd-run.
-func ApplyUpdateSelfFromBundleExtract(cfg *config.Config, raw []byte, versionKey string, configData []byte, agentSrc string) error {
+func ApplyUpdateSelfFromBundleExtract(cfg *config.Config, raw []byte, versionKey string, configData []byte, configFileName string, agentSrc string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
@@ -47,7 +48,10 @@ func ApplyUpdateSelfFromBundleExtract(cfg *config.Config, raw []byte, versionKey
 		_ = os.RemoveAll(finalDir)
 		return fmt.Errorf("copy binary to staging: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(finalDir, appmeta.ConfigFileName), configData, 0644); err != nil {
+	if strings.TrimSpace(configFileName) == "" {
+		configFileName = appmeta.ConfigFileName
+	}
+	if err := os.WriteFile(filepath.Join(finalDir, configFileName), configData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return fmt.Errorf("write staged config: %w", err)
 	}

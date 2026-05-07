@@ -28,6 +28,23 @@ import (
 	"contrabass-agent/maintenance/svcstatus"
 )
 
+func copyFile(src, dst string, perm os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if cerr := out.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
+	return err
+}
+
 // uploadBinaryField was the legacy multipart field for a single agent binary; retained for comments only.
 // Upload now uses uploadBundleField (tar.gz); see bundleupload.go.
 const uploadBinaryField = "agent"
@@ -815,7 +832,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versionKey, configData, cfgName, _, workDir, agentSrc, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
+	versionKey, configData, agentName, cfgName, _, workDir, agentSrc, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
@@ -834,13 +851,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	binDst := filepath.Join(finalDir, appmeta.BinaryName)
+	manifestBinDst := filepath.Join(finalDir, agentName)
 	srcf, err := os.Open(agentSrc)
 	if err != nil {
 		s.send(w, "fail", "실행 파일 읽기 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	dstf, err := os.OpenFile(binDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	dstf, err := os.OpenFile(manifestBinDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		_ = srcf.Close()
 		s.send(w, "fail", "스테이징 실행 파일 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
@@ -854,13 +871,21 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "실행 파일 복사 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Keep the canonical name too, so the rest of the deploy tree logic remains stable.
+	if agentName != appmeta.BinaryName {
+		if err := copyFile(manifestBinDst, filepath.Join(finalDir, appmeta.BinaryName), 0755); err != nil {
+			_ = os.RemoveAll(finalDir)
+			s.send(w, "fail", "스테이징 실행 파일 복사 실패: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	if err := os.WriteFile(filepath.Join(finalDir, cfgName), configData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
 		s.send(w, "fail", cfgName+" 저장 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if err := validateAgentBinary(binDst); err != nil {
+	if err := validateAgentBinary(filepath.Join(finalDir, appmeta.BinaryName)); err != nil {
 		_ = os.RemoveAll(finalDir)
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
@@ -1084,7 +1109,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		versionKey, _, _, bundlePath, workDir, _, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
+		versionKey, _, _, _, bundlePath, workDir, _, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return

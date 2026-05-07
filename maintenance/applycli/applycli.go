@@ -90,7 +90,7 @@ func Run(buildVersionKey string, args []string) int {
 		return 1
 	}
 
-	versionKey, configData, cfgName, _, workDir, agentSrc, err := server.PrepareAgentBundleFromReader(os.TempDir(), bytes.NewReader(raw), maxBytes)
+	versionKey, configData, agentName, cfgName, _, workDir, agentSrc, err := server.PrepareAgentBundleFromReader(os.TempDir(), bytes.NewReader(raw), maxBytes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: bundle validation failed: %v\n", appmeta.BinaryName, err)
 		return 1
@@ -108,7 +108,7 @@ func Run(buildVersionKey string, args []string) int {
 			return 1
 		}
 		fmt.Printf("Applying bundle %s locally (current %s)\n", versionKey, cur)
-		if err := server.ApplyUpdateSelfFromBundleExtract(cfg, raw, versionKey, configData, cfgName, agentSrc); err != nil {
+		if err := server.ApplyUpdateSelfFromBundleExtract(cfg, raw, versionKey, configData, agentName, cfgName, agentSrc); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 			return 1
 		}

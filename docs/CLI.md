@@ -36,7 +36,9 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 
 설정을 로드한 뒤 **maintenance HTTP**(`Maintenance.MaintenanceListenAddress`:`Maintenance.MaintenancePort`)와 **UDP Discovery** 등을 기동한다. 상세는 **[PRD.md](../PRD.md)** §1·§2·§7.
 
-참고: **업로드 번들**(`POST /upload`)로 스테이징/설치 트리에 저장되는 config 파일명은 고정값이 아니라, 번들 manifest의 **`config.path` basename** 을 따른다(예: `config.path: ./agent.local.yml` → 디렉터리에도 `agent.local.yml`).
+참고: **업로드 번들**(`POST /upload`)로 스테이징/설치 트리에 저장되는 파일명은 고정값이 아니라, 번들 manifest의 basename을 따른다.
+- config: `config.path` basename (예: `config.path: ./agent.local.yml` → 디렉터리에도 `agent.local.yml`)
+- agent: `agent.path` basename (단, deploy 트리 내부 로직은 `appmeta.BinaryName` 실행 파일을 기준으로 동작하므로 basename이 다르면 같은 바이너리를 `appmeta.BinaryName`로 한 번 더 저장한다)
 
 - **`-cfg`** 인데 경로가 없으면 stderr에 안내 후 종료 코드 `1`.
 - 과거 배포와의 호환을 위해 **`contrabass-moleU agent -cfg /path/to/agent.local.yml`** 도 동일하게 서비스 기동으로 처리한다.

@@ -283,6 +283,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **스테이징**: 업로드는 **실행 중인** `versions/<버전 키>/` 가 아닌 **`{DeployBase}/staging/<버전 키>/`** 에만 저장하여 "text file busy" 를 피한다. 적용 시 소스는 **스테이징 우선**, 없으면 **versions/**.
 - **원본 번들 보관**: 업로드 성공 시 **`upload.bundle.tar.gz`** 라는 이름으로 **클라이언트가 보낸 tar.gz 전체**를 스테이징에 함께 둔다. manifest·파일 개수가 늘어도 **원격에 동일 바이트를 다시 보낼 때** 서버가 번들 형식을 하드코딩하지 않도록 하기 위함이다. **`versions/<버전 키>/`에는 원본 번들을 두지 않는다** — 설치 트리는 실행·롤백·향후 임의 버전을 `current`로 지정하는 용도로 **풀린 파일만**이면 되며, 원본 아카이브는 필수 아님.
 - **config 파일명 규칙**: 스테이징/설치 트리에 저장되는 config 파일명은 **바이너리 상수로 고정하지 않고**, 번들 manifest의 **`config.path` basename** 을 따른다(예: `config.path: ./agent.local.yml` → 디스크에도 `agent.local.yml`). 설정 파일명이 다시 바뀌어도 번들 규약만 맞으면 동일하게 동작한다.
+- **agent 파일명 규칙**: 업로드 번들에서 추출된 agent 실행 파일도 **manifest `agent.path` basename** 으로 스테이징에 저장한다. 다만 배포 트리의 나머지 로직(versions/switch-current 등)은 **`appmeta.BinaryName` 파일을 기준**으로 동작하므로, basename이 다르면 **같은 바이너리를 `appmeta.BinaryName`로 한 번 더 복사**해 두어 호환을 유지한다.
 - **스테이징 → `versions/` (로컬 적용 직전)**: **`staging/<버전 키>/` 디렉터리 전체를 `versions/<버전 키>/`로 복사**한 뒤, **`upload.bundle.tar.gz`만 삭제**한다. 번들에 에이전트·config 외 파일이 추가되어도 동일 규칙으로 설치 트리에 반영된다.
 - **스테이징 정리**: 자동 삭제하지 않는다. 로컬 적용 후에도 스테이징을 남겨 같은 버전 키로 원격 적용을 반복할 수 있다(원본 번들이 스테이징에 남아 있으면 원격 `POST .../upload`에 그대로 실을 수 있음). 삭제는 웹 「업로드된 버전 삭제」로 **스테이징만** 수동 삭제한다.
 

@@ -3,7 +3,6 @@ package server
 import (
 	"archive/tar"
 	"compress/gzip"
-	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/config"
 	"crypto/sha256"
 	"encoding/hex"
@@ -212,6 +211,10 @@ func writeBundleTarGz(w io.Writer, agentPath, configPath string) error {
 	if err != nil {
 		return err
 	}
+	agentName := filepath.Base(agentPath)
+	if strings.TrimSpace(agentName) == "" || agentName == "." || agentName == string(filepath.Separator) {
+		return fmt.Errorf("invalid agent path: %q", agentPath)
+	}
 	configName := filepath.Base(configPath)
 	if strings.TrimSpace(configName) == "" || configName == "." || configName == string(filepath.Separator) {
 		return fmt.Errorf("invalid config path: %q", configPath)
@@ -228,7 +231,7 @@ agent:
 config:
   path: ./%s
   sha256: "%s"
-`, appmeta.BinaryName, ah, configName, ch)
+`, agentName, ah, configName, ch)
 
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
@@ -252,7 +255,7 @@ config:
 		_ = gw.Close()
 		return err
 	}
-	if err := tw.WriteHeader(&tar.Header{Name: appmeta.BinaryName, Mode: 0755, Size: int64(len(agentData)), ModTime: now}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: agentName, Mode: 0755, Size: int64(len(agentData)), ModTime: now}); err != nil {
 		_ = tw.Close()
 		_ = gw.Close()
 		return err
@@ -295,23 +298,23 @@ func maxBundleUnpackedBytes(maxRequest int64) int64 {
 // PrepareAgentBundleFromReader runs the same validation as POST /upload: extract tar.gz, manifest, hashes, config YAML, ELF, and version from the agent binary.
 // baseDir is only used as the parent for a temporary work directory (e.g. os.TempDir()).
 // Caller must os.RemoveAll(workDir) when done.
-func PrepareAgentBundleFromReader(baseDir string, bundleReader io.Reader, maxRequestBytes int64) (versionKey string, configData []byte, configFileName string, bundlePath string, workDir string, agentExtractPath string, err error) {
+func PrepareAgentBundleFromReader(baseDir string, bundleReader io.Reader, maxRequestBytes int64) (versionKey string, configData []byte, agentFileName string, configFileName string, bundlePath string, workDir string, agentExtractPath string, err error) {
 	return prepareAgentBundle(baseDir, bundleReader, maxRequestBytes)
 }
 
 // prepareAgentBundle reads a tar.gz stream into base/.bundle-*/, extracts it, validates manifest, hashes, config YAML, ELF, and --version.
 // agentExtractPath is the absolute path to the agent binary inside the extracted tree (for copying to staging).
 // Caller must os.RemoveAll(workDir) when done (after remote POST if bundlePath is needed).
-func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int64) (versionKey string, configData []byte, configFileName string, bundlePath string, workDir string, agentExtractPath string, err error) {
+func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int64) (versionKey string, configData []byte, agentFileName string, configFileName string, bundlePath string, workDir string, agentExtractPath string, err error) {
 	workDir = filepath.Join(base, ".bundle-"+strconv.FormatInt(time.Now().UnixNano(), 10))
 	if err = os.MkdirAll(workDir, 0755); err != nil {
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	bundlePath = filepath.Join(workDir, "upload.tar.gz")
 	bf, err := os.Create(bundlePath)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	_, err = io.Copy(bf, bundleReader)
 	if cerr := bf.Close(); cerr != nil && err == nil {
@@ -319,93 +322,98 @@ func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int
 	}
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("save bundle: %w", err)
+		return "", nil, "", "", "", "", "", fmt.Errorf("save bundle: %w", err)
 	}
 
 	extractRoot := filepath.Join(workDir, "root")
 	if err = os.MkdirAll(extractRoot, 0755); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	rf, err := os.Open(bundlePath)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	err = extractTarGzSafe(rf, extractRoot, maxBundleUnpackedBytes(maxRequestBytes))
 	_ = rf.Close()
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("extract bundle: %w", err)
+		return "", nil, "", "", "", "", "", fmt.Errorf("extract bundle: %w", err)
 	}
 
 	mf := filepath.Join(extractRoot, bundleManifestName)
 	raw, err := os.ReadFile(mf)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("missing manifest file (%s)", bundleManifestName)
+		return "", nil, "", "", "", "", "", fmt.Errorf("missing manifest file (%s)", bundleManifestName)
 	}
 	m, err := parseBundleManifest(raw)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	agentPath, err := bundleMemberAbs(extractRoot, m.Agent.Path)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("agent.path: %w", err)
+		return "", nil, "", "", "", "", "", fmt.Errorf("agent.path: %w", err)
 	}
 	configPath, err := bundleMemberAbs(extractRoot, m.Config.Path)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("config.path: %w", err)
+		return "", nil, "", "", "", "", "", fmt.Errorf("config.path: %w", err)
+	}
+	agentFileName = path.Base(normalizeBundlePath(m.Agent.Path))
+	if strings.TrimSpace(agentFileName) == "" || agentFileName == "." || strings.Contains(agentFileName, "/") {
+		_ = os.RemoveAll(workDir)
+		return "", nil, "", "", "", "", "", fmt.Errorf("invalid agent.path basename: %q", m.Agent.Path)
 	}
 	configFileName = path.Base(normalizeBundlePath(m.Config.Path))
 	if strings.TrimSpace(configFileName) == "" || configFileName == "." || strings.Contains(configFileName, "/") {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("invalid config.path basename: %q", m.Config.Path)
+		return "", nil, "", "", "", "", "", fmt.Errorf("invalid config.path basename: %q", m.Config.Path)
 	}
 	if _, err := os.Stat(agentPath); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("agent file missing: %s", m.Agent.Path)
+		return "", nil, "", "", "", "", "", fmt.Errorf("agent file missing: %s", m.Agent.Path)
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("config file missing: %s", m.Config.Path)
+		return "", nil, "", "", "", "", "", fmt.Errorf("config file missing: %s", m.Config.Path)
 	}
 	if err := verifyBundleMemberHashes(agentPath, configPath, m); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	configData, err = os.ReadFile(configPath)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	if _, err := config.LoadFromBytes(configData); err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	hdr := make([]byte, 4)
 	af, err := os.Open(agentPath)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
 	_, err = io.ReadFull(af, hdr)
 	_ = af.Close()
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("executable too short")
+		return "", nil, "", "", "", "", "", fmt.Errorf("executable too short")
 	}
 	if !isELFExecutable(hdr) {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", fmt.Errorf("not a valid ELF executable")
+		return "", nil, "", "", "", "", "", fmt.Errorf("not a valid ELF executable")
 	}
 	versionKey, err = versionKeyFromAgentBinary(agentPath)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
-		return "", nil, "", "", "", "", err
+		return "", nil, "", "", "", "", "", err
 	}
-	return versionKey, configData, configFileName, bundlePath, workDir, agentPath, nil
+	return versionKey, configData, agentFileName, configFileName, bundlePath, workDir, agentPath, nil
 }

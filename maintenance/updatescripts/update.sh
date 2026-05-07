@@ -39,21 +39,21 @@ NEW_BIN="$NEW_DIR/contrabass-moleU"
     exit 1
 }
 
-# 2. 적용할 버전의 config.yaml에서 설정 읽기. 실패해도 기본값 유지.
+# 2. 적용할 버전의 agent.local.yml에서 설정 읽기. 실패해도 기본값 유지.
 # HTTP_PORT = Maintenance.MaintenancePort (에이전트가 maintenance HTTP를 여는 포트, 예: 8889).
 # Server.HTTPPort(예: 8888)는 Gin이 아닌 별도 바인딩이며, 브라우저는 보통 8888→maintenance로 리버스 프록시한다.
 # GET /version 은 maintenance 리스너에서만 제공되므로 헬스체크는 MaintenancePort로 해야 한다(8888만 쓰면 /version 이 프록시되지 않아 404 등 잘못된 응답이 올 수 있음).
 SERVICE=contrabass-mole.service
 HTTP_PORT=
-if [ -f "$NEW_DIR/config.yaml" ]; then
-    v=$(grep -E '^[[:space:]]*MaintenancePort:[[:space:]]*[0-9]+' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' 2>/dev/null) || true
+if [ -f "$NEW_DIR/agent.local.yml" ]; then
+    v=$(grep -E '^[[:space:]]*MaintenancePort:[[:space:]]*[0-9]+' "$NEW_DIR/agent.local.yml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' 2>/dev/null) || true
     [ -n "$v" ] && HTTP_PORT=$v
-    v=$(grep -E '^[[:space:]]*SystemctlServiceName:' "$NEW_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
+    v=$(grep -E '^[[:space:]]*SystemctlServiceName:' "$NEW_DIR/agent.local.yml" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//' 2>/dev/null) || true
     [ -n "$v" ] && SERVICE=$v
 fi
 if [ -z "${HTTP_PORT:-}" ]; then
-    prepend_history "update $NEW_VERSION failed: MaintenancePort not found in config.yaml"
-    echo "MaintenancePort not found in config.yaml"
+    prepend_history "update $NEW_VERSION failed: MaintenancePort not found in agent.local.yml"
+    echo "MaintenancePort not found in agent.local.yml"
     cleanup_scripts
     exit 1
 fi

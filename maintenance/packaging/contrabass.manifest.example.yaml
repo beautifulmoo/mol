@@ -12,6 +12,6 @@ agent:
   sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 config:
-  path: ./config.yaml
+  path: ./agent.local.yml
   # 64 hex chars (sha256); example value only
   sha256: "452355a0aeeb06ad07149c0cc9380b1d32ad68cdae7117bfad4542149dbf6c26"

@@ -47,7 +47,7 @@ func ApplyUpdateSelfFromBundleExtract(cfg *config.Config, raw []byte, versionKey
 		_ = os.RemoveAll(finalDir)
 		return fmt.Errorf("copy binary to staging: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(finalDir, "config.yaml"), configData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(finalDir, appmeta.ConfigFileName), configData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return fmt.Errorf("write staged config: %w", err)
 	}

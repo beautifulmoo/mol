@@ -265,8 +265,8 @@
       '<pre id="self-update-log-output" class="update-log-output card-right-log-output">(새로고침으로 로그 불러오기)</pre>' +
       '</div>' +
       '<div class="card-right-config">' +
-      '<h4 class="card-right-title">config.yaml (current)</h4>' +
-      '<textarea id="self-current-config-editor" class="config-editor card-right-config-editor" placeholder="불러오기로 current 버전의 config.yaml을 불러옵니다." spellcheck="false"></textarea>' +
+      '<h4 class="card-right-title">agent.local.yml (current)</h4>' +
+      '<textarea id="self-current-config-editor" class="config-editor card-right-config-editor" placeholder="불러오기로 current 버전의 agent.local.yml을 불러옵니다." spellcheck="false"></textarea>' +
       '<div class="card-right-config-actions">' +
       '<button type="button" id="self-current-config-load-btn" class="service-btn">불러오기</button>' +
       '<button type="button" id="self-current-config-save-btn" class="service-btn">저장</button>' +
@@ -297,8 +297,8 @@
       '<pre class="update-log-output card-right-log-output">(새로고침으로 로그 불러오기)</pre>' +
       '</div>' +
       '<div class="card-right-config">' +
-      '<h4 class="card-right-title">config.yaml (current)</h4>' +
-      '<textarea class="config-editor card-right-config-editor" placeholder="불러오기로 current 버전의 config.yaml을 불러옵니다." spellcheck="false"></textarea>' +
+      '<h4 class="card-right-title">agent.local.yml (current)</h4>' +
+      '<textarea class="config-editor card-right-config-editor" placeholder="불러오기로 current 버전의 agent.local.yml을 불러옵니다." spellcheck="false"></textarea>' +
       '<div class="card-right-config-actions">' +
       '<button type="button" class="service-btn card-current-config-load-btn">불러오기</button>' +
       '<button type="button" class="service-btn card-current-config-save-btn">저장</button>' +
@@ -1320,7 +1320,7 @@
     fetch(API_BASE + '/current-config')
       .then(function (res) { return res.json(); })
       .then(function (body) {
-        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
         if (body.status === 'success' && body.data && body.data.content !== undefined) {
           editor.value = body.data.content;
           if (statusEl) statusEl.textContent = '불러왔습니다.';
@@ -1330,7 +1330,7 @@
         }
       })
       .catch(function () {
-        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
         editor.value = '';
         if (statusEl) statusEl.textContent = '불러오기 실패.';
       });
@@ -1452,7 +1452,7 @@
     fetch(API_BASE + '/current-config?ip=' + encodeURIComponent(ip))
       .then(function (res) { return res.json(); })
       .then(function (body) {
-        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
         if (body.status === 'success' && body.data && body.data.content !== undefined) {
           editor.value = body.data.content;
           if (statusEl) statusEl.textContent = '불러왔습니다.';
@@ -1462,7 +1462,7 @@
         }
       })
       .catch(function () {
-        editor.placeholder = '불러오기로 current 버전의 config.yaml을 불러옵니다.';
+        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
         editor.value = '';
         if (statusEl) statusEl.textContent = '불러오기 실패.';
       });

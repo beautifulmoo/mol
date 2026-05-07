@@ -14,11 +14,11 @@ agent:
   sha256: "__AGENT_SHA256__"
 
 config:
-  path: ./config.yaml
+  path: ./agent.local.yml
   sha256: "__CONFIG_SHA256__"
 
 # Optional: full file list for audit (must match archive members except this manifest file name).
 # Uncomment and extend when you add more payload files:
 # files:
 #   - path: ./contrabass-moleU
-#   - path: ./config.yaml
+#   - path: ./agent.local.yml

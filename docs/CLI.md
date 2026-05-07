@@ -1,7 +1,7 @@
 # Contrabass agent — CLI 명세
 
 루트 `main.go`는 **`maintenance.Run(main.VersionKey, os.Args)`** 만 호출하고, 실제 분기는 **`maintenance/maintenance.go`** 에 있다.  
-**HTTP·Discovery 서비스**는 **`agent` 없이** **`contrabass-moleU -cfg /path/to/config.yaml`** 형태(레거시: `agent -cfg …` 도 동일). **Discovery·host-info·apply-update 등**은 **`agent` 서브커맨드 뒤**에 온다. 예: `contrabass-moleU agent --discovery -h`.  
+**HTTP·Discovery 서비스**는 **`agent` 없이** **`contrabass-moleU -cfg /path/to/agent.local.yml`** 형태(레거시: `agent -cfg …` 도 동일). **Discovery·host-info·apply-update 등**은 **`agent` 서브커맨드 뒤**에 온다. 예: `contrabass-moleU agent --discovery -h`.  
 CLI 전용 모드에서는 **Gin(`Server.HTTPPort`) 리버스 프록시를 기동하지 않는다** — 서비스 모드는 **`-cfg <비어 있지 않은 경로>`**(또는 레거시 `agent -cfg …`)일 때만 (`ShouldStartGinReverseProxy` / `ConfigPathForServiceMode`).
 
 실행 파일 표시명은 **`maintenance/appmeta.BinaryName`** (기본 **`contrabass-moleU`**).
@@ -31,13 +31,13 @@ contrabass-moleU
 ## 서비스 모드 (HTTP + Discovery)
 
 ```text
-contrabass-moleU -cfg /path/to/config.yaml
+contrabass-moleU -cfg /path/to/agent.local.yml
 ```
 
 설정을 로드한 뒤 **maintenance HTTP**(`Maintenance.MaintenanceListenAddress`:`Maintenance.MaintenancePort`)와 **UDP Discovery** 등을 기동한다. 상세는 **[PRD.md](../PRD.md)** §1·§2·§7.
 
 - **`-cfg`** 인데 경로가 없으면 stderr에 안내 후 종료 코드 `1`.
-- 과거 배포와의 호환을 위해 **`contrabass-moleU agent -cfg /path/to/config.yaml`** 도 동일하게 서비스 기동으로 처리한다.
+- 과거 배포와의 호환을 위해 **`contrabass-moleU agent -cfg /path/to/agent.local.yml`** 도 동일하게 서비스 기동으로 처리한다.
 
 ---
 
@@ -68,7 +68,7 @@ contrabass-moleU -cfg /path/to/config.yaml
 ### 사용법
 
 ```text
-contrabass-moleU agent --host-info -cfg /path/to/config.yaml [flags] <self|remote-ip>
+contrabass-moleU agent --host-info -cfg /path/to/agent.local.yml [flags] <self|remote-ip>
 contrabass-moleU agent --host-info -h
 ```
 
@@ -148,7 +148,7 @@ contrabass-moleU agent --discovery -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --apply-update -cfg /path/to/config.yaml <self|remote-ip> /path/to/bundle.tar.gz
+contrabass-moleU agent --apply-update -cfg /path/to/agent.local.yml <self|remote-ip> /path/to/bundle.tar.gz
 contrabass-moleU agent --apply-update -h
 ```
 
@@ -190,7 +190,7 @@ HTTP 클라이언트 타임아웃은 **300초** 수준(대용량 번들·느린 
 ### 사용법
 
 ```text
-contrabass-moleU agent --versions-list -cfg /path/to/config.yaml <self|remote-ip>
+contrabass-moleU agent --versions-list -cfg /path/to/agent.local.yml <self|remote-ip>
 contrabass-moleU agent --versions-list -h
 ```
 
@@ -219,7 +219,7 @@ contrabass-moleU agent --versions-list -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --versions-switch -cfg /path/to/config.yaml <self|remote-ip> <version-key>
+contrabass-moleU agent --versions-switch -cfg /path/to/agent.local.yml <self|remote-ip> <version-key>
 contrabass-moleU agent --versions-switch -h
 ```
 

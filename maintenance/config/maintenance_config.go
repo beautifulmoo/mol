@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"contrabass-agent/maintenance/appmeta"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,10 +95,10 @@ func Default() Config {
 	return c
 }
 
-// Load reads config from path. If path is empty, "config.yaml" in the current directory is used.
+// Load reads config from path. If path is empty, appmeta.ConfigFileName in the current directory is used.
 func Load(path string) (*Config, error) {
 	if path == "" {
-		path = "config.yaml"
+		path = appmeta.ConfigFileName
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

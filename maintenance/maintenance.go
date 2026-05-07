@@ -61,7 +61,7 @@ func printMustSpecifyConfig(binVersion string) {
 	fmt.Println(versionLine(binVersion))
 	fmt.Println()
 	fmt.Println("To start HTTP service and Discovery, pass a config file:")
-	fmt.Printf("  %s -cfg <config.yaml>\n", appmeta.BinaryName)
+	fmt.Printf("  %s -cfg <%s>\n", appmeta.BinaryName, appmeta.ConfigFileName)
 	fmt.Println()
 	fmt.Println("For discovery, host-info, and other CLI commands:")
 	fmt.Printf("  %s agent --help\n", appmeta.BinaryName)
@@ -290,7 +290,7 @@ func Run(buildVersionKey string, args []string) int {
 	if args[1] == "-cfg" {
 		if len(args) < 3 || strings.TrimSpace(args[2]) == "" {
 			fmt.Fprintf(os.Stderr, "%s: path to config file required after -cfg\n", appmeta.BinaryName)
-			fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
+			fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/%s\n", appmeta.BinaryName, appmeta.ConfigFileName)
 			return 1
 		}
 		return runServiceWithConfigPath(buildVersionKey, args[2])
@@ -303,7 +303,7 @@ func Run(buildVersionKey string, args []string) int {
 	}
 
 	if !strings.EqualFold(strings.TrimSpace(args[1]), "agent") {
-		fmt.Fprintf(os.Stderr, "%s: start HTTP+Discovery with %s -cfg <config.yaml>, or use %q for other commands (e.g. %s agent --help)\n", appmeta.BinaryName, appmeta.BinaryName, "agent", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: start HTTP+Discovery with %s -cfg <%s>, or use %q for other commands (e.g. %s agent --help)\n", appmeta.BinaryName, appmeta.BinaryName, appmeta.ConfigFileName, "agent", appmeta.BinaryName)
 		printMustSpecifyConfig(buildVersionKey)
 		return 1
 	}
@@ -316,7 +316,7 @@ func Run(buildVersionKey string, args []string) int {
 	if args[1] == "-cfg" {
 		if len(args) < 3 || strings.TrimSpace(args[2]) == "" {
 			fmt.Fprintf(os.Stderr, "%s: path to config file required after -cfg\n", appmeta.BinaryName)
-			fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/config.yaml\n", appmeta.BinaryName)
+			fmt.Fprintf(os.Stderr, "example: %s -cfg /var/lib/contrabass/mole/%s\n", appmeta.BinaryName, appmeta.ConfigFileName)
 			return 1
 		}
 		return runServiceWithConfigPath(buildVersionKey, args[2])

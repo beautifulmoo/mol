@@ -7,7 +7,7 @@
 
 ## Discovery / CLI (최근)
 
-- **에이전트 CLI**: HTTP·Discovery **서비스**는 **`contrabass-moleU -cfg /path/to/config.yaml`**(첫 인자 `-cfg`; 레거시 `agent -cfg` 허용). 그 외 Discovery·host-info 등은 **`agent`** 다음에 옵션(예: `contrabass-moleU agent --discovery`).
+- **에이전트 CLI**: HTTP·Discovery **서비스**는 **`contrabass-moleU -cfg /path/to/agent.local.yml`**(첫 인자 `-cfg`; 레거시 `agent -cfg` 허용). 그 외 Discovery·host-info 등은 **`agent`** 다음에 옵션(예: `contrabass-moleU agent --discovery`).
 
 ### 유지보수 REST 대응 CLI (`agent` + `-cfg` 등)
 
@@ -50,7 +50,7 @@
 - **SSE** `event: discoveryfail` + `data.message`, 실패 시 **`discovery: ERROR:`** 한 줄 로그(`journalctl` 검색).
 - **DISCOVERY_REQUEST** JSON은 마샬 후 **1300바이트 미만** 검증(UDP·MTU).
 - **`maintenance/updatescripts/`** 에 `update.sh`·`rollback.sh` 임베드(`Makefile` 동기화), 배포는 `{base}/current/` 스크립트 실행.
-- 버전 키: 빌드 시 **`main.VersionKey`**(`Makefile`·`maintenance/scripts/build-version.sh`); 업로드 시 바이너리 **`--version`**; `config.yaml`에서는 버전 제거.
+- 버전 키: 빌드 시 **`main.VersionKey`**(`Makefile`·`maintenance/scripts/build-version.sh`); 업로드 시 바이너리 **`--version`**; `agent.local.yml`에서는 버전 제거.
 - 저장소 정책: Go **`*_test.go`** 는 트리에 두지 않음(상세는 PRD §1).
 
 상세 스펙은 **[PRD.md](PRD.md)** §3, CLI 사용은 **[README.md](README.md)** 를 참고한다.
@@ -59,6 +59,6 @@
 
 - 실행 파일명 **`contrabass-moleU`** (`maintenance/appmeta.BinaryName`), 상시 유닛 **`contrabass-mole.service`**, `systemd-run` 임시 업데이트 유닛 **`contrabass-mole-update.service`** (`appmeta.UpdateTransientUnit*`).
 - 업로드 multipart 필드 **`agent`** / `config`; 레거시 디스크상 `mol` 바이너리명 제거.
-- 설정: **`MOL_CONFIG` 미사용** — 서비스는 **`-cfg`**(첫 인자)로 경로 지정; `config.Load("")` 시 현재 디렉터리 `config.yaml`.
+- 설정: **`MOL_CONFIG` 미사용** — 서비스는 **`-cfg`**(첫 인자)로 경로 지정; `config.Load("")` 시 현재 디렉터리 `agent.local.yml`.
 - Discovery 기본 서비스명 **`Mole-Discovery`** (`DefaultDiscoveryServiceName`).
 - PRD **§12** 표에 요약.

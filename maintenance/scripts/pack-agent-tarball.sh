@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build a deployment tar.gz containing contrabass.manifest.yaml, contrabass-moleU, config.yaml.
-# Manifest paths are ./contrabass-moleU and ./config.yaml (see maintenance/packaging/contrabass.manifest.yaml.template).
+# Build a deployment tar.gz containing contrabass.manifest.yaml, contrabass-moleU, agent.local.yml.
+# Manifest paths are ./contrabass-moleU and ./agent.local.yml (see maintenance/packaging/contrabass.manifest.yaml.template).
 #
 # Usage:
 #   ./maintenance/scripts/pack-agent-tarball.sh [binary-path] [config-path] [output.tar.gz]
 #
 # Defaults:
 #   binary:   ./contrabass-moleU
-#   config:   ./config.yaml
+#   config:   ./agent.local.yml
 #   output:   ./dist/contrabass-agent-<git-describe>.tar.gz  (slashes in version → '-')
 #
 # Requires: sha256sum, tar
@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 BINARY="${1:-./contrabass-moleU}"
-CONFIG="${2:-./config.yaml}"
+CONFIG="${2:-./agent.local.yml}"
 OUT_ARG="${3:-}"
 
 TEMPLATE="$ROOT/maintenance/packaging/contrabass.manifest.yaml.template"
@@ -51,7 +51,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 cp -f "$BINARY" "$TMP/contrabass-moleU"
 chmod +x "$TMP/contrabass-moleU"
-cp -f "$CONFIG" "$TMP/config.yaml"
+cp -f "$CONFIG" "$TMP/agent.local.yml"
 
 sed -e "s/__AGENT_SHA256__/${AGENT_SHA}/g" \
 	-e "s/__CONFIG_SHA256__/${CONFIG_SHA}/g" \

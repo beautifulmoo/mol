@@ -734,7 +734,7 @@ func (s *Server) writeToStaging(base, version string, execReader io.Reader, conf
 	}
 	binName := appmeta.BinaryName
 	binPath := filepath.Join(stagingDir, binName)
-	configPath := filepath.Join(stagingDir, "config.yaml")
+	configPath := filepath.Join(stagingDir, appmeta.ConfigFileName)
 	binOut, err := os.Create(binPath)
 	if err != nil {
 		return "", fmt.Errorf("%s 파일 저장 실패: %w", binName, err)
@@ -750,7 +750,7 @@ func (s *Server) writeToStaging(base, version string, execReader io.Reader, conf
 	}
 	if err := os.WriteFile(configPath, configData, 0644); err != nil {
 		os.Remove(binPath)
-		return "", fmt.Errorf("config.yaml 저장 실패: %w", err)
+		return "", fmt.Errorf("%s 저장 실패: %w", appmeta.ConfigFileName, err)
 	}
 	return stagingDir, nil
 }
@@ -854,9 +854,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "실행 파일 복사 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(finalDir, "config.yaml"), configData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(finalDir, appmeta.ConfigFileName), configData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
-		s.send(w, "fail", "config.yaml 저장 실패: "+err.Error(), http.StatusInternalServerError)
+		s.send(w, "fail", appmeta.ConfigFileName+" 저장 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -926,7 +926,7 @@ func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, ver
 		return s.postUploadBundlePath(ctx, baseURL, apiPrefix, staged)
 	}
 	binPath := filepath.Join(versionDir, appmeta.BinaryName)
-	configPath := filepath.Join(versionDir, "config.yaml")
+	configPath := filepath.Join(versionDir, appmeta.ConfigFileName)
 	tmp, err := os.CreateTemp("", "remote-bundle-*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("임시 번들: %w", err)
@@ -1560,7 +1560,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	s.send(w, "success", map[string]interface{}{"output": output, "recent_rollback": recentRollback}, http.StatusOK)
 }
 
-// currentConfigPath returns the path to deploy_base/current/config.yaml (current symlink resolved), or "" if not available.
+// currentConfigPath returns the path to deploy_base/current/<config file> (current symlink resolved), or "" if not available.
 func (s *Server) currentConfigPath() string {
 	base := s.deployBase
 	if base == "" {
@@ -1571,7 +1571,7 @@ func (s *Server) currentConfigPath() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(resolved, "config.yaml")
+	return filepath.Join(resolved, appmeta.ConfigFileName)
 }
 
 func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
@@ -1647,7 +1647,7 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 				s.send(w, "success", map[string]interface{}{"content": ""}, http.StatusOK)
 				return
 			}
-			s.send(w, "fail", "config.yaml 읽기 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", appmeta.ConfigFileName+" 읽기 실패: "+err.Error(), http.StatusOK)
 			return
 		}
 		s.send(w, "success", map[string]interface{}{"content": string(data)}, http.StatusOK)
@@ -1661,7 +1661,7 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := os.WriteFile(configPath, []byte(postContent), 0644); err != nil {
-			s.send(w, "fail", "config.yaml 저장 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", appmeta.ConfigFileName+" 저장 실패: "+err.Error(), http.StatusOK)
 			return
 		}
 		s.send(w, "success", nil, http.StatusOK)

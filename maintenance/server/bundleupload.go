@@ -221,9 +221,9 @@ agent:
   sha256: "%s"
 
 config:
-  path: ./config.yaml
+  path: ./%s
   sha256: "%s"
-`, appmeta.BinaryName, ah, ch)
+`, appmeta.BinaryName, ah, appmeta.ConfigFileName, ch)
 
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
@@ -263,7 +263,7 @@ config:
 		_ = gw.Close()
 		return err
 	}
-	if err := add("config.yaml", cfgData, 0644); err != nil {
+	if err := add(appmeta.ConfigFileName, cfgData, 0644); err != nil {
 		_ = tw.Close()
 		_ = gw.Close()
 		return err

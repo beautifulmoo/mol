@@ -9,7 +9,7 @@
 
 ## 빌드
 
-**웹 정적 파일(`maintenance/web/`)은 빌드 시 바이너리에 포함(embed)됩니다.** 배포 시 실행 파일과 config.yaml만 옮기면 됩니다.
+**웹 정적 파일(`maintenance/web/`)은 빌드 시 바이너리에 포함(embed)됩니다.** 배포 시 실행 파일과 agent.local.yml만 옮기면 됩니다.
 
 **소스 수정 후**: 저장만으로는 자동 빌드되지 않습니다. 터미널에서 아래 중 하나를 실행하세요.
 
@@ -30,7 +30,7 @@ go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 
 ## 배포
 
-- **`contrabass-moleU`** 실행 파일 + **config.yaml** 만 대상 호스트로 복사하면 됨.
+- **`contrabass-moleU`** 실행 파일 + **agent.local.yml** 만 대상 호스트로 복사하면 됨.
 - 배포 시 `maintenance/web/` 디렉터리는 필요 없음 (이미 바이너리 안에 포함됨).
 
 ### 업데이트·롤백 스크립트 (update.sh, rollback.sh)
@@ -56,9 +56,9 @@ go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 
 ```bash
 # 서비스 기동(설정 파일 필수; 첫 인자 -cfg)
-./contrabass-moleU -cfg /path/to/config.yaml
+./contrabass-moleU -cfg /path/to/agent.local.yml
 # 또는 systemd 등에서
-./contrabass-moleU -cfg /var/lib/contrabass/mole/config.yaml
+./contrabass-moleU -cfg /var/lib/contrabass/mole/agent.local.yml
 ```
 
 인자 없이 `./contrabass-moleU`만 실행하면 버전과 **`-cfg` / `agent`** 안내가 출력되고 **서비스는 시작하지 않습니다.** Discovery·host-info 등은 **`agent` 다음**에 옵션을 둡니다(예: `contrabass-moleU agent --discovery -h`).
@@ -94,7 +94,7 @@ contrabass-moleU agent --discovery --dest-port=9999 --src-port=9998 --timeout=10
 
 ## 설정
 
-설정 파일 경로는 서비스 기동 시 **`-cfg <파일>`** 로 지정한다(예: `config.yaml`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
+설정 파일 경로는 서비스 기동 시 **`-cfg <파일>`** 로 지정한다(예: `agent.local.yml`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
 
 - 모든 설정은 최상위 `Maintenance:` 아래에 둔다.
 

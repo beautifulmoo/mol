@@ -40,7 +40,7 @@ func RunList(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(cfgPath) == "" {
-		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: -cfg <config file> is required\n", appmeta.BinaryName)
 		printVersionsListUsage()
 		return 1
 	}
@@ -130,7 +130,8 @@ func RunList(args []string) int {
 }
 
 func printVersionsListUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-list -cfg <config.yaml> <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-list -cfg <config file> <self|remote-ip>\n\n", appmeta.BinaryName)
+	// Note: config filename is not required to be appmeta.ConfigFileName; -cfg accepts any path.
 	fmt.Fprintf(os.Stderr, "  self: list from local disk (DeployBase/InstallPrefix; no HTTP).\n")
 	fmt.Fprintf(os.Stderr, "  remote IP: GET http://<ip>:Server.HTTPPort{APIPrefix}/versions/list on that host (Gin; no local agent required).\n\n")
 }
@@ -196,7 +197,7 @@ func RunSwitch(args []string) int {
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("cfg", "", "path to config file (required)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch -cfg <config.yaml> <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch -cfg <config file> <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST .../versions/switch-current — run embedded update.sh via systemd-run (same as web).\n")
 		fmt.Fprintf(os.Stderr, "  self: run embedded update.sh via systemd-run (same as API); no local HTTP service required.\n")
 		fmt.Fprintf(os.Stderr, "  remote IP: POST to that host's Gin (Server.HTTPPort); no local agent required.\n")
@@ -219,7 +220,7 @@ func RunSwitch(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*cfgPath) == "" {
-		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: -cfg <config file> is required\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}

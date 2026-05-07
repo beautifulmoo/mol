@@ -38,7 +38,7 @@ func Run(buildVersionKey string, args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(cfgPath) == "" {
-		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: -cfg <config file> is required\n", appmeta.BinaryName)
 		printUsage()
 		return 1
 	}
@@ -94,7 +94,7 @@ func Run(buildVersionKey string, args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s agent --host-info -cfg <config.yaml> [flags] <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "Usage: %s agent --host-info -cfg <config file> [flags] <self|remote-ip>\n\n", appmeta.BinaryName)
 	fmt.Fprintf(os.Stderr, "  Same behavior as GET .../host-info: self → local hostinfo; remote → UDP unicast to <ip>:DiscoveryUDPPort.\n")
 	fmt.Fprintf(os.Stderr, "  Flags and <self|remote-ip> can appear in any order. Local maintenance HTTP does not need to be running.\n\n")
 	fmt.Fprintf(os.Stderr, "Flags:\n")

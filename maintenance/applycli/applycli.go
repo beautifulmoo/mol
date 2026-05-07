@@ -27,13 +27,13 @@ const bundleFormField = "bundle" // same as server.uploadBundleField
 
 // Run parses flags and runs apply-update CLI. buildVersionKey is the running binary's version (ldflags), used for local policy like GET /self.
 //
-//	<bin> agent --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>
+//	<bin> agent --apply-update -cfg <config file> <self|remote-ip> <bundle.tar.gz>
 func Run(buildVersionKey string, args []string) int {
 	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("cfg", "", "path to config file (required)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config.yaml> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config file> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
 		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP; typically sudo for /var/lib/... and systemd-run).\n")
 		fmt.Fprintf(os.Stderr, "  remote-ip: multipart POST to that host's Gin (Server.HTTPPort); no local agent required.\n\n")
@@ -55,7 +55,7 @@ func Run(buildVersionKey string, args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*cfgPath) == "" {
-		fmt.Fprintf(os.Stderr, "%s: -cfg <config.yaml> is required\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: -cfg <config file> is required\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}

@@ -1,4 +1,4 @@
-package maintenance
+package ginproxy
 
 import (
 	"fmt"

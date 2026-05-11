@@ -200,6 +200,7 @@ func RunSwitch(args []string) int {
 		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch -cfg <config file> <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST .../versions/switch-current — run embedded update.sh via systemd-run (same as web).\n")
 		fmt.Fprintf(os.Stderr, "  self: run embedded update.sh via systemd-run (same as API); no local HTTP service required.\n")
+		fmt.Fprintf(os.Stderr, "        Requires root privileges (e.g. run with sudo): writes under DeployBase/current and runs systemd-run.\n")
 		fmt.Fprintf(os.Stderr, "  remote IP: POST to that host's Gin (Server.HTTPPort); no local agent required.\n")
 		fmt.Fprintf(os.Stderr, "  The version must already exist under versions/ (or staging) on the target host.\n\n")
 		fs.PrintDefaults()

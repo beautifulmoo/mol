@@ -35,7 +35,8 @@ func Run(buildVersionKey string, args []string) int {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config file> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
-		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP; typically sudo for /var/lib/... and systemd-run).\n")
+		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP).\n")
+		fmt.Fprintf(os.Stderr, "        Requires root privileges (e.g. run with sudo): writes under DeployBase and runs systemd-run.\n")
 		fmt.Fprintf(os.Stderr, "  remote-ip: multipart POST to that host's Gin (Server.HTTPPort); no local agent required.\n\n")
 		fs.PrintDefaults()
 	}

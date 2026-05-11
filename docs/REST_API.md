@@ -179,6 +179,8 @@ curl -sS -X POST "${BASE}${API}/apply-update" \
 
 **원격** — 파일을 이 서버에서 골라 원격에 올리며 적용(multipart, `ip` 필수):
 
+저장소에서 `make` 한 경우 에이전트 바이너리 예: `./build/image/contrabass-moleU`. 예시 설정은 `./cfg/agent.local.yml`.
+
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -F 'ip=192.168.0.42' \

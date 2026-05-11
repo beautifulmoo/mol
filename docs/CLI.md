@@ -4,6 +4,8 @@
 **HTTP·Discovery 서비스**는 **`agent` 없이** **`contrabass-moleU -cfg /path/to/agent.local.yml`** 형태(레거시: `agent -cfg …` 도 동일). **Discovery·host-info·apply-update 등**은 **`agent` 서브커맨드 뒤**에 온다. 예: `contrabass-moleU agent --discovery -h`.  
 CLI 전용 모드에서는 **Gin(`Server.HTTPPort`) 리버스 프록시를 기동하지 않는다** — 서비스 모드는 **`-cfg <비어 있지 않은 경로>`**(또는 레거시 `agent -cfg …`)일 때만 (`ShouldStartGinReverseProxy` / `ConfigPathForServiceMode`).
 
+저장소에서는 예시 설정 파일을 **`cfg/agent.local.yml`** 에 둔다(`maintenance/scripts/pack-agent-tarball.sh` 기본 config 소스).
+
 실행 파일 표시명은 **`maintenance/appmeta.BinaryName`** (기본 **`contrabass-moleU`**).
 
 ---
@@ -177,7 +179,7 @@ contrabass-moleU agent --apply-update -h
 
 | 대상 | 동작 |
 |------|------|
-| **self** | 검증된 번들을 `DeployBase` 아래 스테이징한 뒤 `versionsapi.RunSwitchCurrentWithRoots` 와 동일한 로컬 적용(웹 `POST /upload` + 로컬 `apply-update` 와 동등). **`DeployBase/current` 등에 쓰기·`systemd-run` 은 보통 `sudo` 필요.** |
+| **self** | 검증된 번들을 `DeployBase` 아래 스테이징한 뒤 `versionsapi.RunSwitchCurrentWithRoots` 와 동일한 로컬 적용(웹 `POST /upload` + 로컬 `apply-update` 와 동등). **`DeployBase/current` 등에 쓰기·`systemd-run` 은 보통 root 권한(예: `sudo`) 필요** — **`agent --apply-update -h`** 에도 동일 안내. |
 | **remote** | `http://<ip>:Server.HTTPPort` + `{APIPrefix}` + **`POST …/apply-update`** multipart: 필드 **`ip`**, **`bundle`**. 요청은 **원격 Gin**에서 처리되며, 원격이 **`POST …/upload`** 후 로컬 **`apply-update`(self)** 를 이어서 호출한다(PRD §5.5.3 multipart 원격 적용과 동일). **로컬 에이전트·maintenance 불필요.** |
 
 HTTP 클라이언트 타임아웃은 **300초** 수준(대용량 번들·느린 링크 대비).
@@ -217,7 +219,7 @@ contrabass-moleU agent --versions-list -h
 
 스테이징 또는 `versions/`에 있는 **버전 키**를 **current**로 바꾸기 위해 `POST …/versions/switch-current`를 호출한다(서버가 내장 `update.sh`를 `systemd-run`으로 실행).
 
-- **`self`**: **로컬 HTTP 없이** 동작한다(스테이징/versions 해석·필요 시 복사·`current/`에 embedded 스크립트 기록 후 `systemd-run` — 서버 `POST …/versions/switch-current` 로컬 처리와 동일). **로컬 에이전트·maintenance(8889) 불필요.**
+- **`self`**: **로컬 HTTP 없이** 동작한다(스테이징/versions 해석·필요 시 복사·`current/`에 embedded 스크립트 기록 후 `systemd-run` — 서버 `POST …/versions/switch-current` 로컬 처리와 동일). **`DeployBase`/`current` 쓰기·`systemd-run`은 보통 root 권한(예: `sudo`)이 필요**하며, **`agent --versions-switch -h`** 에도 안내한다. **로컬 에이전트·maintenance(8889) 불필요.**
 - **원격 IP**: 해당 호스트 **Gin**으로 `POST http://<ip>:<port>{APIPrefix}/versions/switch-current` 를 **직접** 호출한다. 바디는 `version`만. **로컬 에이전트는 필요 없다.** 적용 전 **`TCP`로 `<ip>:Server.HTTPPort`** 연결 가능 여부를 확인한다.
 
 ### 사용법

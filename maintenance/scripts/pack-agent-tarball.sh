@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Build a deployment tar.gz containing contrabass.manifest.yaml, contrabass-moleU, agent.local.yml.
-# Manifest paths are ./contrabass-moleU and ./agent.local.yml (see maintenance/packaging/contrabass.manifest.yaml.template).
+# Manifest paths inside the tarball are ./contrabass-moleU and ./agent.local.yml (see maintenance/packaging/contrabass.manifest.yaml.template).
 #
 # Usage:
 #   ./maintenance/scripts/pack-agent-tarball.sh [binary-path] [config-path] [output.tar.gz]
 #
 # Defaults:
-#   binary:   ./contrabass-moleU
-#   config:   ./agent.local.yml
+#   binary:   ./build/image/contrabass-moleU
+#   config:   ./cfg/agent.local.yml  (copied into the tarball as agent.local.yml)
 #   output:   ./dist/contrabass-agent-<git-describe>.tar.gz  (slashes in version → '-')
 #
 # Requires: sha256sum, tar
@@ -16,8 +16,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-BINARY="${1:-./contrabass-moleU}"
-CONFIG="${2:-./agent.local.yml}"
+BINARY="${1:-./build/image/contrabass-moleU}"
+CONFIG="${2:-./cfg/agent.local.yml}"
 OUT_ARG="${3:-}"
 
 TEMPLATE="$ROOT/maintenance/packaging/contrabass.manifest.yaml.template"

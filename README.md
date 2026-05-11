@@ -9,28 +9,31 @@
 
 ## 빌드
 
-**웹 정적 파일(`maintenance/web/`)은 빌드 시 바이너리에 포함(embed)됩니다.** 배포 시 실행 파일과 agent.local.yml만 옮기면 됩니다.
+**웹 정적 파일(`maintenance/web/`)은 빌드 시 바이너리에 포함(embed)됩니다.** 배포 시 실행 파일과 설정(agent.local.yml)만 옮기면 됩니다. 저장소 예시 설정은 **`cfg/agent.local.yml`** 입니다.
 
 **소스 수정 후**: 저장만으로는 자동 빌드되지 않습니다. 터미널에서 아래 중 하나를 실행하세요.
 
 ```bash
 cd ~/work/mol
 make
+# 또는: ./build/build.sh
 ```
 
 또는 (Make 없이; 웹 embed·내장 스크립트 동기화는 생략됨):
 
 ```bash
 cd ~/work/mol
-go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
+mkdir -p build/image
+go build -o build/image/contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 ```
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
 - **버전 키**는 `make`/`make build` 시 `maintenance/scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
+- **다른 Go 프로젝트에 붙일 때**: 에이전트 핵심은 **`contrabass-agent/maintenance`** import 하나로 `Run`·`ShouldStartGinReverseProxy`·`GinProxyConfig`·`RegisterMaintenanceProxy` 등에 접근하면 된다(바깥 Gin→maintenance HTTP 프록시 구현은 내부 **`maintenance/ginproxy`**).
 
 ## 배포
 
-- **`contrabass-moleU`** 실행 파일 + **agent.local.yml** 만 대상 호스트로 복사하면 됨.
+- **`contrabass-moleU`** 실행 파일 + **`agent.local.yml`**(저장소에서는 `cfg/agent.local.yml`을 참고) 만 대상 호스트로 복사하면 됨.
 - 배포 시 `maintenance/web/` 디렉터리는 필요 없음 (이미 바이너리 안에 포함됨).
 
 ### 업데이트·롤백 스크립트 (update.sh, rollback.sh)
@@ -55,13 +58,13 @@ go build -o contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
 ## 실행
 
 ```bash
-# 서비스 기동(설정 파일 필수; 첫 인자 -cfg)
-./contrabass-moleU -cfg /path/to/agent.local.yml
+# 서비스 기동(설정 파일 필수; 첫 인자 -cfg). 로컬 개발 예:
+./build/image/contrabass-moleU -cfg ./cfg/agent.local.yml
 # 또는 systemd 등에서
-./contrabass-moleU -cfg /var/lib/contrabass/mole/agent.local.yml
+./build/image/contrabass-moleU -cfg /var/lib/contrabass/mole/agent.local.yml
 ```
 
-인자 없이 `./contrabass-moleU`만 실행하면 버전과 **`-cfg` / `agent`** 안내가 출력되고 **서비스는 시작하지 않습니다.** Discovery·host-info 등은 **`agent` 다음**에 옵션을 둡니다(예: `contrabass-moleU agent --discovery -h`).
+인자 없이 빌드 산출물만 실행하면 버전과 **`-cfg` / `agent`** 안내가 출력되고 **서비스는 시작하지 않습니다.** Discovery·host-info 등은 **`agent` 다음**에 옵션을 둡니다(예: `contrabass-moleU agent --discovery -h`).
 
 **CLI**
 

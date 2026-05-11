@@ -22,8 +22,11 @@ import (
 	"contrabass-agent/maintenance/discoverycli"
 	"contrabass-agent/maintenance/hostinfocli"
 	"contrabass-agent/maintenance/hostinfo"
+	"contrabass-agent/maintenance/ginproxy"
 	"contrabass-agent/maintenance/server"
 	"contrabass-agent/maintenance/versionscli"
+
+	"github.com/gin-gonic/gin"
 )
 
 const helpText = `Contrabass agent — Discovery and maintenance web UI
@@ -90,6 +93,11 @@ func ConfigPathForServiceMode(args []string) string {
 // ShouldStartGinReverseProxy is true when main should start the Gin reverse proxy (Server.HTTPPort).
 func ShouldStartGinReverseProxy(args []string) bool {
 	return ConfigPathForServiceMode(args) != ""
+}
+
+// RegisterMaintenanceProxy delegates to maintenance/ginproxy (WebPrefix/APIPrefix → maintenance HTTP).
+func RegisterMaintenanceProxy(engine *gin.Engine, cfg *config.Config) {
+	ginproxy.RegisterMaintenanceProxy(engine, cfg)
 }
 
 // runServiceWithConfigPath starts maintenance HTTP, UDP discovery, and embedded web UI.

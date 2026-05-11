@@ -47,8 +47,11 @@ func TestGETWeb(c *gin.Context) {
 }
 
 func main() {
-	// Gin은 `-cfg <파일>`(또는 레거시 `agent -cfg <파일>`) 서비스 모드에서만 띄운다. agent --nic-brd 등은 Gin을 바인딩하지 않는다.
-	if maintenance.ShouldStartGinReverseProxy(os.Args) {
+	// 바깥 Gin(Server.HTTPPort)은 `<bin> -cfg <파일>`(IsServiceModeRootCfg)일 때만 띄운다.
+	// `<bin> agent -cfg <파일>` 로도 Run() 안에서 HTTP+Discovery는 기동하지만, 여기서는 Gin을 바인딩하지 않는다.
+	// `<bin> agent --nic-brd` 등은 IsAgentSubcommand 만 참이고 rootCfg 는 거짓이므로 Gin 없음.
+	rootCfg := maintenance.IsServiceModeRootCfg(os.Args)
+	if rootCfg {
 		gcfg := maintenance.GinProxyConfig(os.Args)
 		httpPort := gcfg.ServerHTTPPort
 		if httpPort <= 0 {

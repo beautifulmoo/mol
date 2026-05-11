@@ -76,23 +76,31 @@ func setSOReuseport(fd int) error {
 	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReuseport, 1)
 }
 
+// IsServiceModeRootCfg is true for `program -cfg <non-empty path>` (preferred HTTP+Discovery service form).
+func IsServiceModeRootCfg(args []string) bool {
+	return len(args) >= 3 && args[1] == "-cfg" && strings.TrimSpace(args[2]) != ""
+}
+
+// IsServiceModeAgentCfg is true for `program agent -cfg <non-empty path>` — same HTTP+Discovery service as IsServiceModeRootCfg, alternate argv shape.
+func IsServiceModeAgentCfg(args []string) bool {
+	return len(args) >= 4 && strings.EqualFold(strings.TrimSpace(args[1]), "agent") && args[2] == "-cfg" && strings.TrimSpace(args[3]) != ""
+}
+
+// IsAgentSubcommand is true when argv[1] is `agent` (case-insensitive), e.g. `program agent --nic-brd` or `program agent -cfg …`.
+func IsAgentSubcommand(args []string) bool {
+	return len(args) >= 2 && strings.EqualFold(strings.TrimSpace(args[1]), "agent")
+}
+
 // ConfigPathForServiceMode returns the config file path for long-running HTTP+Discovery service, or "".
-// Accepted forms: `program -cfg <path>` (preferred) or legacy `program agent -cfg <path>`.
+// Accepted forms: `program -cfg <path>` or `program agent -cfg <path>` (same service).
 func ConfigPathForServiceMode(args []string) string {
-	if len(args) >= 3 && args[1] == "-cfg" {
-		if p := strings.TrimSpace(args[2]); p != "" {
-			return p
-		}
+	if IsServiceModeRootCfg(args) {
+		return strings.TrimSpace(args[2])
 	}
-	if len(args) >= 4 && strings.EqualFold(args[1], "agent") && args[2] == "-cfg" {
+	if IsServiceModeAgentCfg(args) {
 		return strings.TrimSpace(args[3])
 	}
 	return ""
-}
-
-// ShouldStartGinReverseProxy is true when main should start the Gin reverse proxy (Server.HTTPPort).
-func ShouldStartGinReverseProxy(args []string) bool {
-	return ConfigPathForServiceMode(args) != ""
 }
 
 // RegisterMaintenanceProxy delegates to maintenance/ginproxy (WebPrefix/APIPrefix → maintenance HTTP).

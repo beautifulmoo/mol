@@ -1,5 +1,5 @@
 # Agent configuration (YAML)
-# At runtime: contrabass-moleU -cfg <this-file> (required to start HTTP + Discovery; legacy: agent -cfg).
+# At runtime: contrabass-moleU -cfg <this-file> (HTTP + Discovery + outer Gin on Server.HTTPPort), or agent -cfg <this-file> (same HTTP+Discovery, no Gin from main).
 
 Server:
   RunMode: debug

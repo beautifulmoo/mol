@@ -9,7 +9,8 @@
 
 ## Discovery / CLI (최근)
 
-- **에이전트 CLI**: HTTP·Discovery **서비스**는 **`contrabass-moleU -cfg /path/to/agent.local.yml`**(첫 인자 `-cfg`; 레거시 `agent -cfg` 허용). 그 외 Discovery·host-info 등은 **`agent`** 다음에 옵션(예: `contrabass-moleU agent --discovery`).
+- **에이전트 CLI**: HTTP·Discovery **서비스**는 **`contrabass-moleU -cfg /path/to/agent.local.yml`** 또는 동일 진입 **`contrabass-moleU agent -cfg /path/to/agent.local.yml`** 로 기동한다. 그 외 Discovery·host-info 등은 **`agent`** 다음에 옵션(예: `contrabass-moleU agent --discovery`).
+- **argv 판별**: 바깥 Gin 은 **`IsServiceModeRootCfg`**(`<bin> -cfg …`)일 때만; **`<bin> agent -cfg …`** 서비스 argv 는 **`IsServiceModeAgentCfg`**; **`<bin> agent …`** 전체는 **`IsAgentSubcommand`**(예: `--nic-brd` 등).
 
 ### 유지보수 REST 대응 CLI (`agent` + `-cfg` 등)
 

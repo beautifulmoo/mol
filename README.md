@@ -29,7 +29,7 @@ go build -o build/image/contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
 - **버전 키**는 `make`/`make build` 시 `maintenance/scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
-- **다른 Go 프로젝트에 붙일 때**: 에이전트 핵심은 **`contrabass-agent/maintenance`** import 하나로 `Run`·`ShouldStartGinReverseProxy`·`GinProxyConfig`·`RegisterMaintenanceProxy` 등에 접근하면 된다(바깥 Gin→maintenance HTTP 프록시 구현은 내부 **`maintenance/ginproxy`**).
+- **다른 Go 프로젝트에 붙일 때**: 에이전트 핵심은 **`contrabass-agent/maintenance`** import 하나로 `Run`·`IsServiceModeRootCfg`·`IsServiceModeAgentCfg`·`IsAgentSubcommand`·`GinProxyConfig`·`RegisterMaintenanceProxy` 등에 접근하면 된다(바깥 Gin→maintenance HTTP 프록시 구현은 내부 **`maintenance/ginproxy`**).
 
 ## 배포
 
@@ -70,7 +70,7 @@ go build -o build/image/contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc
 
 | 옵션 | 설명 |
 |------|------|
-| `-cfg <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동(첫 인자; 레거시 `agent -cfg` 허용) |
+| `-cfg <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동. argv는 **`<bin> -cfg <파일>`** 또는 **`<bin> agent -cfg <파일>`**(동일 `Run` 서비스). **바깥 Gin** 은 **`<bin> -cfg …` 일 때만** 연다. |
 | (인자 없음) | 버전·`-cfg` / `agent` 안내 출력 후 종료 |
 | `agent -h`, `agent --help` | 사용법 출력 |
 | `agent --version`, `agent -version` | 빌드 버전 한 줄 출력 후 종료 |
@@ -112,7 +112,7 @@ Maintenance:
 ```
 
 - **버전 문자열**(로그·Discovery·`GET /version` 등)은 **config가 아니라 빌드 시 주입된 `main.VersionKey`** 를 쓴다(`make` → `maintenance/scripts/build-version.sh`).
-- **Discovery 브로드캐스트**: 기본은 **PRD §3.1.1과 동일 규칙으로 brd 자동 수집**(sysfs `type`·브리지 `brif`·`ip` 출력; `contrabass-moleU agent --nic-brd`로 확인; Gin은 **`-cfg` 서비스 모드**에서만 기동). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음. 참고용 셸 **`brd_for_bm.sh`**(저장소 루트)로 동일 의도의 목록을 확인할 수 있다.
+- **Discovery 브로드캐스트**: 기본은 **PRD §3.1.1과 동일 규칙으로 brd 자동 수집**(sysfs `type`·브리지 `brif`·`ip` 출력; `contrabass-moleU agent --nic-brd`로 확인; 바깥 Gin은 **`<bin> -cfg …` 서비스 진입**에서만 기동). 수집이 비어 있을 때만 `DiscoveryBroadcastAddress`(단일) 사용, 그다음 `255.255.255.255`. `DiscoveryBroadcastAddresses` 복수 설정은 사용하지 않음. 참고용 셸 **`brd_for_bm.sh`**(저장소 루트)로 동일 의도의 목록을 확인할 수 있다.
 - `Maintenance.DiscoveryServiceName`: Discovery JSON의 `service` 값(기본 `Mole-Discovery`) · `Maintenance.DiscoveryUDPPort`: 9999 · `Maintenance.MaintenancePort`: (설정값) · `Maintenance.DiscoveryTimeoutSeconds` · `Maintenance.DiscoveryDeduplicate`
 - `Maintenance.DeployBase` / `Maintenance.InstallPrefix`(비우면 DeployBase): 스테이징·versions·update.sh 경로
 - `Maintenance.SystemctlServiceName`: 기본 `contrabass-mole.service`

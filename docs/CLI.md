@@ -1,8 +1,8 @@
 # Contrabass agent — CLI 명세
 
 루트 `main.go`는 **`maintenance.Run(main.VersionKey, os.Args)`** 만 호출하고, 실제 분기는 **`maintenance/maintenance.go`** 에 있다.  
-**HTTP·Discovery 서비스**는 **`agent` 없이** **`contrabass-moleU -cfg /path/to/agent.local.yml`** 형태(레거시: `agent -cfg …` 도 동일). **Discovery·host-info·apply-update 등**은 **`agent` 서브커맨드 뒤**에 온다. 예: `contrabass-moleU agent --discovery -h`.  
-CLI 전용 모드에서는 **Gin(`Server.HTTPPort`) 리버스 프록시를 기동하지 않는다** — 서비스 모드는 **`-cfg <비어 있지 않은 경로>`**(또는 레거시 `agent -cfg …`)일 때만 (`ShouldStartGinReverseProxy` / `ConfigPathForServiceMode`).
+**HTTP·Discovery 서비스**는 **`<bin> -cfg /path/to/agent.local.yml`** 또는 **`<bin> agent -cfg /path/to/agent.local.yml`** 로 기동한다(`Run` 동작 동일). **바깥 Gin(`Server.HTTPPort`)** 은 **`<bin> -cfg …` 일 때만** `main`에서 연다. **Discovery·host-info·apply-update 등**은 그 외 **`agent` 서브커맨드 뒤** 옵션으로만 온다(실행 후 셸로 복귀). 예: `contrabass-moleU agent --discovery -h`.  
+CLI 전용 모드에서는 **Gin을 기동하지 않는다**. **`IsServiceModeRootCfg`** 가 참일 때만 Gin 리버스 프록시를 띄운다. **`<bin> agent -cfg <경로>`** 는 **`IsServiceModeAgentCfg`** 로 서비스 argv 를 판별하지만 Gin 은 없다. **`IsAgentSubcommand`** 는 `<bin> agent …` 전체를 가리키며, `--nic-brd` 등은 Gin·서비스 `-cfg` 조건과 무관하게 짧게 끝난다(`ConfigPathForServiceMode`는 두 `-cfg` 서비스 형에서 경로를 돌려준다).
 
 저장소에서는 예시 설정 파일을 **`cfg/agent.local.yml`** 에 둔다(`maintenance/scripts/pack-agent-tarball.sh` 기본 config 소스).
 
@@ -43,7 +43,7 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 - agent: `agent.path` basename (단, deploy 트리 내부 로직은 `appmeta.BinaryName` 실행 파일을 기준으로 동작하므로 basename이 다르면 같은 바이너리를 `appmeta.BinaryName`로 한 번 더 저장한다)
 
 - **`-cfg`** 인데 경로가 없으면 stderr에 안내 후 종료 코드 `1`.
-- 과거 배포와의 호환을 위해 **`contrabass-moleU agent -cfg /path/to/agent.local.yml`** 도 동일하게 서비스 기동으로 처리한다.
+- **`contrabass-moleU agent -cfg /path/to/agent.local.yml`** 는 위 **`<bin> -cfg …`** 와 동일하게 서비스(HTTP·Discovery) 기동으로 처리한다.
 
 ---
 

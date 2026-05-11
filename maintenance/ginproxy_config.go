@@ -14,8 +14,9 @@ func newGinProxyFallbackConfig() *config.Config {
 }
 
 // GinProxyConfig loads Maintenance.WebPrefix, APIPrefix, ports for the outer Gin
-// (Server.HTTPPort → maintenance proxy). When -cfg is absent or load fails,
-// defaults match the previous hardcoded behavior (8888 / 8889, /web, /api/v1).
+// (Server.HTTPPort → maintenance proxy). Callers typically pass argv only when
+// starting that Gin (e.g. main uses it only for `<bin> -cfg <path>`).
+// When -cfg is absent or load fails, defaults match the previous hardcoded behavior (8888 / 8889, /web, /api/v1).
 func GinProxyConfig(args []string) *config.Config {
 	path := ConfigPathForServiceMode(args)
 	if path == "" {

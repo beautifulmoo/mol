@@ -3,14 +3,14 @@ package hostinfoapi
 import (
 	"strings"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 )
 
 // SelfMetaFromConfig builds SelfDiscoveryMeta from a loaded config and the running binary's version key (same role as server.Config.Version / Maintenance fields).
-func SelfMetaFromConfig(cfg *config.Config, displayVersion string) SelfDiscoveryMeta {
+func SelfMetaFromConfig(cfg *molcfg.Config, displayVersion string) SelfDiscoveryMeta {
 	dsn := strings.TrimSpace(cfg.DiscoveryServiceName)
 	if dsn == "" {
-		dsn = config.DefaultDiscoveryServiceName
+		dsn = molcfg.DefaultDiscoveryServiceName
 	}
 	return SelfDiscoveryMeta{
 		Version:              displayVersion,

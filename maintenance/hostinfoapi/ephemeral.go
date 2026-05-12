@@ -6,7 +6,7 @@ import (
 	"strings"
 	"syscall"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
 )
@@ -19,7 +19,7 @@ import (
 // DoDiscoveryUnicast only sends via conns[0], which can cause intermittent timeouts. Unicast-only
 // clients need one listener matching reply_udp_port (same as discovery CLI fallback when no subnet match).
 // Default srcPort should be 9998 when the agent uses 9999. Call cleanup to close the socket.
-func StartEphemeralDiscovery(cfg *config.Config, displayVersion string, srcPort int) (*discovery.Discovery, func(), error) {
+func StartEphemeralDiscovery(cfg *molcfg.Config, displayVersion string, srcPort int) (*discovery.Discovery, func(), error) {
 	if cfg.DiscoveryUDPPort <= 0 || cfg.DiscoveryUDPPort > 65535 {
 		return nil, nil, fmt.Errorf("DiscoveryUDPPort must be 1..65535")
 	}
@@ -36,7 +36,7 @@ func StartEphemeralDiscovery(cfg *config.Config, displayVersion string, srcPort 
 
 	dsn := strings.TrimSpace(cfg.DiscoveryServiceName)
 	if dsn == "" {
-		dsn = config.DefaultDiscoveryServiceName
+		dsn = molcfg.DefaultDiscoveryServiceName
 	}
 	discCfg := discovery.Config{
 		DiscoveryServiceName:        dsn,
@@ -78,7 +78,7 @@ func openUnicastClientUDP(srcPort int) (*net.UDPConn, error) {
 	return c, nil
 }
 
-func discoveryBroadcastAddrs(cfg *config.Config) []string {
+func discoveryBroadcastAddrs(cfg *molcfg.Config) []string {
 	addrs := hostinfo.GetPhysicalNICBroadcastAddresses()
 	if len(addrs) == 0 {
 		if cfg.DiscoveryBroadcastAddress != "" {
@@ -89,7 +89,7 @@ func discoveryBroadcastAddrs(cfg *config.Config) []string {
 	return addrs
 }
 
-func effectiveMaintenancePort(cfg *config.Config) int {
+func effectiveMaintenancePort(cfg *molcfg.Config) int {
 	p := cfg.MaintenancePort
 	if p <= 0 {
 		return 8889

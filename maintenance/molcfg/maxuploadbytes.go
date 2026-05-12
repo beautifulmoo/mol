@@ -1,4 +1,4 @@
-package config
+package molcfg
 
 import (
 	"fmt"

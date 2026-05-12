@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
@@ -96,7 +96,7 @@ func versionKeyFromAgentBinary(binPath string) (string, error) {
 		if key == "" {
 			return "", fmt.Errorf("empty version key")
 		}
-		if err := config.ValidateVersionKeyPath(key); err != nil {
+		if err := molcfg.ValidateVersionKeyPath(key); err != nil {
 			return "", err
 		}
 		return key, nil
@@ -170,7 +170,7 @@ type Config struct {
 	InstallPrefix        string // contrabass-moleU 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
 	SSHPort              int    // for remote service start/stop via SSH (default 22)
 	SSHUser              string // SSH user for remote (default "root")
-	MaxUploadBytes       int    // 0 or omit → config.DefaultMaxUploadBytes (64<<20); max multipart body for upload / multipart apply-update
+	MaxUploadBytes       int    // 0 or omit → molcfg.DefaultMaxUploadBytes (64<<20); max multipart body for upload / multipart apply-update
 	RemoteHealthCheckIntervalSeconds  int
 	RemoteHealthCheckTimeoutSeconds   int
 	RemoteHealthCheckFailureThreshold int
@@ -194,7 +194,7 @@ func New(cfg Config) *Server {
 		installPrefix:        strings.TrimSuffix(cfg.InstallPrefix, "/"),
 		sshPort:              cfg.SSHPort,
 		sshUser:              cfg.SSHUser,
-		maxUploadBytes:       config.ClampMaxUploadBytes(cfg.MaxUploadBytes),
+		maxUploadBytes:       molcfg.ClampMaxUploadBytes(cfg.MaxUploadBytes),
 		remoteHealthIntervalSec:  cfg.RemoteHealthCheckIntervalSeconds,
 		remoteHealthTimeoutSec:   cfg.RemoteHealthCheckTimeoutSeconds,
 		remoteHealthThreshold:    cfg.RemoteHealthCheckFailureThreshold,
@@ -916,7 +916,7 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
 		return
 	}
-	if err := config.ValidateVersionKeyPath(version); err != nil {
+	if err := molcfg.ValidateVersionKeyPath(version); err != nil {
 		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 		return
 	}
@@ -1158,7 +1158,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
 		return
 	}
-	if err := config.ValidateVersionKeyPath(version); err != nil {
+	if err := molcfg.ValidateVersionKeyPath(version); err != nil {
 		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 		return
 	}
@@ -1243,7 +1243,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(stagingVersions, func(i, j int) bool {
-		return config.CompareVersionKeys(stagingVersions[i], stagingVersions[j]) > 0
+		return molcfg.CompareVersionKeys(stagingVersions[i], stagingVersions[j]) > 0
 	})
 
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
@@ -1267,7 +1267,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	var applyVersion, removeVersion string
 	canApply := false
 	for _, v := range stagingVersions {
-		if config.StagingUpdateAvailable(v, compareKey) {
+		if molcfg.StagingUpdateAvailable(v, compareKey) {
 			canApply = true
 			if applyVersion == "" {
 				applyVersion = v
@@ -1362,7 +1362,7 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 			if ver == "" {
 				continue
 			}
-			if err := config.ValidateVersionKeyPath(ver); err != nil {
+			if err := molcfg.ValidateVersionKeyPath(ver); err != nil {
 				s.send(w, "fail", ver+": "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -1402,7 +1402,7 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 		if ver == "" {
 			continue
 		}
-		if err := config.ValidateVersionKeyPath(ver); err != nil {
+		if err := molcfg.ValidateVersionKeyPath(ver); err != nil {
 			skipped = append(skipped, fmt.Sprintf("%s (%v)", ver, err))
 			continue
 		}
@@ -1466,7 +1466,7 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
 		return
 	}
-	if err := config.ValidateVersionKeyPath(version); err != nil {
+	if err := molcfg.ValidateVersionKeyPath(version); err != nil {
 		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
 		return
 	}
@@ -1680,7 +1680,7 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		content := strings.TrimSpace(postContent)
 		if content != "" {
-			if _, err := config.LoadFromBytes([]byte(content)); err != nil {
+			if _, err := molcfg.LoadFromBytes([]byte(content)); err != nil {
 				s.send(w, "fail", err.Error(), http.StatusOK)
 				return
 			}

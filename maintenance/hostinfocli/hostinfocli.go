@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfoapi"
@@ -43,7 +43,7 @@ func Run(buildVersionKey string, args []string) int {
 		return 1
 	}
 
-	cfg, err := config.Load(cfgPath)
+	cfg, err := molcfg.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1

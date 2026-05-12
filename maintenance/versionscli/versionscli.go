@@ -15,7 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/cliutil"
 	"contrabass-agent/maintenance/server"
@@ -45,7 +45,7 @@ func RunList(args []string) int {
 		return 1
 	}
 
-	cfg, err := config.Load(cfgPath)
+	cfg, err := molcfg.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1
@@ -226,7 +226,7 @@ func RunSwitch(args []string) int {
 		return 1
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := molcfg.Load(*cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1
@@ -238,7 +238,7 @@ func RunSwitch(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: target and version must not be empty\n", appmeta.BinaryName)
 		return 1
 	}
-	if err := config.ValidateVersionKeyPath(version); err != nil {
+	if err := molcfg.ValidateVersionKeyPath(version); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: invalid version key: %v\n", appmeta.BinaryName, err)
 		return 1
 	}

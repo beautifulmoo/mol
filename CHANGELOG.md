@@ -5,7 +5,7 @@
 - **`build/`**: **`build/build.sh`** 가 루트에서 `make "$@"` 를 호출한다. **`make`** 기본 산출 바이너리는 **`build/image/contrabass-moleU`** (`Makefile` 의 `OUTPUT_DIR`·`BINARY`).
 - **`cfg/`**: 예시 에이전트 설정 **`agent.local.yml`** (`pack-agent-tarball.sh` 기본 `--config` 소스 경로).
 - **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`--discovery`), `applycli`, `versionscli`(`--versions-list` / `--versions-switch`), **`cliutil`**(CLI 공용: 원격 Gin URL·`APIPrefix`·TCP 확인), `versionsapi`(로컬 `versions/`·로컬 switch/apply 공통), `hostinfoapi`, `hostinfocli`(`--host-info`), `hostinfo`, `server`(HTTP·`applylocal` 로컬 번들 스테이징), `svcstatus`, `web` 패키지가 여기에 있다. 루트 Gin용 **`GinProxyConfig`** 는 **`ginproxy_config.go`**, 바깥 Gin→maintenance HTTP 프록시 구현은 **`ginproxy/`** 서브패키지이며 **`RegisterMaintenanceProxy`** 는 `maintenance` 패키지가 `ginproxy` 로 브리지한다(**임베드 시 `contrabass-agent/maintenance` import 하나**로 `GinProxyConfig`·`RegisterMaintenanceProxy` 사용). **`maintenance/scripts/`**·**`maintenance/packaging/`**(빌드·번들 보조), 루트 **`main.go`** 는 `maintenance.Run(Version, os.Args)` 후 **`os.Exit`** 만 수행한다. Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
-- **`maintenance/config/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `maintenance_config.go`. **`ClampMaxUploadBytes`** 로 업로드/번들 크기 한도를 서버와 apply CLI가 공유. Go import는 `contrabass-agent/maintenance/config`.
+- **`maintenance/molcfg/`**: YAML 설정 로드·검증(`Config`, `Load`, `LoadFromBytes` 등). 구현 파일은 `maintenance_config.go`. **`ClampMaxUploadBytes`** 로 업로드/번들 크기 한도를 서버와 apply CLI가 공유. Go import는 **`contrabass-agent/maintenance/molcfg`** (패키지명 **`molcfg`**).
 
 ## Discovery / CLI (최근)
 

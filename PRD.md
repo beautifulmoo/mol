@@ -6,7 +6,7 @@
 - **언어**: Go
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
-- **소스 레이아웃**: 런타임 Go·웹·내장 스크립트·빌드 보조는 **`maintenance/`** 트리와 루트 **`main.go`** 로 구성한다(§1.1). 저장소 루트에는 **`main.go`**, **`go.mod`**, **`Makefile`**, **`build/build.sh`**(루트에서 `make "$@"` 호출), **`update.sh`·`rollback.sh`**, 예시 설정 **`cfg/agent.local.yml`**, 참고 **`brd_for_bm.sh`** 등을 둔다. **`make`** 기본 산출 바이너리는 **`build/image/contrabass-moleU`**(`Makefile`의 `OUTPUT_DIR`·`BINARY`로 변경 가능). **설정(YAML)** 은 패키지 **`maintenance/config`**(`maintenance_config.go` 등)에서 로드한다. **업데이트/롤백 셸**은 루트 스크립트를 **`maintenance/updatescripts/`** 로 복사한 뒤 **`//go:embed`** 로 바이너리에 포함한다(`Makefile` `build` 타깃이 동기화 후 `go build`). **버전 키 스크립트**·**배포 번들 패키징**은 각각 **`maintenance/scripts/`**, **`maintenance/packaging/`** 에 둔다.
+- **소스 레이아웃**: 런타임 Go·웹·내장 스크립트·빌드 보조는 **`maintenance/`** 트리와 루트 **`main.go`** 로 구성한다(§1.1). 저장소 루트에는 **`main.go`**, **`go.mod`**, **`Makefile`**, **`build/build.sh`**(루트에서 `make "$@"` 호출), **`update.sh`·`rollback.sh`**, 예시 설정 **`cfg/agent.local.yml`**, 참고 **`brd_for_bm.sh`** 등을 둔다. **`make`** 기본 산출 바이너리는 **`build/image/contrabass-moleU`**(`Makefile`의 `OUTPUT_DIR`·`BINARY`로 변경 가능). **설정(YAML)** 은 패키지 **`maintenance/molcfg`**(`maintenance_config.go` 등; Go **`molcfg`**)에서 로드한다. **업데이트/롤백 셸**은 루트 스크립트를 **`maintenance/updatescripts/`** 로 복사한 뒤 **`//go:embed`** 로 바이너리에 포함한다(`Makefile` `build` 타깃이 동기화 후 `go build`). **버전 키 스크립트**·**배포 번들 패키징**은 각각 **`maintenance/scripts/`**, **`maintenance/packaging/`** 에 둔다.
 - **진입점·종료 코드**: 루트 `main.go`는 빌드 시 주입되는 **`main.VersionKey`**(ldflags `-X main.VersionKey=…`, `Makefile` 기본값은 **`./maintenance/scripts/build-version.sh`** 가 출력하는 **`git describe --tags --long --always` 전체 문자열**, 예: `0.4.4-4-gc44d420`; 필요 시 **`make build VERSION_KEY=…`** 로 덮어쓸 수 있음)과 **`main()`** 만 두고, **`contrabass-moleU -cfg <파일>`**(비어 있지 않은 경로)일 때만 **바깥 Gin** 리버스 프록시(`Server.HTTPPort`)를 `go`로 기동하고, **`maintenance.Run(main.VersionKey, os.Args)`** 는 항상 호출한 뒤 그 반환값으로 **`os.Exit`** 한다. **`contrabass-moleU agent -cfg <파일>`** 도 `Run` 안에서는 동일하게 HTTP+Discovery를 기동하지만 **`main`에서는 Gin을 기동하지 않는다**(원격·브라우저가 쓰는 `Server.HTTPPort` 리스너는 `<bin> -cfg …` 진입에서만 연다). 에이전트 **CLI 전용**(`agent` 다음에 `--nic-brd`·`--discovery`·`--apply-update`·`--versions-list`·`--versions-switch`·`--host-info`·`-h` 등) 실행 시에는 Gin을 띄우지 않는다. **`maintenance.Run(buildVersionKey, args []string) int`** 는 **명령줄은 `args` 인자로만** 받으며, 성공·오류는 **`0` 또는 `1`** 반환만으로 알린다(`maintenance` 패키지에서 `os.Exit`를 호출하지 않음). HTTP·Discovery 서비스 기동·`-h`·`--version`·`--nic-brd`·`--apply-update`·`--versions-list`·`--versions-switch`·`--host-info`·`-cfg` 등의 분기와 **`//go:embed web/*`**(웹 정적 파일)은 **`maintenance/maintenance.go`** 에 모으며, 루트 Gin이 쓰는 **`GinProxyConfig`** 는 **`maintenance/ginproxy_config.go`** 에 둔다. 바깥 Gin의 **WebPrefix/APIPrefix 리버스 프록시**는 **`maintenance.RegisterMaintenanceProxy`** 가 **`maintenance/ginproxy`** 패키지에 위임한다(**타 Go 모듈은 `contrabass-agent/maintenance` import 하나**로 `GinProxyConfig`·`RegisterMaintenanceProxy`에 접근). **`discoverycli.Run`** 은 **`contrabass-moleU agent --discovery`**, **`applycli.Run`** 은 **`agent --apply-update`**, **`versionscli.RunList` / `RunSwitch`** 는 **`agent --versions-list` / `agent --versions-switch`**, **`hostinfocli.Run`** 은 **`agent --host-info`** 경로에서 각각 **종료 코드 `int`** 를 반환한다(`os.Exit` 없이).
 - **소스 트리와 테스트**: 배포용 저장소에는 Go **`*_test.go`** 단위 테스트 파일을 두지 않는다(단일 바이너리 산출물에는 원래 테스트가 포함되지 않으며, 소스 정책상 별도 테스트 파일 없이 유지한다). 회귀 검증이 필요하면 `go test`용 파일을 로컬·CI에서만 두거나 이력에서 복구한다.
 - **웹 서버**: Go 표준 라이브러리 **net/http** 만 사용 (외부 웹 프레임워크 미사용)
@@ -18,13 +18,13 @@
 | **`maintenance/maintenance.go`** | `Run` — 서비스(`-cfg` / `agent -cfg`)·`agent` CLI 분기, embed `web/*`; argv: **`IsServiceModeRootCfg`**, **`IsServiceModeAgentCfg`**, **`IsAgentSubcommand`**, **`ConfigPathForServiceMode`**; **`RegisterMaintenanceProxy`** 는 `maintenance/ginproxy` 로 브리지 |
 | **`maintenance/ginproxy_config.go`** | 루트 Gin용 **`GinProxyConfig(args)`** — `ConfigPathForServiceMode`와 동일 규칙으로 YAML 경로 결정 후 `config.Load` |
 | **`maintenance/ginproxy/`** | 바깥 Gin **리버스 프록시 라우트** 등록(`RegisterMaintenanceProxy` 구현). Go import: **`contrabass-agent/maintenance/ginproxy`**(호출자는 보통 **`contrabass-agent/maintenance`** 만 import) |
-| **`maintenance/config/`** | YAML `Config`, `Load`, 버전 키 비교, `MaxUploadBytes` 등. 핵심 파일명 **`maintenance_config.go`**(구 `configFile2.go`), `maxuploadbytes.go`, `versionkey.go`. Go import: **`contrabass-agent/maintenance/config`**. |
+| **`maintenance/molcfg/`** | YAML `Config`, `Load`, 버전 키 비교, `MaxUploadBytes` 등. 핵심 파일명 **`maintenance_config.go`**, `maxuploadbytes.go`, `versionkey.go`. Go import: **`contrabass-agent/maintenance/molcfg`** (패키지명 **`molcfg`** — 일반 `config` 패키지와 병합 시 충돌 방지). |
 | **`maintenance/updatescripts/`** | 루트 `update.sh`·`rollback.sh` 복사본 + `embed.go`(`//go:embed`) — 바이너리 내장 스크립트 |
 | **`maintenance/scripts/`** | `build-version.sh`(Makefile `VERSION_KEY`), `pack-agent-tarball.sh`(배포 tar.gz 생성) |
 | **`maintenance/packaging/`** | `contrabass.manifest.yaml.template` 등 번들 manifest 참고 |
 | **`maintenance/server`**, **`discovery`**, **`web/`** 등 | 기존과 동일 — HTTP·Discovery·정적 UI |
 
-**`internal` 디렉터리 이름을 쓰지 않는 이유**: Go는 **`…/internal/…`** 패키지를 해당 `internal`의 **부모 디렉터리 이하**에서만 import할 수 있다. 루트 **`main.go`** 가 설정 패키지를 import해야 하므로, 저장소 루트에 `internal/config`를 두면 **가시성 규칙 위반**이 된다. 따라서 **`maintenance/config`**·**`maintenance/updatescripts`** 로 경로를 통일한다.
+**`internal` 디렉터리 이름을 쓰지 않는 이유**: Go는 **`…/internal/…`** 패키지를 해당 `internal`의 **부모 디렉터리 이하**에서만 import할 수 있다. 루트 **`main.go`** 가 설정 패키지를 import해야 하므로, 저장소 루트에 `internal/config`를 두면 **가시성 규칙 위반**이 된다. 따라서 **`maintenance/molcfg`**·**`maintenance/updatescripts`** 로 경로를 통일한다.
 
 ---
 
@@ -312,7 +312,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + manifest에 명시된 에이전트·config 등; `maintenance/packaging/contrabass.manifest.yaml.template`, `maintenance/scripts/pack-agent-tarball.sh` 참고). **브라우저·CLI·다른 에이전트가 원격에 배포할 때도 동일 경로·동일 필드명**으로 호출한다.  
   - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, GNU tar의 `./` 디렉터리 항목 등은 건너뜀, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **manifest의 `config.path`에 해당하는 YAML** 구조체 파싱, **에이전트 ELF**·바이너리 버전 키 검증(§12, `--version`→`agent --version` 폴백)을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 **manifest의 `config.path` basename**(예: `agent.local.yml`)을 두고, **요청 본문으로 받은 tar.gz 원본 전체**를 **`upload.bundle.tar.gz`** 로 저장한다(원격 재전송·manifest 확장 시 서버가 번들 레이아웃을 재하드코딩하지 않도록).  
   - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 바이너리 실행으로 버전 키 확인(각 시도 **5초** 타임아웃). **먼저 `<path> --version`**, 실패 시 **`<path> agent --version`** 순으로 시도한다(`maintenance/server.versionKeyFromAgentBinary`). 출력 한 줄이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`)로 시작하고, 뒤의 버전 키가 유효해야 하며 종료 코드 0.  
-  - **config 검증**: `maintenance/config` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
+  - **config 검증**: `maintenance/molcfg` 구조체로 파싱; 실패 시 줄·항목·필요 타입 안내(예: `DiscoveryServiceName`, `DiscoveryUDPPort`, `MaintenancePort` 등).  
   - **버전 키(스테이징 디렉터리명)**: 추출·검증된 **실행 파일**에 대해 위와 동일하게 **`--version` → `agent --version`** 폴백으로 버전 키를 읽는다. 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 스테이징 디렉터리명으로 쓴다. config에는 버전을 두지 않는다.  
   - **성공**: `{ "status": "success", "data": { "version": "<버전 키>" } }`.
 - **업로드 삭제** `POST .../upload/remove` — Body `{ "version": "<버전 키>" }`. **스테이징** 만 삭제; `versions/` 는 유지.
@@ -484,7 +484,7 @@ Maintenance:
 | `Maintenance.InstallPrefix` | (선택) 에이전트(`BinaryName`) 설치 경로 prefix. `versions/` 목록·삭제 API 및 installer에서 사용. 비면 `DeployBase` 사용 | `"/var/lib/contrabass/mole"` |
 | `Maintenance.SSHPort` | (선택) 원격 서비스 시작/중지 시 SSH 포트. 미지정 또는 0이면 22 사용 | `22` |
 | `Maintenance.SSHUser` | (선택) 원격 서비스 시작/중지 시 SSH 사용자. 미지정이면 `"root"` | `"root"` |
-| `Maintenance.MaxUploadBytes` | (선택) `POST /upload` 및 multipart `apply-update`의 **최대 요청 본문 크기**(바이트). 생략 시 `maintenance/config.DefaultMaxUploadBytes`(코드상 `64 << 20`). YAML에서는 **정수** 또는 문자열 **`"M << N"`** / 십진 문자열(예: `"67108864"`) — `maintenance/config`의 `uploadBytesExpr`로 파싱. 구현상 **1 MiB–10 GiB**로 클램프 | `67108864`, `"64 << 20"` |
+| `Maintenance.MaxUploadBytes` | (선택) `POST /upload` 및 multipart `apply-update`의 **최대 요청 본문 크기**(바이트). 생략 시 `maintenance/molcfg.DefaultMaxUploadBytes`(코드상 `64 << 20`). YAML에서는 **정수** 또는 문자열 **`"M << N"`** / 십진 문자열(예: `"67108864"`) — `maintenance/molcfg`의 `uploadBytesExpr`로 파싱. 구현상 **1 MiB–10 GiB**로 클램프 | `67108864`, `"64 << 20"` |
 | `Maintenance.RemoteHealth` | (선택) **원격 HTTP 헬스** 폴링(웹 UI, §6.5). 하위 키는 모두 정수. 생략 시 코드 기본값 적용 | 아래 표 참고 |
 | `Maintenance.RemoteHealth.IntervalSeconds` | 기본 간격(초); 매 주기마다 `JitterSeconds` 이내 균등 랜덤 지연을 더해 다음 체크 시각을 잡는다 | `10` |
 | `Maintenance.RemoteHealth.TimeoutSeconds` | `remote-health-check`가 원격 `GET …/health`를 기다리는 **HTTP 타임아웃**(초) | `2` |
@@ -507,7 +507,7 @@ Maintenance:
 - **CLI 버전 출력**: **`-version` / `--version`** 은 빌드 **ldflags** `main.VersionKey`(전체 버전 키 문자열)와 `appmeta.BinaryName` 을 **한 줄**로 출력한다(설정 파일 없음). 미주입 시 `0.0.0-0` 으로 표시된다. **호출 형태**: 권장은 **`contrabass-moleU agent --version`**; 구 스크립트 호환을 위해 **루트** `contrabass-moleU --version`(및 `-version`)도 허용한다(§4.1).
 - **HTTP·Discovery 노출 문자열**: 서비스 기동 시(`-cfg`)에는 **`main.VersionKey`** 를 그대로 쓴다. 이 문자열이 **자기 정보 API**, **DISCOVERY_RESPONSE의 `version`**, **`GET /version`**, 시작 로그(§8)에 일관되게 쓰인다.
 - **빌드 시 버전 키 주입**: 기본은 **`maintenance/scripts/build-version.sh`** 가 **`git describe --tags --long --always` 전체**를 표준 출력한다(`Makefile` 의 `VERSION_KEY ?= $(shell ./maintenance/scripts/build-version.sh)` → `go build -ldflags "-X main.VersionKey=…"`). 태그 없음·빈 저장소 등 예외는 스크립트 주석·구현과 동일하다. **수동 문자열**을 넣으려면 **`make build VERSION_KEY=<원하는 문자열>`** 이거나, 동일한 `-ldflags "-X main.VersionKey=…"` 를 직접 `go build` 에 넘긴다.
-- **업데이트 판단**: 스테이징·`versions/` 디렉터리명·비교 API는 모두 **버전 키** 문자열을 사용한다(§5.5). 키는 위 파이프라인 또는 수동 주입으로 결정된다. **문자열 비교가 아니라** `maintenance/config` 의 비교 로직에서 describe 접미사 **`-g<해시>`** 를 제거한 뒤 시맨틱·패치로 순서를 정한다(§5.5.1).
+- **업데이트 판단**: 스테이징·`versions/` 디렉터리명·비교 API는 모두 **버전 키** 문자열을 사용한다(§5.5). 키는 위 파이프라인 또는 수동 주입으로 결정된다. **문자열 비교가 아니라** `maintenance/molcfg` 의 비교 로직에서 describe 접미사 **`-g<해시>`** 를 제거한 뒤 시맨틱·패치로 순서를 정한다(§5.5.1).
 - **실행 파일 검증**: 업로드·번들 검증 시 바이너리에 대해 **`--version` 실패 후 `agent --version`** 순으로 시도해 출력이 **`<BinaryName> `** 로 시작하는지 확인한다(`versionKeyFromAgentBinary`, §5.5.3·§12). 에이전트 자체는 루트 및 `agent` 경로 모두에서 버전 한 줄 출력 후 종료한다(§4.1).
 
 ---
@@ -587,7 +587,7 @@ Maintenance:
 | 실행 파일(바이너리) 이름 | `maintenance/appmeta.BinaryName` — 기본 **`contrabass-moleU`** (Makefile·배포 스크립트와 동일) |
 | 상시 systemd 유닛 (에이전트) | 기본 **`contrabass-mole.service`** (`Maintenance.SystemctlServiceName`) — `contrabass-moleU` 프로세스를 띄우는 서비스 |
 | 임시 업데이트 유닛 | **`contrabass-mole-update.service`** — `systemd-run --unit=contrabass-mole-update` 로 `current/update.sh` 만 실행하는 **transient** 작업용. 메인 유닛과 별개이며 외부 연동용 이름이 아님. 코드 상수: `appmeta.UpdateTransientUnitStem` / `appmeta.UpdateTransientUnit` |
-| Discovery `service` 문자열 | 기본 **`Mole-Discovery`** (`Maintenance.DiscoveryServiceName`, `maintenance/config.DefaultDiscoveryServiceName`) |
+| Discovery `service` 문자열 | 기본 **`Mole-Discovery`** (`Maintenance.DiscoveryServiceName`, `maintenance/molcfg.DefaultDiscoveryServiceName`) |
 | 설정 파일 지정 | **`-cfg <경로>`** 또는 **`agent -cfg <경로>`** 로 HTTP+Discovery 기동(동일). **바깥 Gin(`Server.HTTPPort`)** 은 **`<bin> -cfg …` 진입에서만** `main`이 연다. **`MOL_CONFIG` 환경 변수는 사용하지 않음** (`config.Load` 빈 경로 시 현재 디렉터리 `agent.local.yml`) |
 | 업로드 multipart | 필드 **`bundle`** — tar.gz(manifest + 에이전트 + config 등). 스테이징에 실행 파일명 **`BinaryName`**·`agent.local.yml`·원본 바이트 **`upload.bundle.tar.gz`** |
 | 원격 배포 upload | 로컬 에이전트가 호출하는 **`POST .../upload`는 업로드 API와 동일**; 소스 바이트는 스테이징의 `upload.bundle.tar.gz` 우선, 없으면 바이너리+config로 재패킹 |

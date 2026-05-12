@@ -14,7 +14,7 @@ import (
 // HostInfoGetter returns host info for building DISCOVERY_RESPONSE.
 type HostInfoGetter func() (hostname, hostIP, cpuInfo string, cpuUsage float64, memTotalMB, memUsedMB uint64, memUsagePct float64, cpuUUID string)
 
-// Config holds discovery-related config.
+// Config holds discovery-related configuration.
 // DiscoveryBroadcastAddresses must have at least one element.
 type Config struct {
 	DiscoveryServiceName        string

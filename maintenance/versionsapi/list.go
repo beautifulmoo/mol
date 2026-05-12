@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 	"contrabass-agent/maintenance/appmeta"
 )
 
@@ -32,8 +32,8 @@ func VersionsBaseFromParts(installPrefix, deployBase string) string {
 	return base
 }
 
-// VersionsBaseFromConfig uses YAML fields (same defaults as maintenance/config.Default().DeployBase when unset).
-func VersionsBaseFromConfig(cfg *config.Config) string {
+// VersionsBaseFromConfig uses YAML fields (same defaults as maintenance/molcfg.Default().DeployBase when unset).
+func VersionsBaseFromConfig(cfg *molcfg.Config) string {
 	if cfg == nil {
 		return "/var/lib/contrabass/mole"
 	}
@@ -123,5 +123,5 @@ func versionsListEntryBefore(a, b VersionEntry) bool {
 	if ra != rb {
 		return ra > rb
 	}
-	return config.CompareVersionKeys(a.Version, b.Version) > 0
+	return molcfg.CompareVersionKeys(a.Version, b.Version) > 0
 }

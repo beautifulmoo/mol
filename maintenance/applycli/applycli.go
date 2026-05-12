@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"contrabass-agent/maintenance/config"
+	"contrabass-agent/maintenance/molcfg"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/cliutil"
 	"contrabass-agent/maintenance/server"
@@ -68,13 +68,13 @@ func Run(buildVersionKey string, args []string) int {
 		return 1
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := molcfg.Load(*cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 
-	maxBytes := config.ClampMaxUploadBytes(cfg.MaxUploadBytes.Int())
+	maxBytes := molcfg.ClampMaxUploadBytes(cfg.MaxUploadBytes.Int())
 
 	fi, err := os.Stat(bundlePath)
 	if err != nil {
@@ -104,7 +104,7 @@ func Run(buildVersionKey string, args []string) int {
 	switch strings.ToLower(target) {
 	case "self":
 		cur := currentVersionKeyForApply(buildVersionKey, cfg)
-		if !config.StagingUpdateAvailable(versionKey, cur) {
+		if !molcfg.StagingUpdateAvailable(versionKey, cur) {
 			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
@@ -133,7 +133,7 @@ func Run(buildVersionKey string, args []string) int {
 			fmt.Fprintf(os.Stderr, "%s: get remote version failed (%s): %v\n", appmeta.BinaryName, remoteBase+apiPrefix+"/self", err)
 			return 1
 		}
-		if !config.StagingUpdateAvailable(versionKey, cur) {
+		if !molcfg.StagingUpdateAvailable(versionKey, cur) {
 			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, remote current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
@@ -150,7 +150,7 @@ func Run(buildVersionKey string, args []string) int {
 
 // currentVersionKeyForApply is the "installed current" for policy: DeployBase/current → versions/<name>,
 // not the CLI binary's ldflags (the binary may be a dev build while /var/lib/... still points at an older key).
-func currentVersionKeyForApply(buildVersionKey string, cfg *config.Config) string {
+func currentVersionKeyForApply(buildVersionKey string, cfg *molcfg.Config) string {
 	deploy := versionsapi.DeployRootFromConfig(cfg)
 	if cur := versionsapi.ResolveSymlinkVersion(deploy, "current"); cur != "" {
 		return cur

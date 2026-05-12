@@ -1,4 +1,4 @@
-package molcfg
+package agentcfg
 
 import (
 	"fmt"

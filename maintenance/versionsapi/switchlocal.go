@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/updatescripts"
 	"contrabass-agent/maintenance/appmeta"
 )
@@ -20,7 +20,7 @@ const stagedBundleFileName = "upload.bundle.tar.gz"
 
 // DeployRootFromConfig returns the deploy filesystem root (staging/, current/), matching the server's
 // normalized local `base` for apply-update and versions/switch-current.
-func DeployRootFromConfig(cfg *molcfg.Config) string {
+func DeployRootFromConfig(cfg *agentcfg.Config) string {
 	if cfg == nil {
 		return "/var/lib/contrabass/mole"
 	}
@@ -36,7 +36,7 @@ func DeployRootFromConfig(cfg *molcfg.Config) string {
 // then systemd-run update.sh. deployRoot must be the normalized deploy base; installPrefix and deployBaseRaw are raw
 // YAML fields used with VersionsBaseFromParts for the versions/ tree.
 func RunSwitchCurrentWithRoots(deployRoot string, installPrefix, deployBaseRaw, version string) error {
-	if err := molcfg.ValidateVersionKeyPath(version); err != nil {
+	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
 		return err
 	}
 	vb := VersionsBaseFromParts(installPrefix, deployBaseRaw)

@@ -149,7 +149,7 @@ contrabass-moleU agent --discovery -h
 
 ## `--apply-update`
 
-번들 **tar.gz** 를 검증한 뒤, **업데이트 정책**(`maintenance/molcfg.StagingUpdateAvailable`)을 만족할 때만 **스테이징·적용**을 한 번에 수행한다. **로컬 maintenance(8889)는 필요 없다** — **`self`** 는 디스크에 스테이징 후 `systemd-run` 적용(`server.ApplyUpdateSelfFromBundleExtract`), **원격 IP** 는 해당 호스트 **Gin**에 multipart `POST …/apply-update`만 보낸다.
+번들 **tar.gz** 를 검증한 뒤, **업데이트 정책**(`maintenance/agentcfg.StagingUpdateAvailable`)을 만족할 때만 **스테이징·적용**을 한 번에 수행한다. **로컬 maintenance(8889)는 필요 없다** — **`self`** 는 디스크에 스테이징 후 `systemd-run` 적용(`server.ApplyUpdateSelfFromBundleExtract`), **원격 IP** 는 해당 호스트 **Gin**에 multipart `POST …/apply-update`만 보낸다.
 
 ### 사용법
 

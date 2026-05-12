@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/versionsapi"
 )
@@ -33,7 +33,7 @@ func copyFileLocal(src, dst string, perm os.FileMode) error {
 // (same effect as POST /upload then POST /apply-update with ip:self). Caller must have already run
 // PrepareAgentBundleFromReader with the same raw tar.gz bytes; agentSrc is the extracted binary path inside workDir.
 // raw is the original bundle bytes (for StagedBundleFileName). Caller typically needs root/sudo for deploy tree and systemd-run.
-func ApplyUpdateSelfFromBundleExtract(cfg *molcfg.Config, raw []byte, versionKey string, configData []byte, agentFileName string, configFileName string, agentSrc string) error {
+func ApplyUpdateSelfFromBundleExtract(cfg *agentcfg.Config, raw []byte, versionKey string, configData []byte, agentFileName string, configFileName string, agentSrc string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}

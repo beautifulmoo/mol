@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 )
 
 // NormalizeAPIPrefix returns a path prefix for Gin API routes (leading slash, no trailing slash).
@@ -23,7 +23,7 @@ func NormalizeAPIPrefix(p string) string {
 }
 
 // HTTPPortOrDefault returns Server.HTTPPort, or 8888 if unset or invalid.
-func HTTPPortOrDefault(cfg *molcfg.Config) int {
+func HTTPPortOrDefault(cfg *agentcfg.Config) int {
 	if cfg == nil || cfg.ServerHTTPPort <= 0 || cfg.ServerHTTPPort > 65535 {
 		return 8888
 	}
@@ -31,12 +31,12 @@ func HTTPPortOrDefault(cfg *molcfg.Config) int {
 }
 
 // RemoteDialAddr returns "ip:port" for TCP checks to a remote agent's Gin listener.
-func RemoteDialAddr(cfg *molcfg.Config, ip string) string {
+func RemoteDialAddr(cfg *agentcfg.Config, ip string) string {
 	return net.JoinHostPort(ip, strconv.Itoa(HTTPPortOrDefault(cfg)))
 }
 
 // RemoteBaseURL returns "http://ip:port" for the remote agent HTTP API (Gin).
-func RemoteBaseURL(cfg *molcfg.Config, ip string) string {
+func RemoteBaseURL(cfg *agentcfg.Config, ip string) string {
 	return "http://" + RemoteDialAddr(cfg, ip)
 }
 

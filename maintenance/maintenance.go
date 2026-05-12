@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"contrabass-agent/maintenance/appmeta"
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/applycli"
 	"contrabass-agent/maintenance/discoverycli"
@@ -104,13 +104,13 @@ func ConfigPathForServiceMode(args []string) string {
 }
 
 // RegisterMaintenanceProxy delegates to maintenance/ginproxy (WebPrefix/APIPrefix → maintenance HTTP).
-func RegisterMaintenanceProxy(engine *gin.Engine, cfg *molcfg.Config) {
+func RegisterMaintenanceProxy(engine *gin.Engine, cfg *agentcfg.Config) {
 	ginproxy.RegisterMaintenanceProxy(engine, cfg)
 }
 
 // runServiceWithConfigPath starts maintenance HTTP, UDP discovery, and embedded web UI.
 func runServiceWithConfigPath(buildVersionKey, cfgPath string) int {
-	cfg, err := molcfg.Load(cfgPath)
+	cfg, err := agentcfg.Load(cfgPath)
 	if err != nil {
 		log.Printf("config: %v", err)
 		return 1

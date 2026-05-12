@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
@@ -28,7 +28,7 @@ func Run(args []string) int {
 	destPort := fs.Int("dest-port", 9999, "destination UDP port (remote agents listen here)")
 	srcPort := fs.Int("src-port", 9998, "local UDP port to bind (responses arrive here)")
 	timeoutSec := fs.Int("timeout", 10, "discovery duration in seconds")
-	serviceName := fs.String("service", molcfg.DefaultDiscoveryServiceName, "service name in DISCOVERY_REQUEST")
+	serviceName := fs.String("service", agentcfg.DefaultDiscoveryServiceName, "service name in DISCOVERY_REQUEST")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s agent --discovery [flags]\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n")
@@ -58,7 +58,7 @@ func Run(args []string) int {
 	}
 	svc := strings.TrimSpace(*serviceName)
 	if svc == "" {
-		svc = molcfg.DefaultDiscoveryServiceName
+		svc = agentcfg.DefaultDiscoveryServiceName
 	}
 
 	broadcastAddrs := hostinfo.GetPhysicalNICBroadcastAddresses()

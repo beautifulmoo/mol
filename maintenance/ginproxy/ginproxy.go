@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,7 +15,7 @@ import (
 // RegisterMaintenanceProxy registers Gin routes that reverse-proxy WebPrefix and APIPrefix
 // to the local maintenance HTTP listener (MaintenancePort). It builds the httputil reverse
 // proxy from cfg and applies the same prefix/nesting rules as before (see PRD: Gin → maintenance).
-func RegisterMaintenanceProxy(engine *gin.Engine, cfg *molcfg.Config) {
+func RegisterMaintenanceProxy(engine *gin.Engine, cfg *agentcfg.Config) {
 	webPrefix := normalizeURLPathPrefix(cfg.WebPrefix, "/web")
 	apiPrefix := normalizeURLPathPrefix(cfg.APIPrefix, "/api/v1")
 	proxy := newMaintenanceWebProxy(cfg)
@@ -36,7 +36,7 @@ func normalizeURLPathPrefix(p, fallback string) string {
 	return p
 }
 
-func newMaintenanceWebProxy(cfg *molcfg.Config) http.Handler {
+func newMaintenanceWebProxy(cfg *agentcfg.Config) http.Handler {
 	port := cfg.MaintenancePort
 	if port <= 0 {
 		port = 8889

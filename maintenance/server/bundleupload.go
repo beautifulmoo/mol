@@ -3,7 +3,7 @@ package server
 import (
 	"archive/tar"
 	"compress/gzip"
-	"contrabass-agent/maintenance/molcfg"
+	"contrabass-agent/maintenance/agentcfg"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -390,7 +390,7 @@ func prepareAgentBundle(base string, bundleReader io.Reader, maxRequestBytes int
 		_ = os.RemoveAll(workDir)
 		return "", nil, "", "", "", "", "", err
 	}
-	if _, err := molcfg.LoadFromBytes(configData); err != nil {
+	if _, err := agentcfg.LoadFromBytes(configData); err != nil {
 		_ = os.RemoveAll(workDir)
 		return "", nil, "", "", "", "", "", err
 	}

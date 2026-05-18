@@ -36,6 +36,16 @@ go build -o build/image/contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc
 - **`contrabass-moleU`** 실행 파일 + **`agent.local.yml`**(저장소에서는 `cfg/agent.local.yml`을 참고) 만 대상 호스트로 복사하면 됨.
 - 배포 시 `maintenance/web/` 디렉터리는 필요 없음 (이미 바이너리 안에 포함됨).
 
+### 배포 번들 (업로드용 tar.gz)
+
+웹 **업로드**·`agent --apply-update`·원격 적용에 쓰는 **tar.gz** 번들은 **에이전트 바이너리 + `agent.local.yml`(등) + `contrabass.manifest.yaml`** 로 구성한다. manifest·SHA-256·패키징 절차·이용 경로는 **PRD.md §5.5.0** 에 정리되어 있다.
+
+```bash
+make   # 또는 make build
+./maintenance/scripts/pack-agent-tarball.sh
+# 기본 출력: ./dist/contrabass-agent-<version>.tar.gz
+```
+
 ### 업데이트·롤백 스크립트 (update.sh, rollback.sh)
 
 프로젝트 루트에 **update.sh**, **rollback.sh** 가 참고용으로 포함되어 있다. 웹 UI의 “업데이트 적용” 기능을 쓰려면 이 스크립트들을 **배포 베이스 디렉터리**에 두어야 한다.

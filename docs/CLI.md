@@ -1,8 +1,20 @@
 # Contrabass agent — CLI 명세
 
-루트 `main.go`는 **`maintenance.Run(main.VersionKey, os.Args)`** 만 호출하고, 실제 분기는 **`maintenance/maintenance.go`** 에 있다.  
-**HTTP·Discovery 서비스**는 **`<bin> -cfg /path/to/agent.local.yml`** 또는 **`<bin> agent -cfg /path/to/agent.local.yml`** 로 기동한다(`Run` 동작 동일). **바깥 Gin(`Server.HTTPPort`)** 은 **`<bin> -cfg …` 일 때만** `main`에서 연다. **Discovery·host-info·apply-update 등**은 그 외 **`agent` 서브커맨드 뒤** 옵션으로만 온다(실행 후 셸로 복귀). 예: `contrabass-moleU agent --discovery -h`.  
-CLI 전용 모드에서는 **Gin을 기동하지 않는다**. **`IsServiceModeRootCfg`** 가 참일 때만 Gin 리버스 프록시를 띄운다. **`<bin> agent -cfg <경로>`** 는 **`IsServiceModeAgentCfg`** 로 서비스 argv 를 판별하지만 Gin 은 없다. **`IsAgentSubcommand`** 는 `<bin> agent …` 전체를 가리키며, `--nic-brd` 등은 Gin·서비스 `-cfg` 조건과 무관하게 짧게 끝난다(`ConfigPathForServiceMode`는 두 `-cfg` 서비스 형에서 경로를 돌려준다).
+루트 `main.go`는 argv를 나눈 뒤 **`maintenance.Run(main.VersionKey, os.Args)`** 의 반환값으로 **`os.Exit`** 한다. 실제 명령 분기는 **`maintenance/maintenance.go`** 의 `Run`에 있다.
+
+| argv | `main` 동작 | Gin (`Server.HTTPPort`) |
+|------|-------------|-------------------------|
+| **`<bin> agent …`** (`IsAgentSubcommand`, `agent -cfg` 포함) | `os.Exit(Run(…))` | 없음 |
+| **인자 없음**, 루트 **`--version`**, 잘못된 argv (`!IsServiceModeRootCfg`) | `os.Exit(Run(…))` | 없음 |
+| **`<bin> -cfg <파일>`** (`IsServiceModeRootCfg`) | `go func() { os.Exit(Run(…)) }()` + 메인에서 **`router.Run`** | 있음 (`RegisterMaintenanceProxy`) |
+
+**HTTP·Discovery 서비스**는 **`<bin> -cfg …`** 또는 **`<bin> agent -cfg …`** 로 기동한다(`Run` 동작 동일). **Discovery·host-info·apply-update 등**은 **`agent` 다음** 옵션만(실행 후 셸 복귀). 예: `contrabass-moleU agent --discovery -h`.
+
+**시그널**: `SIGINT`/`SIGTERM`은 **`maintenance.runServiceWithConfigPath`** 가 `signal.Notify`로 처리한다. **`main`은 시그널 핸들러를 등록하지 않는다.** `<bin> -cfg …` 에서 Ctrl+C 시 maintenance가 내려가고 `Run`이 끝나면, 고루틴의 **`os.Exit(Run(…))`** 로 프로세스(Gin 포함)가 종료된다.
+
+**병합 호스트**: 바깥 Gin에 **전역** `Content-Type: application/json` 미들웨어를 두면 `/maintenance` UI CSS가 깨진다. JSON API만 **`routerGroupJSON`**(루트 `main.go`)처럼 **라우트 그룹**에 적용한다.
+
+`ConfigPathForServiceMode`는 **`<bin> -cfg …`** 와 **`<bin> agent -cfg …`** 에서 설정 경로를 돌려준다.
 
 저장소에서는 예시 설정 파일을 **`cfg/agent.local.yml`** 에 둔다(`maintenance/scripts/pack-agent-tarball.sh` 기본 config 소스).
 
@@ -37,6 +49,10 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 ```
 
 설정을 로드한 뒤 **maintenance HTTP**(`Maintenance.MaintenanceListenAddress`:`Maintenance.MaintenancePort`)와 **UDP Discovery** 등을 기동한다. 상세는 **[PRD.md](../PRD.md)** §1·§2·§7.
+
+**`<bin> -cfg …` 만** 루트 Gin이 함께 뜬다: 브라우저는 `http://<host>:Server.HTTPPort` + `WebPrefix`(예: `/maintenance/`)로 접속하고, API는 같은 origin의 `APIPrefix`로 프록시된다. **`<bin> agent -cfg …`** 는 maintenance·Discovery만(Gin 없음).
+
+종료: 서비스 프로세스는 **Ctrl+C / SIGTERM** 시 maintenance 쪽에서 HTTP `Shutdown` 후 `Run`이 반환한다. `<bin> -cfg …` 진입에서는 위 고루틴 **`os.Exit`** 로 Gin 리스너까지 프로세스가 끝난다.
 
 참고: **업로드 번들**(`POST /upload`)로 스테이징/설치 트리에 저장되는 파일명은 고정값이 아니라, 번들 manifest의 basename을 따른다.
 - config: `config.path` basename (예: `config.path: ./agent.local.yml` → 디렉터리에도 `agent.local.yml`)

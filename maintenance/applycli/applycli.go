@@ -32,8 +32,9 @@ func Run(buildVersionKey string, args []string) int {
 	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("cfg", "", "path to config file (required)")
+	agentVariant := fs.String("agent-variant", appmeta.AgentVariantCompute, "which bundle binary becomes "+appmeta.BinaryName+" at apply: compute|control")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config file> <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config file> [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
 		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP).\n")
 		fmt.Fprintf(os.Stderr, "        Requires root privileges (e.g. run with sudo): writes under DeployBase and runs systemd-run.\n")
@@ -91,12 +92,18 @@ func Run(buildVersionKey string, args []string) int {
 		return 1
 	}
 
-	versionKey, configData, agentName, cfgName, _, workDir, agentSrc, err := server.PrepareAgentBundleFromReader(os.TempDir(), bytes.NewReader(raw), maxBytes)
+	pb, err := server.PrepareAgentBundleFromReader(os.TempDir(), bytes.NewReader(raw), maxBytes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: bundle validation failed: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
-	defer func() { _ = os.RemoveAll(workDir) }()
+	defer func() { _ = os.RemoveAll(pb.WorkDir) }()
+	versionKey := pb.VersionKey
+	variant, err := appmeta.ParseAgentVariant(*agentVariant)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
 
 	httpClient := &http.Client{Timeout: 300 * time.Second}
 	apiPrefix := cliutil.NormalizeAPIPrefix(cfg.APIPrefix)
@@ -104,12 +111,12 @@ func Run(buildVersionKey string, args []string) int {
 	switch strings.ToLower(target) {
 	case "self":
 		cur := currentVersionKeyForApply(buildVersionKey, cfg)
-		if !agentcfg.StagingUpdateAvailable(versionKey, cur) {
+		if !agentcfg.StagingUpdateAvailable(versionKey, cur, cfg.AllowSameVersionUpdate) {
 			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
 		fmt.Printf("Applying bundle %s locally (current %s)\n", versionKey, cur)
-		if err := server.ApplyUpdateSelfFromBundleExtract(cfg, raw, versionKey, configData, agentName, cfgName, agentSrc); err != nil {
+		if err := server.ApplyUpdateSelfFromBundleExtract(cfg, raw, pb, variant); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
@@ -133,13 +140,13 @@ func Run(buildVersionKey string, args []string) int {
 			fmt.Fprintf(os.Stderr, "%s: get remote version failed (%s): %v\n", appmeta.BinaryName, remoteBase+apiPrefix+"/self", err)
 			return 1
 		}
-		if !agentcfg.StagingUpdateAvailable(versionKey, cur) {
+		if !agentcfg.StagingUpdateAvailable(versionKey, cur, cfg.AllowSameVersionUpdate) {
 			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, remote current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
 		fmt.Printf("Applying bundle %s to remote %s (remote current %s)\n", versionKey, remoteIP, cur)
 		applyURL := remoteBase + apiPrefix + "/apply-update"
-		if err := postMultipartApplyRemote(httpClient, applyURL, remoteIP, bundlePath); err != nil {
+		if err := postMultipartApplyRemote(httpClient, applyURL, remoteIP, bundlePath, variant); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: remote apply failed: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
@@ -190,7 +197,7 @@ func fetchVersionGET(client *http.Client, url string) (string, error) {
 	return strings.TrimSpace(out.Data.Version), nil
 }
 
-func postMultipartApplyRemote(client *http.Client, applyURL, remoteIP, bundlePath string) error {
+func postMultipartApplyRemote(client *http.Client, applyURL, remoteIP, bundlePath, agentVariant string) error {
 	f, err := os.Open(bundlePath)
 	if err != nil {
 		return err
@@ -200,6 +207,9 @@ func postMultipartApplyRemote(client *http.Client, applyURL, remoteIP, bundlePat
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	if err := w.WriteField("ip", remoteIP); err != nil {
+		return err
+	}
+	if err := w.WriteField("agent_variant", agentVariant); err != nil {
 		return err
 	}
 	part, err := w.CreateFormFile(bundleFormField, filepath.Base(bundlePath))

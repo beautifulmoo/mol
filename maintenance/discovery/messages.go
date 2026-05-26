@@ -28,6 +28,8 @@ type DiscoveryResponse struct {
 	MemoryUsagePercent float64  `json:"memory_usage_percent"`
 	// RespondedFromIP is set by the receiver: UDP source IP of the packet (the IP that actually sent this response). Not sent over the wire.
 	RespondedFromIP string `json:"responded_from_ip,omitempty"`
+	// BuildVariant is "control", "compute", or "" (unset). Injected at build time via ldflags -X main.BuildVariant=… ; surfaced in GET /self and discovery.
+	BuildVariant string `json:"build_variant,omitempty"`
 	// IsSelf is set when the response is from this host (CPU UUID match). Stream receiver uses it to update the self card's "응답한 IP" only.
 	IsSelf bool `json:"self,omitempty"`
 }

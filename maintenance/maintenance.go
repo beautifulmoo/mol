@@ -52,12 +52,20 @@ Options (after "agent"):
 //go:embed web/*
 var webFS embed.FS
 
+// buildVariant holds the value passed from main (ldflags -X main.BuildVariant=control|compute).
+// Set once from Run(); read by versionLine and other helpers.
+var buildVariant string
+
 func versionLine(buildVersionKey string) string {
 	v := strings.TrimSpace(buildVersionKey)
 	if v == "" {
 		v = "0.0.0-0"
 	}
-	return appmeta.BinaryName + " " + v
+	line := appmeta.BinaryName + " " + v
+	if bv := strings.TrimSpace(buildVariant); bv != "" {
+		line += " (" + bv + ")"
+	}
+	return line
 }
 
 func printMustSpecifyConfig(binVersion string) {
@@ -214,6 +222,7 @@ func runServiceWithConfigPath(buildVersionKey, cfgPath string) int {
 		DiscoveryDeduplicate:        cfg.DiscoveryDeduplicate,
 		Version:                     displayVersion,
 		ServicePort:                 cfg.MaintenancePort,
+		BuildVariant:                buildVariant,
 	}
 	disc := discovery.New(discCfg, conns, getter)
 	go disc.Run()
@@ -259,7 +268,9 @@ func runServiceWithConfigPath(buildVersionKey, cfgPath string) int {
 		InstallPrefix:        cfg.InstallPrefix,
 		SSHPort:              cfg.SSHPort,
 		SSHUser:              cfg.SSHUser,
-		MaxUploadBytes:       cfg.MaxUploadBytes.Int(),
+		MaxUploadBytes:         cfg.MaxUploadBytes.Int(),
+		AllowSameVersionUpdate: cfg.AllowSameVersionUpdate,
+		BuildVariant:           buildVariant,
 		RemoteHealthCheckIntervalSeconds:  cfg.RemoteHealth.IntervalSeconds,
 		RemoteHealthCheckTimeoutSeconds:   cfg.RemoteHealth.TimeoutSeconds,
 		RemoteHealthCheckFailureThreshold: cfg.RemoteHealth.FailureThreshold,
@@ -296,8 +307,9 @@ func runServiceWithConfigPath(buildVersionKey, cfgPath string) int {
 }
 
 // Run starts the maintenance HTTP server and Discovery. buildVersionKey is the full key from main (ldflags -X main.VersionKey=…, see Makefile / maintenance/scripts/build-version.sh).
-// args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit). Does not call os.Exit.
-func Run(buildVersionKey string, args []string) int {
+// buildVariantArg is "control" or "compute" (ldflags -X main.BuildVariant=…). args is typically os.Args; returns 0 for success and 1 for failure (for main to os.Exit). Does not call os.Exit.
+func Run(buildVersionKey string, buildVariantArg string, args []string) int {
+	buildVariant = buildVariantArg
 	if len(args) <= 1 {
 		printMustSpecifyConfig(buildVersionKey)
 		return 0

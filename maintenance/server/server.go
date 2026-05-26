@@ -45,21 +45,9 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	return err
 }
 
-// uploadBinaryField was the legacy multipart field for a single agent binary; retained for comments only.
-// Upload now uses uploadBundleField (tar.gz); see bundleupload.go.
-const uploadBinaryField = "agent"
-
 func dirHasAgentBinary(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, appmeta.BinaryName))
 	return err == nil
-}
-
-func firstAgentBinaryPath(dir string) string {
-	p := filepath.Join(dir, appmeta.BinaryName)
-	if _, err := os.Stat(p); err == nil {
-		return p
-	}
-	return ""
 }
 
 // elfMagic is the first 4 bytes of an ELF executable.
@@ -93,6 +81,9 @@ func versionKeyFromAgentBinary(binPath string) (string, error) {
 			return "", fmt.Errorf("prefix want %q, got %q", want, line)
 		}
 		key := strings.TrimSpace(strings.TrimPrefix(line, want))
+		if idx := strings.Index(key, " ("); idx >= 0 {
+			key = strings.TrimSpace(key[:idx])
+		}
 		if key == "" {
 			return "", fmt.Errorf("empty version key")
 		}
@@ -147,7 +138,9 @@ type Server struct {
 	installPrefix        string // contrabass-moleU 설치 경로 prefix (versions/ 기준). 비면 deployBase 사용
 	sshPort              int
 	sshUser              string
-	maxUploadBytes       int64 // POST /upload & multipart apply-update: max body (tar.gz bundle field)
+	maxUploadBytes         int64 // POST /upload & multipart apply-update: max body (tar.gz bundle field)
+	allowSameVersionUpdate bool
+	buildVariant           string
 	remoteHealthIntervalSec  int
 	remoteHealthTimeoutSec   int
 	remoteHealthThreshold    int
@@ -170,7 +163,9 @@ type Config struct {
 	InstallPrefix        string // contrabass-moleU 설치 경로 prefix. 비면 DeployBase 사용 (versions 목록·삭제, installer)
 	SSHPort              int    // for remote service start/stop via SSH (default 22)
 	SSHUser              string // SSH user for remote (default "root")
-	MaxUploadBytes       int    // 0 or omit → agentcfg.DefaultMaxUploadBytes (64<<20); max multipart body for upload / multipart apply-update
+	MaxUploadBytes         int    // 0 or omit → agentcfg.DefaultMaxUploadBytes (64<<20); max multipart body for upload / multipart apply-update
+	AllowSameVersionUpdate bool   // when true, same version can be re-applied (for testing/rollback)
+	BuildVariant           string // "control", "compute", or "" — from ldflags at build time
 	RemoteHealthCheckIntervalSeconds  int
 	RemoteHealthCheckTimeoutSeconds   int
 	RemoteHealthCheckFailureThreshold int
@@ -194,7 +189,9 @@ func New(cfg Config) *Server {
 		installPrefix:        strings.TrimSuffix(cfg.InstallPrefix, "/"),
 		sshPort:              cfg.SSHPort,
 		sshUser:              cfg.SSHUser,
-		maxUploadBytes:       agentcfg.ClampMaxUploadBytes(cfg.MaxUploadBytes),
+		maxUploadBytes:         agentcfg.ClampMaxUploadBytes(cfg.MaxUploadBytes),
+		allowSameVersionUpdate:  cfg.AllowSameVersionUpdate,
+		buildVariant:            cfg.BuildVariant,
 		remoteHealthIntervalSec:  cfg.RemoteHealthCheckIntervalSeconds,
 		remoteHealthTimeoutSec:   cfg.RemoteHealthCheckTimeoutSeconds,
 		remoteHealthThreshold:    cfg.RemoteHealthCheckFailureThreshold,
@@ -429,6 +426,7 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 		Version:              s.version,
 		ServicePort:          s.servicePort,
 		DiscoveryServiceName: s.discoveryServiceName,
+		BuildVariant:         s.buildVariant,
 	})
 	s.send(w, "success", data, http.StatusOK)
 }
@@ -743,43 +741,14 @@ func (s *Server) versionsBase() string {
 	return versionsapi.VersionsBaseFromParts(s.installPrefix, s.deployBase)
 }
 
-// writeToStaging writes the agent binary from execReader and configData to base/staging/version/. Returns the staging dir path.
-func (s *Server) writeToStaging(base, version string, execReader io.Reader, configData []byte) (string, error) {
-	stagingDir := s.stagingDir(base, version)
-	if err := os.MkdirAll(stagingDir, 0755); err != nil {
-		return "", fmt.Errorf("스테이징 디렉터리 생성 실패: %w", err)
-	}
-	binName := appmeta.BinaryName
-	binPath := filepath.Join(stagingDir, binName)
-	configPath := filepath.Join(stagingDir, appmeta.ConfigFileName)
-	binOut, err := os.Create(binPath)
-	if err != nil {
-		return "", fmt.Errorf("%s 파일 저장 실패: %w", binName, err)
-	}
-	_, err = io.Copy(binOut, execReader)
-	binOut.Close()
-	if err != nil {
-		os.Remove(binPath)
-		return "", fmt.Errorf("%s 쓰기 실패: %w", binName, err)
-	}
-	if err := os.Chmod(binPath, 0755); err != nil {
-		log.Printf("chmod %s: %v", binPath, err)
-	}
-	if err := os.WriteFile(configPath, configData, 0644); err != nil {
-		os.Remove(binPath)
-		return "", fmt.Errorf("%s 저장 실패: %w", appmeta.ConfigFileName, err)
-	}
-	return stagingDir, nil
-}
-
 // resolveVersionDir returns the directory that contains the agent binary + config for this version: staging first (under base/deploy), then versions/ under versionsBase() (same tree as GET /versions/list).
 func (s *Server) resolveVersionDir(base, version string) (string, bool) {
 	stg := s.stagingDir(base, version)
-	if dirHasAgentBinary(stg) {
+	if versionsapi.DirHasStagedAgents(stg) {
 		return stg, true // from staging
 	}
 	ver := filepath.Join(s.versionsBase(), "versions", version)
-	if dirHasAgentBinary(ver) {
+	if versionsapi.DirHasStagedAgents(ver) {
 		return ver, false // from versions
 	}
 	return "", false
@@ -832,16 +801,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versionKey, configData, agentName, cfgName, _, workDir, agentSrc, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
+	pb, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer func() { _ = os.RemoveAll(workDir) }()
+	defer func() { _ = os.RemoveAll(pb.WorkDir) }()
 
 	s.clearStaging(base)
 
-	finalDir := s.stagingDir(base, versionKey)
+	finalDir := s.stagingDir(base, pb.VersionKey)
 	if err := os.MkdirAll(filepath.Join(base, "staging"), 0755); err != nil {
 		s.send(w, "fail", "스테이징 디렉터리 생성 실패: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -851,41 +820,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifestBinDst := filepath.Join(finalDir, agentName)
-	srcf, err := os.Open(agentSrc)
-	if err != nil {
-		s.send(w, "fail", "실행 파일 읽기 실패: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	dstf, err := os.OpenFile(manifestBinDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		_ = srcf.Close()
-		s.send(w, "fail", "스테이징 실행 파일 쓰기 실패: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	_, err = io.Copy(dstf, srcf)
-	_ = srcf.Close()
-	_ = dstf.Close()
-	if err != nil {
-		_ = os.RemoveAll(finalDir)
-		s.send(w, "fail", "실행 파일 복사 실패: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Keep the canonical name too, so the rest of the deploy tree logic remains stable.
-	if agentName != appmeta.BinaryName {
-		if err := copyFile(manifestBinDst, filepath.Join(finalDir, appmeta.BinaryName), 0755); err != nil {
-			_ = os.RemoveAll(finalDir)
-			s.send(w, "fail", "스테이징 실행 파일 복사 실패: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	if err := os.WriteFile(filepath.Join(finalDir, cfgName), configData, 0644); err != nil {
-		_ = os.RemoveAll(finalDir)
-		s.send(w, "fail", cfgName+" 저장 실패: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := validateAgentBinary(filepath.Join(finalDir, appmeta.BinaryName)); err != nil {
+	if err := StagePreparedBundle(finalDir, pb); err != nil {
 		_ = os.RemoveAll(finalDir)
 		s.send(w, "fail", err.Error(), http.StatusBadRequest)
 		return
@@ -895,8 +830,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "원본 번들 저장 실패: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("upload: version %s -> %s (staging)", versionKey, finalDir)
-	s.send(w, "success", map[string]string{"version": versionKey}, http.StatusOK)
+	log.Printf("upload: version %s -> %s (staging)", pb.VersionKey, finalDir)
+	s.send(w, "success", map[string]string{"version": pb.VersionKey}, http.StatusOK)
 }
 
 func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
@@ -950,7 +885,8 @@ func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, ver
 	if fi, err := os.Stat(staged); err == nil && !fi.IsDir() && fi.Size() > 0 {
 		return s.postUploadBundlePath(ctx, baseURL, apiPrefix, staged)
 	}
-	binPath := filepath.Join(versionDir, appmeta.BinaryName)
+	controlPath := filepath.Join(versionDir, appmeta.BundleAgentControlName)
+	computePath := filepath.Join(versionDir, appmeta.BundleAgentComputeName)
 	configPath := filepath.Join(versionDir, appmeta.ConfigFileName)
 	tmp, err := os.CreateTemp("", "remote-bundle-*.tar.gz")
 	if err != nil {
@@ -958,9 +894,24 @@ func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, ver
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-	if err := writeBundleTarGz(tmp, binPath, configPath); err != nil {
+	var packErr error
+	v2Ready := false
+	if fi, err := os.Stat(controlPath); err == nil && !fi.IsDir() {
+		if fi2, err2 := os.Stat(computePath); err2 == nil && !fi2.IsDir() {
+			v2Ready = true
+			packErr = writeBundleTarGz(tmp, controlPath, computePath, configPath)
+		}
+	}
+	if !v2Ready {
+		binPath := filepath.Join(versionDir, appmeta.BinaryName)
+		if fi, err := os.Stat(binPath); err != nil || fi.IsDir() {
+			return fmt.Errorf("번들 재생성: %s 또는 %s/%s 가 없습니다", appmeta.BinaryName, appmeta.BundleAgentControlName, appmeta.BundleAgentComputeName)
+		}
+		packErr = writeBundleTarGzLegacy(tmp, binPath, configPath)
+	}
+	if packErr != nil {
 		_ = tmp.Close()
-		return err
+		return packErr
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -1021,9 +972,16 @@ func (s *Server) runUpdateViaEmbeddedScript(base, version string) error {
 	return versionsapi.RunSwitchCurrentWithRoots(base, s.installPrefix, s.deployBase, version)
 }
 
-func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version string) (status string, data interface{}, err error) {
+func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version, agentVariant string) (status string, data interface{}, err error) {
 	applyURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/apply-update"
-	payload, err := json.Marshal(map[string]string{"version": version, "ip": "self"})
+	if _, err := appmeta.ParseAgentVariant(agentVariant); err != nil {
+		return "", nil, err
+	}
+	payload, err := json.Marshal(map[string]string{
+		"version":       version,
+		"ip":            "self",
+		"agent_variant": agentVariant,
+	})
 	if err != nil {
 		return "", nil, err
 	}
@@ -1066,6 +1024,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		var remoteIP string
 		var bundleData []byte
+		agentVariant := appmeta.AgentVariantControl
 		for {
 			part, err := mr.NextPart()
 			if err == io.EOF {
@@ -1094,6 +1053,19 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				bundleData = buf.Bytes()
+			case "agent_variant":
+				b, rerr := io.ReadAll(io.LimitReader(part, 64))
+				_ = part.Close()
+				if rerr != nil {
+					s.send(w, "fail", "multipart 읽기 실패", http.StatusBadRequest)
+					return
+				}
+				v, verr := appmeta.ParseAgentVariant(string(b))
+				if verr != nil {
+					s.send(w, "fail", verr.Error(), http.StatusBadRequest)
+					return
+				}
+				agentVariant = v
 			default:
 				_, _ = io.Copy(io.Discard, part)
 				part.Close()
@@ -1109,12 +1081,12 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		versionKey, _, _, _, bundlePath, workDir, _, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
+		pb, err := prepareAgentBundle(base, bytes.NewReader(bundleData), s.maxUploadBytes)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusBadRequest)
 			return
 		}
-		defer func() { _ = os.RemoveAll(workDir) }()
+		defer func() { _ = os.RemoveAll(pb.WorkDir) }()
 
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
@@ -1123,11 +1095,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 280*time.Second)
 		defer cancel()
-		if err := s.postUploadBundlePath(ctx, baseURL, s.apiPrefix, bundlePath); err != nil {
+		if err := s.postUploadBundlePath(ctx, baseURL, s.apiPrefix, pb.BundlePath); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
-		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, versionKey)
+		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, pb.VersionKey, agentVariant)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
@@ -1140,14 +1112,15 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", msg, http.StatusOK)
 			return
 		}
-		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API)", ip, versionKey)
-		s.send(w, "success", "원격 "+ip+" 에 버전 "+versionKey+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
+		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API, agent_variant=%s)", ip, pb.VersionKey, agentVariant)
+		s.send(w, "success", "원격 "+ip+" 에 버전 "+pb.VersionKey+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
 		return
 	}
 
 	var req struct {
-		Version string `json:"version"`
-		IP      string `json:"ip"`
+		Version      string `json:"version"`
+		IP           string `json:"ip"`
+		AgentVariant string `json:"agent_variant"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.send(w, "fail", "invalid body", http.StatusBadRequest)
@@ -1163,6 +1136,12 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	agentVariant, err := appmeta.ParseAgentVariant(req.AgentVariant)
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	versionDir, _ := s.resolveVersionDir(base, version)
 	if versionDir == "" {
 		s.send(w, "fail", "해당 버전이 스테이징 또는 versions에 없습니다: "+version, http.StatusOK)
@@ -1171,6 +1150,10 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	ip := strings.TrimSpace(req.IP)
 	if ip == "" || ip == "self" {
+		if err := MaterializeCanonicalAgent(versionDir, agentVariant); err != nil {
+			s.send(w, "fail", err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := s.runUpdateViaEmbeddedScript(base, version); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
@@ -1179,11 +1162,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.doRemoteUpdate(w, ip, version, versionDir)
+	s.doRemoteUpdate(w, ip, version, versionDir, agentVariant)
 }
 
 // doRemoteUpdate sends files to the remote upload API (staging), then calls the remote apply-update API (no SSH/SCP).
-func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir string) {
+func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, agentVariant string) {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
 		s.send(w, "fail", "원격 적용 실패: "+err.Error(), http.StatusOK)
@@ -1192,15 +1175,15 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir s
 	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 	defer cancel()
 
-	if firstAgentBinaryPath(versionDir) == "" {
-		s.send(w, "fail", "버전 디렉터리에 실행 파일 "+appmeta.BinaryName+" 이 없습니다: "+versionDir, http.StatusOK)
+	if !dirHasAgentBinary(versionDir) && !versionsapi.StagingHasDualAgents(versionDir) {
+		s.send(w, "fail", "버전 디렉터리에 실행 파일 "+appmeta.BinaryName+" 또는 "+appmeta.BundleAgentControlName+"/"+appmeta.BundleAgentComputeName+" 이 없습니다: "+versionDir, http.StatusOK)
 		return
 	}
 	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, versionDir); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version)
+	status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version, agentVariant)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
@@ -1213,7 +1196,7 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir s
 		s.send(w, "fail", msg, http.StatusOK)
 		return
 	}
-	log.Printf("apply-update: remote %s version %s applied (upload API)", ip, version)
+	log.Printf("apply-update: remote %s version %s applied (upload API, agent_variant=%s)", ip, version, agentVariant)
 	s.send(w, "success", "원격 "+ip+" 에 버전 "+version+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
 }
 
@@ -1237,7 +1220,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			v := e.Name()
-			if dirHasAgentBinary(filepath.Join(stagingParent, v)) {
+			if versionsapi.DirHasStagedAgents(filepath.Join(stagingParent, v)) {
 				stagingVersions = append(stagingVersions, v)
 			}
 		}
@@ -1267,7 +1250,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	var applyVersion, removeVersion string
 	canApply := false
 	for _, v := range stagingVersions {
-		if agentcfg.StagingUpdateAvailable(v, compareKey) {
+		if agentcfg.StagingUpdateAvailable(v, compareKey, s.allowSameVersionUpdate) {
 			canApply = true
 			if applyVersion == "" {
 				applyVersion = v
@@ -1277,12 +1260,21 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	if len(stagingVersions) > 0 {
 		removeVersion = stagingVersions[len(stagingVersions)-1]
 	}
+	stagingDualAgents := false
+	for _, v := range stagingVersions {
+		if versionsapi.StagingHasDualAgents(filepath.Join(stagingParent, v)) {
+			stagingDualAgents = true
+			break
+		}
+	}
 	out := map[string]interface{}{
-		"staging_versions":   stagingVersions,
-		"can_apply":          canApply,
-		"apply_version":      applyVersion,
-		"remove_version":     removeVersion,
-		"update_in_progress": isUpdateUnitActive(),
+		"staging_versions":     stagingVersions,
+		"can_apply":            canApply,
+		"apply_version":        applyVersion,
+		"remove_version":       removeVersion,
+		"update_in_progress":   isUpdateUnitActive(),
+		"staging_dual_agents":  stagingDualAgents,
+		"default_agent_variant": appmeta.AgentVariantCompute,
 	}
 	if ip != "" && ip != "self" {
 		out["remote_ip"] = ip

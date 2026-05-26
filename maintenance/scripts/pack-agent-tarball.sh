@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build a deployment tar.gz containing contrabass.manifest.yaml, contrabass-moleU, agent.local.yml.
-# Manifest paths inside the tarball are ./contrabass-moleU and ./agent.local.yml (see maintenance/packaging/contrabass.manifest.yaml.template).
+# Build a deployment tar.gz containing contrabass.manifest.yaml, contrabass-moleU-control,
+# contrabass-moleU-compute, and agent.local.yml (see maintenance/packaging/contrabass.manifest.yaml.template).
 #
 # Usage:
-#   ./maintenance/scripts/pack-agent-tarball.sh [binary-path] [config-path] [output.tar.gz]
+#   ./maintenance/scripts/pack-agent-tarball.sh [control-binary] [compute-binary] [config-path] [output.tar.gz]
 #
 # Defaults:
-#   binary:   ./build/image/contrabass-moleU
-#   config:   ./cfg/agent.local.yml  (copied into the tarball as agent.local.yml)
+#   control:  ./build/image/contrabass-moleU-control
+#   compute:  ./build/image/contrabass-moleU-compute
+#   config:   ./cfg/agent.local.yml
 #   output:   ./dist/contrabass-agent-<git-describe>.tar.gz  (slashes in version → '-')
 #
 # Requires: sha256sum, tar
@@ -16,9 +17,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-BINARY="${1:-./build/image/contrabass-moleU}"
-CONFIG="${2:-./cfg/agent.local.yml}"
-OUT_ARG="${3:-}"
+BINARY_CONTROL="${1:-./build/image/contrabass-moleU-control}"
+BINARY_COMPUTE="${2:-./build/image/contrabass-moleU-compute}"
+CONFIG="${3:-./cfg/agent.local.yml}"
+OUT_ARG="${4:-}"
 
 TEMPLATE="$ROOT/maintenance/packaging/contrabass.manifest.yaml.template"
 MANIFEST_NAME="contrabass.manifest.yaml"
@@ -34,26 +36,27 @@ if [[ ! -f "$TEMPLATE" ]]; then
 	echo "pack-agent-tarball: template not found: $TEMPLATE" >&2
 	exit 1
 fi
-if [[ ! -f "$BINARY" ]]; then
-	echo "pack-agent-tarball: binary not found: $BINARY" >&2
-	exit 1
-fi
-if [[ ! -f "$CONFIG" ]]; then
-	echo "pack-agent-tarball: config not found: $CONFIG" >&2
-	exit 1
-fi
+for f in "$BINARY_CONTROL" "$BINARY_COMPUTE" "$CONFIG"; do
+	if [[ ! -f "$f" ]]; then
+		echo "pack-agent-tarball: file not found: $f" >&2
+		exit 1
+	fi
+done
 
-AGENT_SHA=$(sha256sum "$BINARY" | awk '{print $1}')
+CONTROL_SHA=$(sha256sum "$BINARY_CONTROL" | awk '{print $1}')
+COMPUTE_SHA=$(sha256sum "$BINARY_COMPUTE" | awk '{print $1}')
 CONFIG_SHA=$(sha256sum "$CONFIG" | awk '{print $1}')
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-cp -f "$BINARY" "$TMP/contrabass-moleU"
-chmod +x "$TMP/contrabass-moleU"
+cp -f "$BINARY_CONTROL" "$TMP/contrabass-moleU-control"
+cp -f "$BINARY_COMPUTE" "$TMP/contrabass-moleU-compute"
+chmod +x "$TMP/contrabass-moleU-control" "$TMP/contrabass-moleU-compute"
 cp -f "$CONFIG" "$TMP/agent.local.yml"
 
-sed -e "s/__AGENT_SHA256__/${AGENT_SHA}/g" \
+sed -e "s/__CONTROL_SHA256__/${CONTROL_SHA}/g" \
+	-e "s/__COMPUTE_SHA256__/${COMPUTE_SHA}/g" \
 	-e "s/__CONFIG_SHA256__/${CONFIG_SHA}/g" \
 	"$TEMPLATE" >"$TMP/$MANIFEST_NAME"
 

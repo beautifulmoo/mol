@@ -88,11 +88,11 @@ func hintIfPermissionDenied(err error) string {
 
 func resolveVersionDirForSwitch(deployRoot, versionsBaseRoot, version string) (dir string, fromStaging bool) {
 	stg := filepath.Join(deployRoot, "staging", version)
-	if dirHasAgentBinary(stg) {
+	if DirHasStagedAgents(stg) {
 		return stg, true
 	}
 	ver := filepath.Join(versionsBaseRoot, "versions", version)
-	if dirHasAgentBinary(ver) {
+	if DirHasStagedAgents(ver) {
 		return ver, false
 	}
 	return "", false

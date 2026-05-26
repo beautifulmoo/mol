@@ -2,16 +2,19 @@
 #   ./maintenance/scripts/pack-agent-tarball.sh
 # Or copy contrabass.manifest.yaml.template and set sha256 from `sha256sum <file>`.
 
-manifestVersion: 1
+manifestVersion: 2
 
 bundle:
   format: tar.gz
 
-agent:
-  path: ./contrabass-moleU
+agent_control:
+  path: ./contrabass-moleU-control
   sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+agent_compute:
+  path: ./contrabass-moleU-compute
+  sha256: "452355a0aeeb06ad07149c0cc9380b1d32ad68cdae7117bfad4542149dbf6c26"
 
 config:
   path: ./agent.local.yml
-  # 64 hex chars (sha256); example value only
   sha256: "452355a0aeeb06ad07149c0cc9380b1d32ad68cdae7117bfad4542149dbf6c26"

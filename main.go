@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 
 	"contrabass-agent/maintenance"
@@ -14,6 +13,9 @@ import (
 
 // VersionKey is the full agent version key "<semver>-<patch>" from git describe at build time (see Makefile, maintenance/scripts/build-version.sh).
 var VersionKey string
+
+// BuildVariant distinguishes control vs compute binaries. Injected at build time via -ldflags "-X main.BuildVariant=control|compute".
+var BuildVariant string
 
 func MyGIN() *gin.Engine {
 	engine := gin.Default()
@@ -26,27 +28,7 @@ func MyGIN() *gin.Engine {
 		AllowHeaders: []string{"*"},
 	}))
 
-	// serviceGroup := routerGroupJSON(engine, "/c-agent/service")
-	// apiGroupV1 := serviceGroup.Group("/api/v1")
-	// apiGroupV1.GET("/test", TestGETWeb)
-
 	return engine
-}
-
-func routerGroupJSON(r *gin.Engine, prefix string) *gin.RouterGroup {
-	g := r.Group(prefix)
-	g.Use(func(c *gin.Context) {
-		c.Header("Content-Type", "application/json")
-		c.Next()
-	})
-	return g
-}
-
-func TestGETWeb(c *gin.Context) {
-	responseString := `{"message" : "This is JSON string for GET request"}`
-
-	c.Header("Content-Type", "application/json")
-	c.String(http.StatusOK, responseString)
 }
 
 func main() {
@@ -56,10 +38,10 @@ func main() {
 	rootCfg := maintenance.IsServiceModeRootCfg(os.Args)
 	agentCfg := maintenance.IsAgentSubcommand(os.Args)
 	if agentCfg {
-		os.Exit(maintenance.Run(VersionKey, os.Args))
+		os.Exit(maintenance.Run(VersionKey, BuildVariant, os.Args))
 	}
 	if !rootCfg {
-		os.Exit(maintenance.Run(VersionKey, os.Args))
+		os.Exit(maintenance.Run(VersionKey, BuildVariant, os.Args))
 	}
 
 	router := MyGIN()
@@ -74,7 +56,7 @@ func main() {
 
 	// 병합 호스트와 동일한 패턴: Gin은 메인 고루틴에서 블로킹, maintenance는 별도 고루틴.
 	go func() {
-		os.Exit(maintenance.Run(VersionKey, os.Args))
+		os.Exit(maintenance.Run(VersionKey, BuildVariant, os.Args))
 	}()
 
 	addr := fmt.Sprintf("0.0.0.0:%d", httpPort)

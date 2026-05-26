@@ -266,87 +266,117 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 #### 5.5.0 배포 번들 (tar.gz)
 
-웹 UI **「업로드」**, REST **`POST …/upload`**, **`agent --apply-update`**, 원격 **`POST …/apply-update`**(multipart `bundle`)가 받는 페이로드는 모두 **하나의 gzip 압축 tar 아카이브(`*.tar.gz`)** 이다. 번들 안에는 **에이전트 실행 파일**, **에이전트 설정 YAML**, 그리고 두 파일의 경로·무결성을 선언하는 **manifest** 가 반드시 포함된다.
+웹 UI **「업로드」**, REST **`POST …/upload`**, **`agent --apply-update`**, 원격 **`POST …/apply-update`**(multipart `bundle`)가 받는 페이로드는 모두 **하나의 gzip 압축 tar 아카이브(`*.tar.gz`)** 이다. 번들 안에는 **에이전트 실행 파일**(하나 또는 둘), **에이전트 설정 YAML**, 그리고 파일의 경로·무결성을 선언하는 **manifest** 가 반드시 포함된다.
 
 ##### 구성 요소
 
 | 구성 | 필수 | 설명 |
 |------|------|------|
-| **에이전트 바이너리** | 예 | Linux **ELF** 실행 파일. 기본 파일명은 **`contrabass-moleU`**(`appmeta.BinaryName`). manifest `agent.path` 로 위치·`sha256` 을 지정한다. |
+| **에이전트 바이너리** | 예 | Linux **ELF** 실행 파일. **manifest v2**에서는 두 variant — **`contrabass-moleU-control`**(`agent_control`)·**`contrabass-moleU-compute`**(`agent_compute`) — 를 각각의 `path`·`sha256`으로 선언한다. v1(레거시)은 단일 `agent`. 빌드 시 `-X main.BuildVariant=control\|compute`로 variant를 구분한다. |
 | **설정 YAML** | 예 | 에이전트가 기동 시 읽는 설정(예: **`agent.local.yml`**). manifest `config.path` 로 지정. 업로드 시 **`maintenance/agentcfg`** 구조체로 파싱·검증한다(`DiscoveryUDPPort`, `MaintenancePort`, `DeployBase` 등). **버전 문자열은 config에 넣지 않는다** — 버전 키는 바이너리에서만 읽는다(§5.5.1·§12). |
-| **`contrabass.manifest.yaml`** | 예 | 아카이브 **루트**에 두는 manifest. 현재 **`manifestVersion: 1`** 만 지원한다. |
+| **`contrabass.manifest.yaml`** | 예 | 아카이브 **루트**에 두는 manifest. **`manifestVersion: 2`** (현재 기본) 및 레거시 **`1`** 을 지원한다. |
 
-manifest에 **선언되지 않은** 추가 파일을 tar에 넣어도, 서버 검증·스테이징은 **manifest의 `agent`·`config` 두 멤버**를 기준으로 한다(향후 manifest `files` 목록 확장은 템플릿 주석으로만 안내).
+manifest에 **선언되지 않은** 추가 파일을 tar에 넣어도, 서버 검증·스테이징은 **manifest가 선언한 멤버**를 기준으로 한다.
 
 ##### 아카이브 레이아웃
 
 - **형식**: **tar.gz** (gzip + POSIX tar). multipart 필드명은 **`bundle`**(구현 상수 `uploadBundleField`).
-- **권장 레이아웃**(패키징 스크립트 기본): 아카이브 루트에 **평면(flat)** 으로 다음 세 파일.
+- **권장 레이아웃**(패키징 스크립트 기본, manifest v2): 아카이브 루트에 **평면(flat)** 으로 다음 네 파일.
 
   ```
   contrabass.manifest.yaml
-  contrabass-moleU          # 실행 권한 0755 권장
+  contrabass-moleU-control   # BuildVariant=control, 실행 권한 0755
+  contrabass-moleU-compute   # BuildVariant=compute, 실행 권한 0755
   agent.local.yml
   ```
 
-- **경로 규칙**: manifest의 `agent.path`·`config.path` 는 **아카이브 루트 기준 상대 경로**(예: `./contrabass-moleU`, `./agent.local.yml`). `..`·절대 경로는 거부한다. 서브디렉터리 경로도 허용되나, 스테이징에는 **basename** 으로 저장한다(§5.5.1).
+- **경로 규칙**: manifest의 `agent_control.path`·`agent_compute.path`·`config.path` 는 **아카이브 루트 기준 상대 경로**(예: `./contrabass-moleU-control`). `..`·절대 경로는 거부한다. 서브디렉터리 경로도 허용되나, 스테이징에는 **basename** 으로 저장한다(§5.5.1).
 - **안전 압축 해제**: 서버는 **심볼릭/하드 링크 금지**, 경로 탈출 차단, tar 항목 **최대 512개**, 압축 해제 총량은 요청 상한(`Maintenance.MaxUploadBytes`)의 배수로 제한(`maintenance/server/bundleupload.go`의 `extractTarGzSafe`).
 
-##### manifest 내용 (`manifestVersion: 1`)
+##### manifest 내용
 
 참고 파일:
 
-- **템플릿**: `maintenance/packaging/contrabass.manifest.yaml.template` — `__AGENT_SHA256__`·`__CONFIG_SHA256__` 플레이스홀더.
+- **템플릿**: `maintenance/packaging/contrabass.manifest.yaml.template` — `__CONTROL_SHA256__`·`__COMPUTE_SHA256__`·`__CONFIG_SHA256__` 플레이스홀더.
 - **예시(값은 설명용)**: `maintenance/packaging/contrabass.manifest.example.yaml`.
 
-필수·권장 필드:
+**manifest v2 (현재 기본)**:
 
 ```yaml
-manifestVersion: 1          # 반드시 1
+manifestVersion: 2
 
 bundle:
-  format: tar.gz            # 문서·감사용(서버는 tar.gz 입력만 처리)
+  format: tar.gz
 
-agent:
-  path: ./contrabass-moleU  # 아카이브 내 상대 경로
-  sha256: "<64자 hex>"       # 해당 파일 SHA-256. 비우면 해시 검증 생략(권장하지 않음)
+agent_control:
+  path: ./contrabass-moleU-control
+  sha256: "<64자 hex>"
+
+agent_compute:
+  path: ./contrabass-moleU-compute
+  sha256: "<64자 hex>"
 
 config:
   path: ./agent.local.yml
   sha256: "<64자 hex>"
 ```
 
+**manifest v1 (레거시, 단일 에이전트)**:
+
+```yaml
+manifestVersion: 1
+
+bundle:
+  format: tar.gz
+
+agent:
+  path: ./contrabass-moleU
+  sha256: "<64자 hex>"
+
+config:
+  path: ./agent.local.yml
+  sha256: "<64자 hex>"
+```
+
+- v2에서는 두 바이너리의 `sha256`을 **각각** 검증한다. 두 바이너리의 `--version` 출력(버전 키)은 **동일**해야 한다.
 - **`sha256`**: 업로드 시 디스크에 풀린 파일과 **바이트 단위 일치**를 검증한다. 불일치 시 400.
-- **수동 작성**: `sha256sum <파일>` 로 hex를 채운 뒤, 바이너리·config·manifest를 tar.gz로 묶으면 된다.
+
+##### agent_variant (적용 시 바이너리 선택)
+
+manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된다. **적용(`apply-update`) 시점**에 `agent_variant` 파라미터(`"control"` 또는 `"compute"`, 기본 `"compute"`)로 **어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지** 결정한다(`MaterializeCanonicalAgent`). 스테이징에는 항상 두 바이너리 모두 보관되며, variant 선택 후 canonical 바이너리가 복사된다.
+
+- **웹 UI**: 로컬 패널과 각 리모트 카드에 variant 선택 라디오 버튼 (스테이징에 dual agent가 있을 때만 표시).
+- **CLI**: `agent --apply-update -agent-variant=compute|control`.
+- **REST**: `POST …/apply-update` JSON `agent_variant` 필드 또는 multipart `agent_variant` 필드.
 
 ##### 패키징(번들 만들기)
 
 **권장 — 저장소 스크립트**
 
-1. 에이전트 바이너리 빌드: 루트에서 **`make`** 또는 **`make build`** → 기본 산출 **`build/image/contrabass-moleU`** (`main.VersionKey` 주입).
+1. 에이전트 바이너리 빌드: 루트에서 **`make`** 또는 **`make build`** → **`build/image/contrabass-moleU-control`**(BuildVariant=control)·**`build/image/contrabass-moleU-compute`**(BuildVariant=compute) 두 파일 생성. 각 바이너리에 `-X main.VersionKey`·`-X main.BuildVariant`가 주입된다.
 2. 설정 파일 준비: 예시 **`cfg/agent.local.yml`**(배포 대상 환경에 맞게 수정).
 3. 번들 생성:
 
    ```bash
-   ./maintenance/scripts/pack-agent-tarball.sh [binary-path] [config-path] [output.tar.gz]
+   ./maintenance/scripts/pack-agent-tarball.sh [control] [compute] [config] [output.tar.gz]
    ```
 
-   - **기본 인자**: 바이너리 `./build/image/contrabass-moleU`, config `./cfg/agent.local.yml`, 출력 `./dist/contrabass-agent-<git-describe>.tar.gz`(버전 문자열의 `/` 는 `-` 로 치환).
-   - 스크립트는 두 파일의 **SHA-256** 을 계산해 템플릿에 넣고, 임시 디렉터리에서 **`tar -czf`** 로 아카이브를 만든다. 멤버 목록을 stdout에 출력한다.
+   - **기본 인자**: control `./build/image/contrabass-moleU-control`, compute `./build/image/contrabass-moleU-compute`, config `./cfg/agent.local.yml`, 출력 `./dist/contrabass-agent-<git-describe>.tar.gz`.
+   - 스크립트는 세 파일의 **SHA-256** 을 각각 계산해 manifest v2 템플릿에 넣고, 임시 디렉터리에서 **`tar -czf`** 로 아카이브를 만든다. 멤버 목록을 stdout에 출력한다.
    - **필요 도구**: `sha256sum`, `tar`.
 
-**수동 패키징**: 위 세 파일을 동일 레이아웃으로 tar.gz에 넣되, manifest의 `path`·`sha256` 이 실제 멤버와 일치해야 한다.
+**수동 패키징**: manifest에 맞는 파일을 동일 레이아웃으로 tar.gz에 넣되, `path`·`sha256` 이 실제 멤버와 일치해야 한다.
 
 ##### 서버 검증 파이프라인(업로드 시)
 
 `POST …/upload`·`PrepareAgentBundleFromReader`(CLI `apply-update` 사전 검증) 공통 순서:
 
 1. 요청 본문을 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20`) 이내로 수신.
-2. tar.gz **안전 압축 해제** → `contrabass.manifest.yaml` 파싱(`manifestVersion == 1`).
-3. manifest의 `agent.path`·`config.path` 파일 존재 및 **SHA-256** 일치.
+2. tar.gz **안전 압축 해제** → `contrabass.manifest.yaml` 파싱(`manifestVersion: 1 또는 2`).
+3. **v2**: `agent_control.path`·`agent_compute.path`·`config.path` 파일 존재 및 **SHA-256** 각각 일치. **v1**: `agent.path`·`config.path`.
 4. config YAML → **`agentcfg.LoadFromBytes`**.
-5. agent → **ELF** 확인 후 **`--version` → `agent --version`** 폴백으로 **버전 키** 추출(§12).
-6. 성공 시 스테이징 디렉터리명 = 그 **버전 키**; agent·config는 manifest basename으로 저장하고, **`appmeta.BinaryName` 과 basename이 다르면 동일 바이너리를 `BinaryName` 으로 한 번 더 복사**(§5.5.1).
+5. agent(v2는 두 바이너리 모두) → **ELF** 확인 후 **`--version` → `agent --version`** 폴백으로 **버전 키** 추출(§12). `(control)` / `(compute)` 등 variant 접미사는 검증 시 제거한다.
+6. 성공 시 스테이징 디렉터리명 = **버전 키**; v2는 control·compute 바이너리를 각각 저장하고, **canonical `appmeta.BinaryName` 복사는 적용 시점에 `MaterializeCanonicalAgent`가 수행**. v1은 기존과 같이 `BinaryName`으로 복사.
 
 ##### 번들 이용 경로
 
@@ -356,19 +386,24 @@ config:
 | **로컬 적용** | 스테이징 후 `POST …/apply-update` `{ "version", "ip": "self" }` | 스테이징→`versions/` 복사 후 내장 **`update.sh`** `systemd-run` |
 | **원격 적용(JSON)** | 스테이징·`versions/` 에 번들 또는 풀린 트리 존재 | 이 서버가 원격 **`POST …/upload`**(`upload.bundle.tar.gz` 우선) 후 원격 **`apply-update`(self)** 호출 |
 | **원격 적용(multipart)** | `POST …/apply-update` 필드 **`ip`** + **`bundle`** | 로컬 스테이징 없이 원격만 업로드·적용 |
-| **CLI** | `contrabass-moleU agent --apply-update -cfg <file> <self\|ip> <bundle.tar.gz>` | 서버와 **동일 검증** 후 self는 디스크 스테이징+적용, remote는 대상 **Gin**에 multipart |
+| **CLI** | `contrabass-moleU agent --apply-update -cfg <file> [-agent-variant=compute\|control] <self\|ip> <bundle.tar.gz>` | 서버와 **동일 검증** 후 self는 디스크 스테이징+적용, remote는 대상 **Gin**에 multipart |
 
-- **업데이트 가능 여부**: 업로드·적용 전 **`StagingUpdateAvailable`**(현재 `current` 대비 스테이징 버전 키 비교, §5.5.1)을 만족할 때만 진행한다.
+- **업데이트 가능 여부**: 업로드·적용 전 **`StagingUpdateAvailable`**(현재 `current` 대비 스테이징 버전 키 비교, §5.5.1)을 만족할 때만 진행한다. `AllowSameVersionUpdate` 설정이 `true`이면 동일 버전도 적용 가능.
+- **variant 선택**: v2 번들에서 `agent_variant`(기본 `compute`)로 어떤 바이너리를 canonical name으로 설치할지 결정.
 - **원본 바이트 재사용**: 스테이징에 **`upload.bundle.tar.gz`** 가 남아 있으면 원격 `POST …/upload` 에 **같은 tar.gz** 를 실어 보낸다. 없을 때만 서버가 바이너리+config로 **최소 tar.gz를 재생성**(`writeBundleTarGz`).
 
 ##### 관련 구현·문서
 
 | 위치 | 역할 |
 |------|------|
-| `maintenance/server/bundleupload.go` | 압축 해제·manifest·해시·ELF·버전 키·`writeBundleTarGz` |
-| `maintenance/server/server.go` | `handleUpload`, 원격 multipart apply |
-| `maintenance/applycli/applycli.go` | CLI `--apply-update` |
-| `maintenance/scripts/pack-agent-tarball.sh` | 릴리스 번들 빌드 |
+| `maintenance/server/bundleupload.go` | 압축 해제·manifest v1/v2 파싱·해시·ELF·버전 키·`writeBundleTarGz` |
+| `maintenance/server/server.go` | `handleUpload`, `handleApplyUpdate`, 원격 multipart apply |
+| `maintenance/server/agentvariant.go` | `MaterializeCanonicalAgent` — variant→`BinaryName` 복사 |
+| `maintenance/server/applylocal.go` | `ApplyUpdateSelfFromBundleExtract` — CLI/서버 로컬 적용 |
+| `maintenance/appmeta/agentvariant.go` | `ParseAgentVariant`, variant 상수·basename 매핑 |
+| `maintenance/versionsapi/staging.go` | `StagingHasDualAgents`, `DirHasStagedAgents` |
+| `maintenance/applycli/applycli.go` | CLI `--apply-update` (`-agent-variant` 플래그) |
+| `maintenance/scripts/pack-agent-tarball.sh` | 릴리스 번들 빌드 (manifest v2) |
 | `docs/CLI.md` | `--apply-update` 사용법 |
 
 #### 5.5.1 배포 디렉터리 구조·버전 키
@@ -380,27 +415,30 @@ config:
 - **노출 버전 문자열**: 로그·Discovery·`GET /version`·DISCOVERY_RESPONSE의 `version` 등에 쓰이는 문자열은 위 **버전 키**와 동일하다.
 
   ```
-  deploy_base/                    # 예: /var/lib/contrabass/mole (설정 키: DeployBase)
-  ├── current -> versions/0.4.0-2 # 심볼릭 링크, 현재 실행 버전(버전 키)
+  deploy_base/                       # 예: /var/lib/contrabass/mole (설정 키: DeployBase)
+  ├── current -> versions/0.4.0-2    # 심볼릭 링크, 현재 실행 버전(버전 키)
   ├── previous -> versions/0.4.0-1
-  ├── update_history.log          # 업데이트·롤백 기록 (맨 앞에 추가, 최근 10건을 웹에 표시)
-  ├── staging/                    # 업로드 API로만 채움; 원본 번들·풀린 트리 보관
+  ├── update_history.log             # 업데이트·롤백 기록 (맨 앞에 추가, 최근 10건을 웹에 표시)
+  ├── staging/                       # 업로드 API로만 채움; 원본 번들·풀린 트리 보관
   │   └── <버전 키>/
-  │       ├── contrabass-moleU
-  │       ├── agent.local.yml        # 번들 manifest `config.path`의 basename (권장 기본값)
-  │       ├── upload.bundle.tar.gz   # 클라이언트가 POST 한 tar.gz 원본(원격 재전송 시 우선 사용)
-  │       └── (manifest에 따라 풀린 기타 파일들… 향후 확장)
+  │       ├── contrabass-moleU-control  # manifest v2: BuildVariant=control
+  │       ├── contrabass-moleU-compute  # manifest v2: BuildVariant=compute
+  │       ├── agent.local.yml
+  │       ├── upload.bundle.tar.gz      # 원본 tar.gz (원격 재전송 시 우선 사용)
+  │       └── (manifest에 따라 풀린 기타 파일들…)
   └── versions/
-      └── <버전 키>/               # 로컬 적용 후: 스테이징 트리 복사본에서 upload.bundle.tar.gz 만 제외
-          ├── contrabass-moleU
-          ├── agent.local.yml        # 번들 manifest `config.path`의 basename (권장 기본값)
-          └── (기타 풀린 파일들…; 원본 tar.gz 없음 — 심볼릭 링크 `current` 대상·update.sh 가 사용)
+      └── <버전 키>/                    # 적용 후: upload.bundle.tar.gz 제외
+          ├── contrabass-moleU           # MaterializeCanonicalAgent가 variant에서 복사
+          ├── contrabass-moleU-control   # 원본 보관
+          ├── contrabass-moleU-compute   # 원본 보관
+          ├── agent.local.yml
+          └── (기타 풀린 파일들…; 원본 tar.gz 없음)
   ```
 
 - **스테이징**: 업로드는 **실행 중인** `versions/<버전 키>/` 가 아닌 **`{DeployBase}/staging/<버전 키>/`** 에만 저장하여 "text file busy" 를 피한다. 적용 시 소스는 **스테이징 우선**, 없으면 **versions/**.
 - **원본 번들 보관**: 업로드 성공 시 **`upload.bundle.tar.gz`** 라는 이름으로 **클라이언트가 보낸 tar.gz 전체**를 스테이징에 함께 둔다. manifest·파일 개수가 늘어도 **원격에 동일 바이트를 다시 보낼 때** 서버가 번들 형식을 하드코딩하지 않도록 하기 위함이다. **`versions/<버전 키>/`에는 원본 번들을 두지 않는다** — 설치 트리는 실행·롤백·향후 임의 버전을 `current`로 지정하는 용도로 **풀린 파일만**이면 되며, 원본 아카이브는 필수 아님.
 - **config 파일명 규칙**: 스테이징/설치 트리에 저장되는 config 파일명은 **바이너리 상수로 고정하지 않고**, 번들 manifest의 **`config.path` basename** 을 따른다(예: `config.path: ./agent.local.yml` → 디스크에도 `agent.local.yml`). 설정 파일명이 다시 바뀌어도 번들 규약만 맞으면 동일하게 동작한다.
-- **agent 파일명 규칙**: 업로드 번들에서 추출된 agent 실행 파일도 **manifest `agent.path` basename** 으로 스테이징에 저장한다. 다만 배포 트리의 나머지 로직(versions/switch-current 등)은 **`appmeta.BinaryName` 파일을 기준**으로 동작하므로, basename이 다르면 **같은 바이너리를 `appmeta.BinaryName`로 한 번 더 복사**해 두어 호환을 유지한다.
+- **agent 파일명 규칙**: **manifest v2**: `agent_control.path`·`agent_compute.path` basename으로 스테이징에 저장한다(`contrabass-moleU-control`, `contrabass-moleU-compute`). 스테이징 시점에는 canonical `appmeta.BinaryName`(`contrabass-moleU`)을 생성하지 않으며, **적용 시점**에 선택된 variant를 `MaterializeCanonicalAgent`로 복사한다. **v1(레거시)**: 단일 `agent.path` basename으로 저장하고, basename이 `BinaryName`과 다르면 복사한다.
 - **스테이징 → `versions/` (로컬 적용 직전)**: **`staging/<버전 키>/` 디렉터리 전체를 `versions/<버전 키>/`로 복사**한 뒤, **`upload.bundle.tar.gz`만 삭제**한다. 번들에 에이전트·config 외 파일이 추가되어도 동일 규칙으로 설치 트리에 반영된다.
 - **스테이징 정리**: 자동 삭제하지 않는다. 로컬 적용 후에도 스테이징을 남겨 같은 버전 키로 원격 적용을 반복할 수 있다(원본 번들이 스테이징에 남아 있으면 원격 `POST .../upload`에 그대로 실을 수 있음). 삭제는 웹 「업로드된 버전 삭제」로 **스테이징만** 수동 삭제한다.
 

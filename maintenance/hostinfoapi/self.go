@@ -11,6 +11,7 @@ type SelfDiscoveryMeta struct {
 	Version              string
 	ServicePort          int
 	DiscoveryServiceName string
+	BuildVariant         string
 }
 
 // SelfDiscoveryResponse returns the same payload shape as GET /self and GET /host-info?ip=self (or empty ip).
@@ -30,5 +31,6 @@ func SelfDiscoveryResponse(info hostinfo.Info, meta SelfDiscoveryMeta) discovery
 		MemoryTotalMB:       info.MemoryTotalMB,
 		MemoryUsedMB:        info.MemoryUsedMB,
 		MemoryUsagePercent:  info.MemoryUsagePercent,
+		BuildVariant:        meta.BuildVariant,
 	}
 }

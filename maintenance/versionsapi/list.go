@@ -66,7 +66,7 @@ func ListInstalledVersions(base string) ([]VersionEntry, error) {
 		if ver == "." || ver == ".." {
 			continue
 		}
-		if !dirHasAgentBinary(filepath.Join(versionsParent, ver)) {
+		if !DirHasStagedAgents(filepath.Join(versionsParent, ver)) {
 			continue
 		}
 		list = append(list, VersionEntry{

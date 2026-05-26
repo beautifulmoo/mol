@@ -84,11 +84,15 @@ func CompareVersionKeys(a, b string) int {
 
 // StagingUpdateAvailable reports whether staged content should allow "apply update" vs current install.
 // If semver differs, the previous policy applies: any different directory name allows apply (including downgrade).
-// If semver is equal, apply is allowed only when staging patch is greater than current patch.
+// If semver is equal, apply is allowed only when staging patch is greater than current patch
+// — unless allowSame is true, in which case equal versions are also permitted.
 // Empty current means nothing installed; any non-empty staging is applicable.
-func StagingUpdateAvailable(stagingKey, currentKey string) bool {
+func StagingUpdateAvailable(stagingKey, currentKey string, allowSame bool) bool {
 	if currentKey == "" {
 		return stagingKey != ""
+	}
+	if allowSame && StripGitDescribeHash(stagingKey) == StripGitDescribeHash(currentKey) {
+		return true
 	}
 	sSem, sPatch := SplitVersionKey(stagingKey)
 	cSem, cPatch := SplitVersionKey(currentKey)

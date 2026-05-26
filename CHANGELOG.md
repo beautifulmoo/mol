@@ -1,5 +1,21 @@
 # 변경 이력 (mol)
 
+## Manifest v2 · Agent Variant (dual-binary)
+
+- **Manifest v2**: 배포 번들이 `manifestVersion: 2`를 지원한다. `agent_control`·`agent_compute` 두 바이너리를 각각의 `path`·`sha256`으로 선언하여 번들에 포함. 레거시 `manifestVersion: 1`(단일 `agent`)도 계속 지원.
+- **BuildVariant 주입**: `Makefile`이 `go build`를 두 번 수행하여 `-X main.BuildVariant=control`·`compute`를 각각 주입. `contrabass-moleU --version` 출력에 `(control)` / `(compute)` 표시. variant 미지정 빌드는 빈 문자열(정상 동작).
+- **Agent Variant 선택**: 적용(`apply-update`) 시 `agent_variant` 파라미터로 어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지 결정. 기본값 `compute`.
+  - **웹 UI**: 로컬 패널·각 리모트 카드에 라디오 버튼. 스테이징에 dual agent가 있을 때만 표시.
+  - **CLI**: `--apply-update -agent-variant=compute|control`.
+  - **REST**: `POST …/apply-update` JSON/multipart `agent_variant` 필드.
+- **MaterializeCanonicalAgent** (`server/agentvariant.go`): 선택된 variant를 canonical `contrabass-moleU`로 복사. 스테이징 시점에는 canonical 파일 미생성, 적용 시점에만 수행.
+- **AllowSameVersionUpdate**: `agent.local.yml`의 `AllowSameVersionUpdate: true`로 동일 버전 재적용 허용 (기본 false).
+- **pack-agent-tarball.sh**: manifest v2 기반 번들 생성. control·compute·config 세 파일의 SHA-256을 각각 계산.
+- **버전 키 검증**: `--version` 출력의 `(control)` / `(compute)` 접미사를 검증 시 제거.
+- **UI Build Variant 표시**: 로컬·리모트 호스트 카드에 현재 실행 중인 variant를 badge로 표시.
+- **신규 파일**: `maintenance/appmeta/agentvariant.go`, `maintenance/versionsapi/staging.go`, `maintenance/server/agentvariant.go`.
+- **데드 코드 정리**: `writeToStaging`(미사용), `uploadBinaryField`(레거시 상수), `firstAgentBinaryPath`(인라인 대체) 제거. `resolveVersionDir`에서 중복 체크(`dirHasAgentBinary || DirHasStagedAgents` → `DirHasStagedAgents`만) 통합.
+
 ## 레이아웃
 
 - **`build/`**: **`build/build.sh`** 가 루트에서 `make "$@"` 를 호출한다. **`make`** 기본 산출 바이너리는 **`build/image/contrabass-moleU`** (`Makefile` 의 `OUTPUT_DIR`·`BINARY`).
@@ -26,10 +42,11 @@
 
 ### `mol --apply-update` (번들 한 번에 검증·적용)
 
-- **`-cfg`**, **`<self|remote-ip>`**, **`<bundle.tar.gz>`** — **로컬 maintenance(8889) 불필요.**
-- 번들은 서버와 동일하게 임시 풀기·검증 후 **`StagingUpdateAvailable`** 으로만 진행. **self** 의 “현재 버전” 비교는 **`DeployBase/current` 심볼릭** 우선(개발용 CLI 빌드 키와 배포 트리 불일치 방지).
-- **self**: **`ApplyUpdateSelfFromBundleExtract`** 로 스테이징 후 **`RunSwitchCurrentWithRoots`**(웹 `POST /upload` + 로컬 적용과 동등; 배포 경로 쓰기·`systemd-run` 은 보통 sudo).
-- **remote**: **`http://<ip>:Server.HTTPPort` + `APIPrefix` + `POST …/apply-update`** multipart(`ip`, `bundle`) — 요청은 **원격 Gin**에서 처리(§5.5.3).
+- **`-cfg`**, **`[-agent-variant=compute|control]`**, **`<self|remote-ip>`**, **`<bundle.tar.gz>`** — **로컬 maintenance(8889) 불필요.**
+- `-agent-variant`: manifest v2 번들에서 canonical name으로 설치할 variant 선택 (기본 `compute`).
+- 번들은 서버와 동일하게 임시 풀기·검증 후 **`StagingUpdateAvailable`** 으로만 진행. `AllowSameVersionUpdate: true`이면 동일 버전도 허용. **self** 의 "현재 버전" 비교는 **`DeployBase/current` 심볼릭** 우선.
+- **self**: **`ApplyUpdateSelfFromBundleExtract`** 로 `MaterializeCanonicalAgent`(variant→`BinaryName` 복사) + 스테이징 후 **`RunSwitchCurrentWithRoots`**.
+- **remote**: **`http://<ip>:Server.HTTPPort` + `APIPrefix` + `POST …/apply-update`** multipart(`ip`, `bundle`, `agent_variant`) — 요청은 **원격 Gin**에서 처리(§5.5.3).
 - **업로드 한도**: **`config.ClampMaxUploadBytes`** 를 서버와 공유.
 - **CLI 출력**: 영문(로캘 없는 OS 대비). 원격 주소·TCP 확인은 **`cliutil`**.
 

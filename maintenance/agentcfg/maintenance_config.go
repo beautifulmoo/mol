@@ -34,6 +34,9 @@ type Config struct {
 	// MaxUploadBytes is the max multipart body size for POST /upload and multipart apply-update (agent + config).
 	// YAML: integer bytes, or string "64 << 20" / "67108864". Omitted uses DefaultMaxUploadBytes. 0 → server default.
 	MaxUploadBytes uploadBytesExpr `yaml:"MaxUploadBytes"`
+	// AllowSameVersionUpdate when true permits apply-update even when staging version equals the currently running version.
+	// Default false: only newer versions (or different semver) can be applied.
+	AllowSameVersionUpdate bool `yaml:"AllowSameVersionUpdate"`
 	// RemoteHealth configures HTTP remote host health checks (maintenance web → remote Server.HTTPPort GET …/health). Browser polls only while the page is open.
 	RemoteHealth RemoteHealthConfig `yaml:"RemoteHealth"`
 }

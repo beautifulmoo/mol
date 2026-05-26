@@ -28,7 +28,7 @@
 |------|------|
 | **종료 코드** | 성공 **`0`**, 실패 **`1`**. `maintenance`·`discoverycli`·`applycli`·`versionscli`·`hostinfocli` 패키지는 **`os.Exit`를 호출하지 않고** 상위 `main`이 `os.Exit` 한다. |
 | **도움말 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`** 관련 진단 메시지는 **영문**으로 출력한다(로캘 미설치 OS 대비). `--discovery` 도움말도 영문. |
-| **버전 출력** | **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** / **`agent --version`** — 빌드 시 주입된 **`main.VersionKey`** 와 `BinaryName` 한 줄. **전환용**: 루트 **`contrabass-moleU --version`** / **`-version`** 도 동일 한 줄을 출력한다(구 업데이트 스크립트 호환; PRD §4.1·§9). 설정 파일 불필요. |
+| **버전 출력** | **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** / **`agent --version`** — 빌드 시 주입된 **`main.VersionKey`** 와 `BinaryName` 한 줄. `BuildVariant`가 주입된 경우 **`contrabass-moleU 0.4.4-test (compute)`** 형태로 variant 접미사가 붙는다. **전환용**: 루트 **`contrabass-moleU --version`** / **`-version`** 도 동일 한 줄을 출력한다(구 업데이트 스크립트 호환; PRD §4.1·§9). 설정 파일 불필요. |
 
 ---
 
@@ -70,7 +70,7 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 | **`contrabass-moleU agent --version`** | 권장. 다른 `agent` 하위 명령과 동일한 접두. |
 | **`contrabass-moleU --version`** / **`-version`** | 루트 플래그만으로 한 줄 출력(전환용). `agent` 없이 실행 가능. |
 
-**업로드·번들 검증**(서버·`apply-cli` 등): 스테이징·번들 내 바이너리에 대해 **`--version`** 실행을 먼저 시도하고, 실패하면 **`agent --version`** 을 시도한다(`maintenance/server.VersionKeyFromAgentBinary`). 출력은 항상 **`<BinaryName> <버전 키>`** 한 줄이어야 한다.
+**업로드·번들 검증**(서버·`apply-cli` 등): 스테이징·번들 내 바이너리에 대해 **`--version`** 실행을 먼저 시도하고, 실패하면 **`agent --version`** 을 시도한다(`maintenance/server.VersionKeyFromAgentBinary`). 출력은 **`<BinaryName> <버전 키>`** 한 줄이어야 한다. `BuildVariant` 접미사(예: `(control)`, `(compute)`)가 있으면 검증 시 자동으로 제거한다.
 
 ---
 
@@ -170,7 +170,7 @@ contrabass-moleU agent --discovery -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --apply-update -cfg /path/to/agent.local.yml <self|remote-ip> /path/to/bundle.tar.gz
+contrabass-moleU agent --apply-update -cfg /path/to/agent.local.yml [-agent-variant=compute|control] <self|remote-ip> /path/to/bundle.tar.gz
 contrabass-moleU agent --apply-update -h
 ```
 
@@ -179,6 +179,7 @@ contrabass-moleU agent --apply-update -h
 | 위치 | 설명 |
 |------|------|
 | **`-cfg`** | **필수.** 설정 파일 경로 (`config.Load`). |
+| **`-agent-variant`** | **선택.** manifest v2 번들 적용 시 `contrabass-moleU`로 설치할 바이너리 variant. `compute`(기본) 또는 `control`. |
 | **첫 번째 인자** | **`self`**: 이 호스트에 적용. **IPv4/IPv6 주소 문자열**: 해당 원격에 적용(호스트명은 사용하지 않음). |
 | **두 번째 인자** | 업로드할 **번들 파일 경로** (`.tar.gz`). |
 

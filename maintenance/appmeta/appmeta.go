@@ -4,6 +4,10 @@ package appmeta
 // Keep this as the single place to rename the binary in output strings.
 const BinaryName = "contrabass-moleU"
 
+// Bundle agent filenames inside deployment tar.gz (manifest v2).
+const BundleAgentControlName = "contrabass-moleU-control"
+const BundleAgentComputeName = "contrabass-moleU-compute"
+
 // ConfigFileName is the canonical config filename inside staged/installed trees and bundles.
 // (Service can still be started with any -cfg path; this name is for deploy tree layout.)
 const ConfigFileName = "agent.local.yml"

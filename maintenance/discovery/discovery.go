@@ -24,6 +24,7 @@ type Config struct {
 	DiscoveryDeduplicate        bool
 	Version                     string
 	ServicePort                 int
+	BuildVariant                string // "control", "compute", or ""
 }
 
 // Discovery handles UDP discovery (listen + respond, and run discovery).
@@ -141,6 +142,7 @@ func (d *Discovery) handleRequest(raw []byte, from *net.UDPAddr) {
 		MemoryTotalMB:      memTotalMB,
 		MemoryUsedMB:       memUsedMB,
 		MemoryUsagePercent: memUsagePct,
+		BuildVariant:       d.cfg.BuildVariant,
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {

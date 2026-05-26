@@ -321,17 +321,11 @@ h3 {
 }
 .service-btn.service-start { border-color: #22c55e; background: #22c55e; color: #fff; }
 .service-btn.service-start:hover { background: #16a34a; }
-.service-btn.host-control-start { border-color: #3b82f6; background: #3b82f6; color: #fff; }
-.service-btn.host-control-start:hover { background: #2563eb; }
-.service-btn.service-stop { border-color: #ef4444; background: #ef4444; color: #fff; }
-.service-btn.service-stop:hover { background: #dc2626; }
 .service-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 .service-btn.service-start:disabled:hover { background: #22c55e; }
-.service-btn.host-control-start:disabled:hover { background: #3b82f6; }
-.service-btn.service-stop:disabled:hover { background: #ef4444; }
 .discovery-btn {
   padding: 0.5rem 1rem;
   font-size: 0.9rem;
@@ -493,14 +487,49 @@ h3 {
   font-size: 0.8rem;
   box-sizing: border-box;
 }
-.update-config-editor-wrap {
-  margin-top: 0.5rem;
-}
-.update-config-editor-wrap .editor-label {
-  display: block;
+.agent-variant-fieldset {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
   font-size: 0.85rem;
+}
+.agent-variant-fieldset legend {
   color: #a1a1aa;
-  margin-bottom: 0.25rem;
+  padding: 0 0.25rem;
+}
+.agent-variant-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  cursor: pointer;
+  color: #e4e4e7;
+}
+.agent-variant-option code {
+  font-size: 0.85em;
+}
+.card-variant-selector {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.8rem;
+  margin-right: 0.35rem;
+}
+.card-variant-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  color: #e4e4e7;
+}
+.card-variant-option code {
+  font-size: 0.85em;
+}
+.build-variant-badge {
+  color: #60a5fa;
+  font-weight: 600;
+  font-size: 0.9em;
 }
 .config-editor {
   width: 100%;
@@ -544,17 +573,6 @@ h3 {
 }
 .update-form .discovery-status {
   margin-top: 0.5rem;
-}
-.installed-versions {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #3f3f46;
-}
-.installed-versions h3 {
-  margin-bottom: 0.5rem;
-}
-.installed-versions .update-desc {
-  margin-bottom: 0.5rem;
 }
 .versions-list-container {
   margin: 0.5rem 0;
@@ -632,14 +650,6 @@ h3 {
   margin: 0;
 }
 
-.update-log {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #3f3f46;
-}
-.update-log h3 {
-  margin-bottom: 0.5rem;
-}
 .update-rollback-warning {
   margin-bottom: 0.5rem;
   padding: 0.5rem 0.6rem;
@@ -655,9 +665,6 @@ h3 {
 }
 .update-rollback-warning .update-warning-desc {
   color: #fde047;
-}
-.update-log .service-btn {
-  margin-bottom: 0.5rem;
 }
 .update-log-output {
   margin: 0;

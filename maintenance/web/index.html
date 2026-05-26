@@ -28,13 +28,24 @@
     </div>
     <aside class="update-section">
       <h2>업데이트</h2>
-      <p class="update-desc">배포 번들(<strong>tar.gz</strong>: <code>contrabass.manifest.yaml</code> + 에이전트 + config 등)을 한 파일로 업로드합니다. 로컬에서 패키지를 만들려면 저장소의 <code>maintenance/scripts/pack-agent-tarball.sh</code> 를 사용하세요. 스테이징 후 「업데이트 적용」으로 바이너리에 내장된 <code>update.sh</code>/<code>rollback.sh</code>가 <code>{deploy_base}/current/</code>에 기록되고 <code>systemd-run --unit=contrabass-mole-update</code> 로 적용됩니다.</p>
+      <p class="update-desc">배포 번들(<strong>tar.gz</strong>: <code>contrabass.manifest.yaml</code> + <code>contrabass-moleU-control</code> + <code>contrabass-moleU-compute</code> + config)을 업로드합니다. 「업데이트 적용」 시 선택한 바이너리가 <code>contrabass-moleU</code> 로 복사된 뒤 <code>update.sh</code>가 실행됩니다. 패키징: <code>maintenance/scripts/pack-agent-tarball.sh</code>.</p>
       <div class="update-form">
         <div class="update-fields">
           <div class="update-file-row">
             <label for="upload-bundle">배포 번들 (tar.gz)</label>
             <input type="file" id="upload-bundle" accept=".gz,.tgz,application/gzip,application/x-gzip">
           </div>
+          <fieldset class="agent-variant-fieldset" id="agent-variant-fieldset" hidden>
+            <legend>적용 시 <code>contrabass-moleU</code> 로 설치할 바이너리</legend>
+            <label class="agent-variant-option">
+              <input type="radio" name="agent-variant" value="compute" checked>
+              <span><code>contrabass-moleU-compute</code></span>
+            </label>
+            <label class="agent-variant-option">
+              <input type="radio" name="agent-variant" value="control">
+              <span><code>contrabass-moleU-control</code></span>
+            </label>
+          </fieldset>
         </div>
         <div class="update-actions">
           <button type="button" id="upload-btn" class="service-btn" disabled>업로드</button>

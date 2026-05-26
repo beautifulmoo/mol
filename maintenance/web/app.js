@@ -5,6 +5,17 @@
   }
   var API_BASE = _api;
 
+  function getSelectedAgentVariant() {
+    var sel = document.querySelector('input[name="agent-variant"]:checked');
+    return (sel && sel.value) ? sel.value : 'compute';
+  }
+
+  function getCardAgentVariant(cardEl) {
+    if (!cardEl) return 'compute';
+    var sel = cardEl.querySelector('.card-variant-selector input[type="radio"]:checked');
+    return (sel && sel.value) ? sel.value : 'compute';
+  }
+
   var remoteHealthState = {};
 
   function getRemoteHealthCfg() {
@@ -253,7 +264,12 @@
       '<div class="service-status-buttons">' +
       '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
       '<button type="button" class="service-btn service-restart-btn">서비스 재시작</button>' +
-      (isSelf ? '' : '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>') +
+      (isSelf ? '' :
+        '<span class="card-variant-selector" hidden>' +
+        '<label class="card-variant-option"><input type="radio" name="card-agent-variant-' + (host.host_ip || '') + '" value="compute" checked> <code>compute</code></label>' +
+        '<label class="card-variant-option"><input type="radio" name="card-agent-variant-' + (host.host_ip || '') + '" value="control"> <code>control</code></label>' +
+        '</span>' +
+        '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>') +
       '</div></div>' +
       '<pre class="service-status-output"></pre>' +
       '</div></div>';
@@ -332,7 +348,7 @@
     div.setAttribute('data-responded-from-ips', host.responded_from_ip || '');
     var hostDetailsDl = '<dl class="host-details">' +
       '<dt>CPU UUID</dt><dd>' + escapeHtml(host.cpu_uuid || '-') + '</dd>' +
-      '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + '</dd>' +
+      '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + (host.build_variant ? ' <span class="build-variant-badge">(' + escapeHtml(host.build_variant) + ')</span>' : '') + '</dd>' +
       '<dt>IP</dt><dd>' + escapeHtml(ipsDisplay) + '</dd>' +
       '<dt>응답한 IP</dt><dd>' + escapeHtml(respondedFromDisplay) + '</dd>' +
       '<dt>호스트명</dt><dd>' + escapeHtml(host.hostname || '-') + '</dd>' +
@@ -367,11 +383,9 @@
     if (pre) pre.textContent = output || '';
     var isKnownState = summaryText === '[정상 서비스 상태]' || summaryText === '[서비스 중지 상태]';
     if (isKnownState) {
-      var startBtn = cardEl.querySelector('.service-start, .host-control-start');
-      var stopBtn = cardEl.querySelector('.service-stop');
+      var startBtn = cardEl.querySelector('.service-start:not(.apply-update-host)');
       var active = parseActiveFromOutput(output);
       if (startBtn) startBtn.disabled = active;
-      if (stopBtn) stopBtn.disabled = !active;
       var row = cardEl.closest && cardEl.closest('.host-row');
       if (row) updateHostRowDot(row, active);
     }
@@ -509,10 +523,8 @@
           updateStatusUI(cardEl, null, '요청 실패');
         });
     }
-    var startBtn = cardEl.querySelector('.service-start, .host-control-start');
-    var stopBtn = cardEl.querySelector('.service-stop');
+    var startBtn = cardEl.querySelector('.service-start:not(.apply-update-host)');
     if (startBtn) startBtn.addEventListener('click', function () { doControl('start'); });
-    if (stopBtn) stopBtn.addEventListener('click', function () { doControl('stop'); });
 
     var applyHostBtn = cardEl.querySelector('.apply-update-host');
     if (applyHostBtn) {
@@ -558,7 +570,11 @@
           fetch(API_BASE + '/apply-update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ version: version, ip: ip })
+            body: JSON.stringify({
+              version: version,
+              ip: ip,
+              agent_variant: getCardAgentVariant(cardEl)
+            })
           })
             .then(function (res) { return res.json(); })
             .then(function (body) {
@@ -592,6 +608,7 @@
         var formData = new FormData();
         formData.append('ip', ip);
         formData.append('bundle', bundleInput.files[0]);
+        formData.append('agent_variant', getCardAgentVariant(cardEl));
         showCardUpdating(cardEl, true);
         fetch(API_BASE + '/apply-update', {
           method: 'POST',
@@ -771,6 +788,7 @@
   function updateAllHostApplyButtons() {
     var localApplicable = getApplicableVersion();
     var btns = document.querySelectorAll('.apply-update-host');
+    var showVariant = lastUpdateStatus.staging_dual_agents || hasUploadableSelection();
     for (var i = 0; i < btns.length; i++) {
       var btn = btns[i];
       var card = btn.closest && btn.closest('.host-card');
@@ -782,6 +800,7 @@
         btn.title = localApplicable
           ? (localApplicable + ' 번들로 원격 전송 가능')
           : 'tar.gz 번들로 원격 적용';
+        toggleCardVariantSelector(card, showVariant && !btn.disabled);
         continue;
       }
 
@@ -791,6 +810,7 @@
       if (!st || st.pending) {
         btn.disabled = true;
         btn.title = '로컬 스테이징과 원격 버전 비교 중…';
+        toggleCardVariantSelector(card, false);
         continue;
       }
 
@@ -801,6 +821,7 @@
         applicableVersion = st.apply_version || '';
         btn.disabled = !canApply;
         btn.title = getApplyButtonTitle(hostVersion, canApply, applicableVersion || localApplicable);
+        toggleCardVariantSelector(card, showVariant && !btn.disabled);
         continue;
       }
 
@@ -809,7 +830,14 @@
       btn.disabled = !canApply;
       btn.title = (st && st.err ? '원격 상태 확인 실패 — 표시는 추정입니다. ' : '') +
         getApplyButtonTitle(hostVersion, canApply, applicableVersion);
+      toggleCardVariantSelector(card, showVariant && !btn.disabled);
     }
+  }
+
+  function toggleCardVariantSelector(card, show) {
+    if (!card) return;
+    var sel = card.querySelector('.card-variant-selector');
+    if (sel) sel.hidden = !show;
   }
 
   function doRemoveUpload() {
@@ -921,7 +949,7 @@
     var dds = cardEl.querySelectorAll('.host-details > dd');
     if (dds.length >= 8) {
       dds[0].textContent = host.cpu_uuid || '-';
-      dds[1].textContent = host.version || '-';
+      dds[1].innerHTML = escapeHtml(host.version || '-') + (host.build_variant ? ' <span class="build-variant-badge">(' + escapeHtml(host.build_variant) + ')</span>' : '');
       dds[2].textContent = ipDisplay;
       dds[3].textContent = respondedFromDisplay;
       dds[4].textContent = host.hostname || '-';
@@ -1187,8 +1215,13 @@
           can_apply: !!d.can_apply,
           apply_version: d.apply_version || '',
           staging_versions: d.staging_versions || [],
-          remove_version: d.remove_version || ''
+          remove_version: d.remove_version || '',
+          staging_dual_agents: !!d.staging_dual_agents
         };
+        var variantFs = el('agent-variant-fieldset');
+        if (variantFs) {
+          variantFs.hidden = !lastUpdateStatus.staging_dual_agents;
+        }
         var applyBtn = el('apply-update-btn');
         var removeBtn = el('remove-upload-btn');
         var stagingDisplay = el('staging-version-display');
@@ -1268,7 +1301,10 @@
     fetch(API_BASE + '/apply-update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: version })
+      body: JSON.stringify({
+        version: version,
+        agent_variant: getSelectedAgentVariant()
+      })
     })
       .then(function (res) { return res.json(); })
       .then(function (body) {

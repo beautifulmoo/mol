@@ -28,7 +28,7 @@
 | **`maintenance/updatescripts/`** | 루트 `update.sh`·`rollback.sh` 복사본 + `embed.go`(`//go:embed`) — 바이너리 내장 스크립트 |
 | **`maintenance/scripts/`** | `build-version.sh`(Makefile `VERSION_KEY`), `pack-agent-tarball.sh`(배포 tar.gz 생성) |
 | **`maintenance/packaging/`** | `contrabass.manifest.yaml.template` 등 번들 manifest 참고 |
-| **`maintenance/server`**, **`discovery`**, **`web/`** 등 | 기존과 동일 — HTTP·Discovery·정적 UI |
+| **`maintenance/server`**, **`discovery`**, **`web/`** 등 | HTTP·Discovery·정적 UI |
 
 **`internal` 디렉터리 이름을 쓰지 않는 이유**: Go는 **`…/internal/…`** 패키지를 해당 `internal`의 **부모 디렉터리 이하**에서만 import할 수 있다. 루트 **`main.go`** 가 설정 패키지를 import해야 하므로, 저장소 루트에 `internal/config`를 두면 **가시성 규칙 위반**이 된다. 따라서 **`maintenance/agentcfg`**·**`maintenance/updatescripts`** 로 경로를 통일한다.
 
@@ -202,7 +202,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** — 다른 CLI와 동일하게 `agent` 접두.  
   - **전환용(루트)**: **`contrabass-moleU --version`** / **`-version`** — 구버전 업데이트·외부 스크립트가 루트 플래그만 호출하는 경우를 위해 **`agent` 없이** 한 줄 출력을 허용한다. 향후 제거·비권장으로 좁힐 수 있다.  
   - 출력 형식은 동일: **`<BinaryName> <main.VersionKey>`** 한 줄.
-- **`--host-info`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`** 한 인자. **`maintenance/hostinfoapi`** 의 `SelfDiscoveryResponse`·`RemoteHostInfo`·(원격 시) `StartEphemeralDiscovery` 로 **HTTP `GET …/host-info` 핸들러와 동일한 규칙**을 따른다 — **`self`**는 로컬 hostinfo·빌드 버전 키·설정 메타로 `/self`와 같은 페이로드; **원격 IP**는 로컬에 UDP 리스너를 잠시 올린 뒤 **유니캐스트 Discovery**만 수행. **CLI는 로컬 maintenance HTTP를 띄우지 않아도 동작**한다(같은 호스트에서 에이전트가 이미 `DiscoveryUDPPort`를 쓰 중이면 UDP 바인드가 실패할 수 있음). 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨로 표 형태로 출력한다. **`-h` 도움말 순서**: `-h` 다음에 `-version` 다음 **`--host-info`** 가 오고 그 다음 **`--nic-brd`**(그 외 옵션은 기존과 동일).
+- **`--host-info`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`** 한 인자. **`maintenance/hostinfoapi`** 의 `SelfDiscoveryResponse`·`RemoteHostInfo`·(원격 시) `StartEphemeralDiscovery` 로 **HTTP `GET …/host-info` 핸들러와 동일한 규칙**을 따른다 — **`self`**는 로컬 hostinfo·빌드 버전 키·설정 메타로 `/self`와 같은 페이로드; **원격 IP**는 로컬에 UDP 리스너를 잠시 올린 뒤 **유니캐스트 Discovery**만 수행. **CLI는 로컬 maintenance HTTP를 띄우지 않아도 동작**한다(같은 호스트에서 에이전트가 이미 `DiscoveryUDPPort`를 쓰 중이면 UDP 바인드가 실패할 수 있음). 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨로 표 형태로 출력한다. **`-h` 도움말 순서**: `-h` 다음에 `-version` 다음 **`--host-info`** 가 오고 그 다음 **`--nic-brd`**(이하 동일 순서).
 - **`--nic-brd`**: §3.1.1과 동일 규칙으로 IPv4 브로드캐스트(brd)를 `NIC이름 : brd주소` 형식으로 출력(확인용) 후 종료.
 - **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만] version=<에이전트 버전 키>` 형식으로, **`responded_from_ip`**만 취합하고 **버전**은 DISCOVERY_RESPONSE JSON의 **`version`** 필드(§3.4·§9)를 표시한다(없으면 `version=?`). Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
 - **`--apply-update`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**, **`<bundle.tar.gz>`** 두 인자가 필요하다. **로컬 유지보수 HTTP는 필요 없다.** (1) 번들을 임시 디렉터리에 풀어 **서버와 동일한 검증**(manifest·해시·ELF·바이너리 버전 키, §5.5.3) 후 **번들 버전 키**를 얻는다. (2) **현재 버전**: **self**는 **`DeployBase`의 `current` 심볼릭 → `versions/` 대상 버전 키**로 비교(CLI 바이너리 ldflags는 심볼릭을 읽을 수 없을 때만 보조); **원격 IP**는 `http://<ip>:Server.HTTPPort` + `APIPrefix` + `/self` (적용 전 **TCP** 연결 확인). (3) **`StagingUpdateAvailable`** 가 참일 때만 진행. (4) **self**: 스테이징 후 로컬 적용(`ApplyUpdateSelfFromBundleExtract`·`RunSwitchCurrentWithRoots`, 웹 `POST /upload`+로컬 적용과 동등; 배포 경로 쓰기·`systemd-run`은 보통 **sudo**). (5) **원격**: `http://<ip>:Server.HTTPPort` + `APIPrefix`에 **`POST …/apply-update` multipart**(`ip`, `bundle`) — 요청은 **원격 Gin**에서 처리되어 원격 `POST …/upload` 후 원격 apply-update(self)(§5.5.3과 동일). **CLI 도움말·진단 메시지**는 **영문** 정책을 따른다.
@@ -376,7 +376,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 3. **v2**: `agent_control.path`·`agent_compute.path`·`config.path` 파일 존재 및 **SHA-256** 각각 일치. **v1**: `agent.path`·`config.path`.
 4. config YAML → **`agentcfg.LoadFromBytes`**.
 5. agent(v2는 두 바이너리 모두) → **ELF** 확인 후 **`--version` → `agent --version`** 폴백으로 **버전 키** 추출(§12). `(control)` / `(compute)` 등 variant 접미사는 검증 시 제거한다.
-6. 성공 시 스테이징 디렉터리명 = **버전 키**; v2는 control·compute 바이너리를 각각 저장하고, **canonical `appmeta.BinaryName` 복사는 적용 시점에 `MaterializeCanonicalAgent`가 수행**. v1은 기존과 같이 `BinaryName`으로 복사.
+6. 성공 시 스테이징 디렉터리명 = **버전 키**; v2는 control·compute 바이너리를 각각 저장하고, **canonical `appmeta.BinaryName` 복사는 적용 시점에 `MaterializeCanonicalAgent`가 수행**. v1은 단일 바이너리를 `BinaryName`으로 복사.
 
 ##### 번들 이용 경로
 
@@ -410,7 +410,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 - **배포 베이스** `DeployBase`(기본 `/var/lib/contrabass/mole`) 아래에는 **스테이징** `staging/`·**버전별 실행 트리** `versions/`·**현재/이전 포인터** `current`·`previous`·**기록** `update_history.log` 가 둔다. **업데이트/롤백 셸 스크립트는 배포 루트에 상주시키지 않는다** — 내용은 **에이전트 단일 바이너리(contrabass-moleU)에 내장**되며, 적용 시점에만 `current`가 가리키는 버전 디렉터리 아래에 풀어 쓴다(아래 5.5.3).
 - **버전 디렉터리 이름(버전 키)** 은 빌드·바이너리가 내보내는 문자열 전체(예: git describe **`0.4.4-4-gc44d420`**, 또는 레거시 **`0.4.4-5`** 형태)가 스테이징·`versions/` 아래 디렉터리명이 된다. 비교·정렬 시 describe 접미사 **`-g<해시>`** 는 제거한 뒤 시맨틱·패치만 사용한다. **실행 중인 에이전트**의 키는 빌드 시 **`main.VersionKey`** 로 주입되며, **agent.local.yml에는 버전을 두지 않는다**. 시맨틱 부분은 점으로 구분된 숫자 세그먼트 개수에 고정 제한이 없다(예: `1.2.3.4-0`).  
-  - **비교 규칙**: 동일 **시맨틱**(접두부)인 경우 **패치 숫자**만 정수로 비교한다(구현에서는 마지막 `-`(또는 레거시 `_`) 뒤를 정수로 파싱). 시맨틱이 다르면 기존과 같이 **서로 다른 릴리스**로 보고, 스테이징에 다른 버전 키가 있으면 적용 가능으로 본다(다운그레이드 포함).  
+  - **비교 규칙**: 동일 **시맨틱**(접두부)인 경우 **패치 숫자**만 정수로 비교한다(구현에서는 마지막 `-`(또는 레거시 `_`) 뒤를 정수로 파싱). 시맨틱이 다르면 **서로 다른 릴리스**로 보고, 스테이징에 다른 버전 키가 있으면 적용 가능으로 본다(다운그레이드 포함).  
   - **레거시**: 과거에 `versions/0.4.0` 처럼 `-패치` 없이 둔 디렉터리는 **패치 0**으로 해석하여 비교한다. 과거 `_숫자` 형식 디렉터리도 읽을 수 있다.
 - **노출 버전 문자열**: 로그·Discovery·`GET /version`·DISCOVERY_RESPONSE의 `version` 등에 쓰이는 문자열은 위 **버전 키**와 동일하다.
 
@@ -490,8 +490,8 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **`can_apply` / `apply_version`**: 스테이징에 올라온 버전 키 중, **비교 기준 버전**(로컬이면 `current_version`, 원격이면 `remote_current_version`) 대비 **업데이트로 적용할 가치가 있는지** 판단한다 — 규칙은 동일(시맨틱·패치 비교, `StagingUpdateAvailable`). 원격 모드에서는 “**이 서버 스테이징을 그 원격에 적용할 수 있는지**”를 나타낸다.  
   - `remove_version`: 스테이징 정렬 후 **가장 오래된(맨 끝)** 항목 등 UI 삭제용으로 쓸 수 있다.  
   - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
-- **업데이트 기록** `GET .../update-log` — `update_history.log` 최근 10줄, `recent_rollback`, 진행 중이면 롤백 플래그 완화 등 기존과 동일.
-- **current-cfg** `GET/POST .../current-cfg` — 기존과 동일.
+- **업데이트 기록** `GET .../update-log` — `update_history.log` 최근 10줄, `recent_rollback`, 진행 중이면 롤백 플래그 완화.
+- **current-cfg** `GET/POST .../current-cfg` — `current` 심볼릭 대상의 config YAML 조회·저장.
 - **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(버전 키는 describe 전체일 수 있음, 예: `contrabass-moleU 0.4.4-4-gc44d420`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
 - **에이전트 HTTP 헬스(JSON)** `GET {APIPrefix}/health` — JSON `success`, `data`에 `{ "ok": true }` 수준의 최소 응답. **원격 가용성 모니터링** 시 로컬 에이전트가 같은 경로로 노출하며(Gin이 `Server.HTTPPort`로 프록시), 웹 UI의 원격 헬스 확인은 **이 경로**를 대상으로 한다(UDP 미사용).
 - **원격 헬스 프록시** `GET {APIPrefix}/remote-health-check?ip=<원격 IP>` — 요청을 받은 에이전트가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`, §7.1)을 수행하고 성공·실패를 JSON으로 반환한다.
@@ -679,7 +679,7 @@ Maintenance:
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, `DoDiscoveryUnicast`; 응답은 **`request_id`로 요청과만 매칭**한다. **멀티홈 호스트**에서는 유니캐스트 목적지 IP와 DISCOVERY_RESPONSE의 `host_ip`(또는 UDP 출발지)가 다를 수 있으므로, **`host_ip` 문자열이 목적지와 일치하지 않아도** 동일 응답으로 처리한다. 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
 - **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
-- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리에 대해 §5.5.3과 동일한 **`--version`→`agent --version`** 폴백으로 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + 버전 한 줄, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 의 프록시 동작은 기존과 같다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
+- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리에 대해 §5.5.3과 동일한 **`--version`→`agent --version`** 폴백으로 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + 버전 한 줄, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 는 원격 IP 지정 시 해당 호스트로 프록시한다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
 - **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
 

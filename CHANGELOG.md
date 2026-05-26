@@ -13,8 +13,7 @@
 - **pack-agent-tarball.sh**: manifest v2 기반 번들 생성. control·compute·config 세 파일의 SHA-256을 각각 계산.
 - **버전 키 검증**: `--version` 출력의 `(control)` / `(compute)` 접미사를 검증 시 제거.
 - **UI Build Variant 표시**: 로컬·리모트 호스트 카드에 현재 실행 중인 variant를 badge로 표시.
-- **신규 파일**: `maintenance/appmeta/agentvariant.go`, `maintenance/versionsapi/staging.go`, `maintenance/server/agentvariant.go`.
-- **데드 코드 정리**: `writeToStaging`(미사용), `uploadBinaryField`(레거시 상수), `firstAgentBinaryPath`(인라인 대체) 제거. `resolveVersionDir`에서 중복 체크(`dirHasAgentBinary || DirHasStagedAgents` → `DirHasStagedAgents`만) 통합.
+- **관련 파일**: `maintenance/appmeta/agentvariant.go`, `maintenance/versionsapi/staging.go`, `maintenance/server/agentvariant.go`.
 
 ## 레이아웃
 
@@ -79,7 +78,7 @@
 ## 명명·업데이트 유닛 (최근)
 
 - 실행 파일명 **`contrabass-moleU`** (`maintenance/appmeta.BinaryName`), 상시 유닛 **`contrabass-mole.service`**, `systemd-run` 임시 업데이트 유닛 **`contrabass-mole-update.service`** (`appmeta.UpdateTransientUnit*`).
-- 업로드 multipart 필드 **`agent`** / `config`; 레거시 디스크상 `mol` 바이너리명 제거.
+- 업로드 multipart 필드는 **`bundle`**(tar.gz 아카이브). 디스크상 바이너리명은 **`contrabass-moleU`**.
 - 설정: **`MOL_CONFIG` 미사용** — 서비스는 **`-cfg`**(첫 인자)로 경로 지정; `config.Load("")` 시 현재 디렉터리 `agent.local.yml`.
 - Discovery 기본 서비스명 **`Mole-Discovery`** (`DefaultDiscoveryServiceName`).
 - PRD **§12** 표에 요약.

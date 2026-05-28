@@ -28,6 +28,7 @@ go build -o build/image/contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc
 ```
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
+- **`make build`** 는 `build/image/contrabass-moleU-control`·`contrabass-moleU-compute` 두 바이너리를 만들고, **`contrabass-moleU-compute`** 를 저장소 루트 **`./contrabass-moleU`** 로 복사한다.
 - **버전 키**는 `make`/`make build` 시 `maintenance/scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
 - **다른 Go 프로젝트에 붙일 때**: 에이전트 핵심은 **`contrabass-agent/maintenance`** import 하나로 `Run`·`IsServiceModeRootCfg`·`IsServiceModeAgentCfg`·`IsAgentSubcommand`·`GinProxyConfig`·`RegisterMaintenanceProxy` 등에 접근하면 된다(바깥 Gin→maintenance HTTP 프록시는 내부 **`maintenance/ginproxy`**). 이 저장소의 **`main.go`** 는 **`<bin> -cfg …`일 때만** `MyGIN()` + `router.Run` + `go os.Exit(Run(…))` 패턴을 쓰고, **시그널은 `maintenance` 서비스 루프만** 처리한다. 호스트 Gin에 JSON API가 있으면 **전역 `application/json` 미들웨어 대신** 라우트 그룹만 지정한다(루트 `routerGroupJSON` 참고).
 
@@ -59,8 +60,8 @@ make   # 또는 make build
 
 **사용 방법**
 
-- **update.sh**: 웹 UI에서 “업데이트 적용” 시 에이전트가 `systemd-run ... {DeployBase}/update.sh {버전}` (contrabass-mole.service는 root 실행, sudo 없음) 형태로 실행한다. 인자로 **버전 하나**를 받으며, 실행 시점에 `{DeployBase}/versions/{버전}/contrabass-moleU` 가 있어야 한다.  
-  업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다(실행 중인 경로를 덮어쓰지 않아 text file busy 를 피함). 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않고 남겨 두어 같은 버전으로 원격 업데이트를 할 수 있게 하며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
+- **update.sh**: 웹 UI에서 “업데이트 적용” 시 에이전트가 내장 스크립트를 `{DeployBase}/current/`(실제로는 `versions/<현재>/`)에 풀고 `systemd-run`으로 실행한다(PRD §5.5.2). 인자로 **버전 하나**를 받으며, 실행 시점에 `{DeployBase}/versions/{버전}/contrabass-moleU` 가 있어야 한다. 기동 후 **`systemctl is-active`·`GET /version`을 재시도**하며, 실패 시 `rollback.sh`(`invoke_rollback`, 로그에 성공/실패 구분). 조정: `HEALTH_INITIAL_SLEEP`, `HEALTH_RETRY_INTERVAL`, `HEALTH_MAX_ATTEMPTS`, `SERVICE_ACTIVE_MAX_ATTEMPTS`, `SERVICE_ACTIVE_INTERVAL`.  
+  업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다. 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않으며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
   - 예: `/var/lib/contrabass/mole/rollback.sh` (root 또는 동일 권한으로 실행)
 - `{DeployBase}/previous` 심볼릭 링크가 있어야 하며(최소 한 번 업데이트가 된 뒤에만 유효), 없으면 “no previous version”으로 종료된다.

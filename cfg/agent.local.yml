@@ -29,7 +29,7 @@ Maintenance:
   # SSHPort: 22   # SSH port for remote service start/stop (default 22)
   # SSHUser: "root"   # SSH user for remote start/stop (default "root")
   # MaxUploadBytes: "64 << 20"   # optional; bytes as integer or string (decimal or "M << N", e.g. "128 << 20"). Omit = DefaultMaxUploadBytes; server clamps 1 MiB–10 GiB.
-  AllowSameVersionUpdate: true   # true: 같은 버전으로도 업데이트 허용 (테스트용). false(기본): 상위 버전만 적용.
+  AllowSameVersionUpdate: false   # true: 같은 버전으로도 업데이트 허용 (테스트용). false(기본): 상위 버전만 적용.
   # Remote health: HTTP GET …/health on remote Server.HTTPPort (웹 UI가 열려 있을 때만 폴링). 생략 시 바이너리 기본값.
   RemoteHealth:
     IntervalSeconds: 10      # 기본 간격(초); 매 주기마다 JitterSeconds 이내 랜덤 지연 추가

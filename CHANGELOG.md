@@ -1,5 +1,12 @@
 # 변경 이력 (mol)
 
+## Web UI · update.sh 헬스체크
+
+- **원격 「업데이트 적용」**: `GET …/update-status?ip=`의 `can_apply`가 확정되면 업로드 파일 선택만으로 버튼을 켜지 않음. 적용 성공·실패·host-info 폴링 후 해당 IP에 대해 `update-status`를 재조회해 `AllowSameVersionUpdate: false`일 때 원격이 스테이징과 같으면 적용 버튼·variant 라디오를 비활성·숨김.
+- **Agent variant (웹)**: 로컬·리모트 라디오 기본값 = 설치된 `build_variant`(`data-build-variant`). 리모트 variant는 적용 버튼이 활성일 때만 표시.
+- **update.sh 헬스**: `systemctl is-active`·`GET /version` 재시도(환경 변수로 조정 가능). `invoke_rollback`으로 롤백 성공/실패 로그 구분. 루트·`maintenance/updatescripts/` 동기화.
+- **Makefile**: `make build` 후 `contrabass-moleU-compute` → `./contrabass-moleU` 복사.
+
 ## Manifest v2 · Agent Variant (dual-binary)
 
 - **Manifest v2**: 배포 번들이 `manifestVersion: 2`를 지원한다. `agent_control`·`agent_compute` 두 바이너리를 각각의 `path`·`sha256`으로 선언하여 번들에 포함. 레거시 `manifestVersion: 1`(단일 `agent`)도 계속 지원.

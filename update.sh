@@ -9,6 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
 HISTORY_LOG="$BASE/update_history.log"
 
+# 헬스체크: 느린 기동(의존 라이브러리 로드·병합 바이너리)에서 3초 단일 curl 로 오탐 실패하지 않도록 재시도.
+HEALTH_INITIAL_SLEEP="${HEALTH_INITIAL_SLEEP:-2}"
+HEALTH_RETRY_INTERVAL="${HEALTH_RETRY_INTERVAL:-3}"
+HEALTH_MAX_ATTEMPTS="${HEALTH_MAX_ATTEMPTS:-20}"
+SERVICE_ACTIVE_MAX_ATTEMPTS="${SERVICE_ACTIVE_MAX_ATTEMPTS:-15}"
+SERVICE_ACTIVE_INTERVAL="${SERVICE_ACTIVE_INTERVAL:-2}"
+
 cleanup_scripts() {
 	rm -f "$SCRIPT_DIR/update.sh" "$SCRIPT_DIR/rollback.sh"
 }
@@ -23,6 +30,57 @@ prepend_history() {
     else
         echo "$line" > "$HISTORY_LOG"
     fi
+}
+
+# 업데이트 실패 시 rollback.sh 실행; 종료 코드에 따라 로그를 구분(성공 시에만 completed).
+invoke_rollback() {
+    local reason="$1"
+    prepend_history "update $NEW_VERSION failed ($reason), invoking rollback"
+    echo "update failed ($reason), invoking rollback.sh" >&2
+    set +e
+    "$SCRIPT_DIR/rollback.sh"
+    local rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+        prepend_history "rollback completed after update failure"
+    else
+        prepend_history "rollback failed (exit $rc) after update failure; check current symlink and journal"
+    fi
+    cleanup_scripts
+    exit 1
+}
+
+wait_for_service_active() {
+    local attempt=1
+    while [ "$attempt" -le "$SERVICE_ACTIVE_MAX_ATTEMPTS" ]; do
+        if systemctl is-active --quiet "$SERVICE"; then
+            return 0
+        fi
+        sleep "$SERVICE_ACTIVE_INTERVAL"
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
+# GET /version (MaintenancePort). 성공 시 HEALTH_RAW 설정. 0=ok, 1=not ready, 2=service down.
+wait_for_version_http() {
+    local attempt=1
+    local url="http://127.0.0.1:${HTTP_PORT}/version"
+    HEALTH_RAW=""
+    sleep "$HEALTH_INITIAL_SLEEP"
+    while [ "$attempt" -le "$HEALTH_MAX_ATTEMPTS" ]; do
+        if ! systemctl is-active --quiet "$SERVICE"; then
+            HEALTH_RAW=""
+            return 2
+        fi
+        if HEALTH_RAW=$(curl -sSf --connect-timeout 3 --max-time 8 "$url" 2>/dev/null); then
+            return 0
+        fi
+        HEALTH_RAW=""
+        sleep "$HEALTH_RETRY_INTERVAL"
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 VERSIONS="$BASE/versions"
@@ -81,33 +139,27 @@ ln -sfn "versions/$NEW_VERSION" "$BASE/current"
 # 5. 서비스 시작
 systemctl start $SERVICE
 
-# 6. 헬스 체크 (Restart= 시 재시작 루프에서도 is-active는 성공하므로, 실제 HTTP 응답으로 검사)
-sleep 3
-if ! systemctl is-active --quiet $SERVICE; then
-    prepend_history "update $NEW_VERSION failed, rollback"
-    echo "start failed, rollback"
-    "$SCRIPT_DIR/rollback.sh"
-    prepend_history "rollback completed"
-    exit 1
+# 6. 헬스 체크 (Restart= 시 재시작 루프에서도 is-active는 성공할 수 있으므로, 기동 대기 후 HTTP /version 재시도)
+if ! wait_for_service_active; then
+    invoke_rollback "service did not become active within $((SERVICE_ACTIVE_MAX_ATTEMPTS * SERVICE_ACTIVE_INTERVAL))s"
 fi
-# GET /version 본문은 정확히 "<BinaryName> <버전 키>" 한 줄(예: contrabass-moleU 0.4.4-11). HTTP 200만으로는 부족함.
-# curl 은 파이프 없이 단독 실행해 -f 실패(404 등)가 반드시 감지되게 한다.
+
 HEALTH_RAW=""
-if ! HEALTH_RAW=$(curl -sSf --connect-timeout 5 --max-time 10 "http://127.0.0.1:${HTTP_PORT}/version" 2>/dev/null); then
-    prepend_history "update $NEW_VERSION failed (health check: curl /version), rollback"
-    echo "health check failed (curl http://127.0.0.1:${HTTP_PORT}/version), rollback"
-    "$SCRIPT_DIR/rollback.sh"
-    prepend_history "rollback completed"
-    exit 1
+wait_rc=0
+wait_for_version_http || wait_rc=$?
+if [ "$wait_rc" -eq 2 ]; then
+    invoke_rollback "service stopped during health check"
 fi
+if [ "$wait_rc" -ne 0 ]; then
+    max_wait=$((HEALTH_INITIAL_SLEEP + HEALTH_MAX_ATTEMPTS * HEALTH_RETRY_INTERVAL))
+    invoke_rollback "health check: GET /version not ready after ~${max_wait}s (port ${HTTP_PORT})"
+fi
+
+# GET /version 본문은 정확히 "<BinaryName> <버전 키>" 한 줄(예: contrabass-moleU 0.4.4-11). HTTP 200만으로는 부족함.
 HEALTH_LINE=$(printf '%s' "$HEALTH_RAW" | tr -d '\r' | head -n 1 | sed 's/[[:space:]]*$//')
 EXPECTED_LINE="$(basename "$NEW_BIN") ${NEW_VERSION}"
 if [ "$HEALTH_LINE" != "$EXPECTED_LINE" ]; then
-    prepend_history "update $NEW_VERSION failed (health check: bad /version body), rollback"
-    echo "health check failed: expected '${EXPECTED_LINE}', got '${HEALTH_LINE}' (MaintenancePort=${HTTP_PORT})"
-    "$SCRIPT_DIR/rollback.sh"
-    prepend_history "rollback completed"
-    exit 1
+    invoke_rollback "health check: bad /version body (expected '${EXPECTED_LINE}', got '${HEALTH_LINE}')"
 fi
 
 prepend_history "update $NEW_VERSION success"

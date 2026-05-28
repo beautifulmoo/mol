@@ -5,6 +5,41 @@
   }
   var API_BASE = _api;
 
+  /** Prefer installed build variant (control|compute); unknown → compute. */
+  function defaultAgentVariantFromBuild(buildVariant) {
+    var v = String(buildVariant || '').toLowerCase().trim();
+    if (v === 'control' || v === 'compute') return v;
+    return 'compute';
+  }
+
+  function setVariantRadioSelection(scopeEl, variant) {
+    if (!scopeEl) return;
+    var v = defaultAgentVariantFromBuild(variant);
+    var radios = scopeEl.querySelectorAll('input[type="radio"][value="compute"], input[type="radio"][value="control"]');
+    for (var i = 0; i < radios.length; i++) {
+      radios[i].checked = radios[i].value === v;
+    }
+  }
+
+  function cardVariantRadiosHtml(hostIp, preferredVariant) {
+    var pref = defaultAgentVariantFromBuild(preferredVariant);
+    var name = 'card-agent-variant-' + (hostIp || '');
+    return '<span class="card-variant-selector" hidden>' +
+      '<label class="card-variant-option"><input type="radio" name="' + name + '" value="compute"' +
+      (pref === 'compute' ? ' checked' : '') + '> <code>compute</code></label>' +
+      '<label class="card-variant-option"><input type="radio" name="' + name + '" value="control"' +
+      (pref === 'control' ? ' checked' : '') + '> <code>control</code></label>' +
+      '</span>';
+  }
+
+  function applyLocalVariantDefault() {
+    var fs = el('agent-variant-fieldset');
+    if (!fs || fs.hidden) return;
+    var selfCard = document.querySelector('#self-info .host-card.self-card') ||
+      document.querySelector('.host-card.self-card');
+    setVariantRadioSelection(fs, selfCard ? selfCard.getAttribute('data-build-variant') : '');
+  }
+
   function getSelectedAgentVariant() {
     var sel = document.querySelector('input[name="agent-variant"]:checked');
     return (sel && sel.value) ? sel.value : 'compute';
@@ -13,7 +48,8 @@
   function getCardAgentVariant(cardEl) {
     if (!cardEl) return 'compute';
     var sel = cardEl.querySelector('.card-variant-selector input[type="radio"]:checked');
-    return (sel && sel.value) ? sel.value : 'compute';
+    if (sel && sel.value) return sel.value;
+    return defaultAgentVariantFromBuild(cardEl.getAttribute('data-build-variant'));
   }
 
   var remoteHealthState = {};
@@ -254,6 +290,7 @@
       div.setAttribute('data-host-ip', host.host_ip);
     }
     div.setAttribute('data-host-version', host.version || '');
+    div.setAttribute('data-build-variant', defaultAgentVariantFromBuild(host.build_variant));
     var statusRowHtml = '<div class="self-status-row">' +
       '<div class="service-status-block">' +
       '<div class="service-status-header-row">' +
@@ -265,10 +302,7 @@
       '<button type="button" class="service-btn status-refresh-btn">상태 새로고침</button>' +
       '<button type="button" class="service-btn service-restart-btn">서비스 재시작</button>' +
       (isSelf ? '' :
-        '<span class="card-variant-selector" hidden>' +
-        '<label class="card-variant-option"><input type="radio" name="card-agent-variant-' + (host.host_ip || '') + '" value="compute" checked> <code>compute</code></label>' +
-        '<label class="card-variant-option"><input type="radio" name="card-agent-variant-' + (host.host_ip || '') + '" value="control"> <code>control</code></label>' +
-        '</span>' +
+        cardVariantRadiosHtml(host.host_ip || '', host.build_variant) +
         '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>') +
       '</div></div>' +
       '<pre class="service-status-output"></pre>' +
@@ -532,37 +566,30 @@
         var card = applyHostBtn.closest && applyHostBtn.closest('.host-card');
         var hostVersion = card ? (card.getAttribute('data-host-version') || '') : '';
         var stPre = remoteUpdateStatusByIP[ip];
-        var canProceed = hasUploadableSelection()
-          ? true
-          : (stPre && stPre.ok
-            ? !!(stPre.can_apply && stPre.apply_version)
-            : canApplyToThisRemoteHostLegacy(hostVersion));
+        var canProceed;
+        if (stPre && stPre.ok) {
+          canProceed = !!(stPre.can_apply && stPre.apply_version);
+        } else if (hasUploadableSelection()) {
+          canProceed = true;
+        } else {
+          canProceed = canApplyToThisRemoteHostLegacy(hostVersion);
+        }
         if (!canProceed) {
           if (summary) summary.textContent = '이 호스트에 적용할 스테이징 버전이 없거나 이미 동일 버전입니다.';
           return;
         }
         applyHostBtn.disabled = true;
         if (summary) summary.textContent = '업데이트 적용 중…';
+        if (card) toggleCardVariantSelector(card, false);
 
         function recheckApplyButton() {
           var c = applyHostBtn.closest && applyHostBtn.closest('.host-card');
-          if (!c) return;
-          var hv = c.getAttribute('data-host-version') || '';
-          var hip = c.getAttribute('data-host-ip') || '';
-          var st = remoteUpdateStatusByIP[hip];
-          if (hasUploadableSelection()) {
-            applyHostBtn.disabled = false;
-            return;
+          var hip = c ? (c.getAttribute('data-host-ip') || '') : '';
+          if (hip) {
+            fetchUpdateStatusForRemote(hip);
+          } else {
+            updateAllHostApplyButtons();
           }
-          if (st && st.ok) {
-            applyHostBtn.disabled = !(st.can_apply && st.apply_version);
-            return;
-          }
-          if (!st || st.pending) {
-            applyHostBtn.disabled = true;
-            return;
-          }
-          applyHostBtn.disabled = !canApplyToThisRemoteHostLegacy(hv);
         }
 
         function doApplyToHost(version) {
@@ -674,6 +701,7 @@
       fetchCurrentConfigForCard(cardEl, ip);
       fetchVersionsListForCard(cardEl, ip);
       fetchServiceStatus(cardEl, ip);
+      fetchUpdateStatusForRemote(ip);
     } else {
       fetchUpdateLog();
       fetchCurrentConfig();
@@ -717,13 +745,13 @@
     if (appliedVersion && cardEl) {
       cardEl.setAttribute('data-host-version', appliedVersion);
       var dds = cardEl.querySelectorAll('.host-details > dd');
-      if (dds && dds.length >= 8) dds[1].textContent = appliedVersion;
-      updateAllHostApplyButtons();
+      if (dds && dds.length >= 8) {
+        dds[1].textContent = appliedVersion;
+      }
     }
     var url = API_BASE + '/host-info?ip=' + encodeURIComponent(ip);
     pollUntilHostJsonOk(url, 8, 5000, 2000, function (body) {
       updateHostCardDetails(cardEl, body.data);
-      updateAllHostApplyButtons();
       refreshAllPanelsAfterUpdate(cardEl, ip);
       if (summary) summary.textContent = successMessage || '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
       showCardUpdating(cardEl, false);
@@ -788,22 +816,17 @@
   function updateAllHostApplyButtons() {
     var localApplicable = getApplicableVersion();
     var btns = document.querySelectorAll('.apply-update-host');
-    var showVariant = lastUpdateStatus.staging_dual_agents || hasUploadableSelection();
+    /** Remote card: show compute/control only when apply is enabled and dual-agent (or file multipart) applies. */
+    function showRemoteVariantSelector(btn, card) {
+      if (!btn || !card || btn.disabled) return false;
+      if (card.classList.contains('is-updating')) return false;
+      return !!(lastUpdateStatus.staging_dual_agents || hasUploadableSelection());
+    }
     for (var i = 0; i < btns.length; i++) {
       var btn = btns[i];
       var card = btn.closest && btn.closest('.host-card');
       if (!card) continue;
       var hostVersion = card.getAttribute('data-host-version') || '';
-
-      if (hasUploadableSelection()) {
-        btn.disabled = false;
-        btn.title = localApplicable
-          ? (localApplicable + ' 번들로 원격 전송 가능')
-          : 'tar.gz 번들로 원격 적용';
-        toggleCardVariantSelector(card, showVariant && !btn.disabled);
-        continue;
-      }
-
       var ip = card.getAttribute('data-host-ip') || '';
       var st = remoteUpdateStatusByIP[ip];
 
@@ -817,11 +840,29 @@
       var applicableVersion;
       var canApply;
       if (st.ok) {
-        canApply = !!st.can_apply && !!st.apply_version;
+        canApply = !!(st.can_apply && st.apply_version);
         applicableVersion = st.apply_version || '';
         btn.disabled = !canApply;
-        btn.title = getApplyButtonTitle(hostVersion, canApply, applicableVersion || localApplicable);
-        toggleCardVariantSelector(card, showVariant && !btn.disabled);
+        if (!canApply) {
+          var rv = st.remote_version || hostVersion || '';
+          if (applicableVersion && rv && applicableVersion === rv) {
+            btn.title = '원격이 이미 스테이징 버전(' + applicableVersion + ')과 같습니다. 동일 버전 재적용은 AllowSameVersionUpdate가 필요합니다.';
+          } else {
+            btn.title = getApplyButtonTitle(hostVersion, false, applicableVersion || localApplicable);
+          }
+        } else {
+          btn.title = getApplyButtonTitle(hostVersion, true, applicableVersion || localApplicable);
+        }
+        toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
+        continue;
+      }
+
+      if (hasUploadableSelection()) {
+        btn.disabled = false;
+        btn.title = localApplicable
+          ? (localApplicable + ' 번들로 원격 전송 가능')
+          : 'tar.gz 번들로 원격 적용';
+        toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
         continue;
       }
 
@@ -830,14 +871,18 @@
       btn.disabled = !canApply;
       btn.title = (st && st.err ? '원격 상태 확인 실패 — 표시는 추정입니다. ' : '') +
         getApplyButtonTitle(hostVersion, canApply, applicableVersion);
-      toggleCardVariantSelector(card, showVariant && !btn.disabled);
+      toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
     }
   }
 
   function toggleCardVariantSelector(card, show) {
     if (!card) return;
     var sel = card.querySelector('.card-variant-selector');
-    if (sel) sel.hidden = !show;
+    if (!sel) return;
+    sel.hidden = !show;
+    if (show) {
+      setVariantRadioSelection(sel, card.getAttribute('data-build-variant'));
+    }
   }
 
   function doRemoveUpload() {
@@ -924,6 +969,9 @@
   function updateHostCardDetails(cardEl, host) {
     if (!cardEl || !host) return;
     cardEl.setAttribute('data-host-version', host.version || '');
+    if (host.build_variant != null && String(host.build_variant).trim() !== '') {
+      cardEl.setAttribute('data-build-variant', defaultAgentVariantFromBuild(host.build_variant));
+    }
     cardEl.setAttribute('data-hostname', host.hostname || '');
     var existingIps = (cardEl.getAttribute('data-host-ips') || '').trim();
     var ipDisplay;
@@ -959,6 +1007,13 @@
     }
     var row = cardEl.closest && cardEl.closest('.host-row');
     if (row) updateHostRowLabel(row, host, cardEl.classList.contains('self-card'));
+    var variantSel = cardEl.querySelector('.card-variant-selector');
+    if (variantSel && !variantSel.hidden) {
+      setVariantRadioSelection(variantSel, cardEl.getAttribute('data-build-variant'));
+    }
+    if (cardEl.classList.contains('self-card')) {
+      applyLocalVariantDefault();
+    }
   }
 
   function refreshHostCardDetails(cardEl, ip) {
@@ -1183,7 +1238,8 @@
           pending: false,
           ok: true,
           can_apply: !!d.can_apply,
-          apply_version: d.apply_version || ''
+          apply_version: d.apply_version || '',
+          remote_version: d.remote_current_version || ''
         };
         updateAllHostApplyButtons();
       })
@@ -1221,6 +1277,7 @@
         var variantFs = el('agent-variant-fieldset');
         if (variantFs) {
           variantFs.hidden = !lastUpdateStatus.staging_dual_agents;
+          if (!variantFs.hidden) applyLocalVariantDefault();
         }
         var applyBtn = el('apply-update-btn');
         var removeBtn = el('remove-upload-btn');

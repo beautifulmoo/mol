@@ -345,7 +345,7 @@ config:
 
 manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된다. **적용(`apply-update`) 시점**에 `agent_variant` 파라미터(`"control"` 또는 `"compute"`, 기본 `"compute"`)로 **어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지** 결정한다(`MaterializeCanonicalAgent`). 스테이징에는 항상 두 바이너리 모두 보관되며, variant 선택 후 canonical 바이너리가 복사된다.
 
-- **웹 UI**: 로컬 패널과 각 리모트 카드에 variant 선택 라디오 버튼 (스테이징에 dual agent가 있을 때만 표시).
+- **웹 UI**: 로컬 패널의 variant 라디오는 **스테이징에 dual agent가 있을 때만** 표시하며, 기본 선택은 **실행 중인 `build_variant`**(self·host-info·카드 `data-build-variant`, 미상이면 `compute`). 리모트 카드의 variant 라디오는 **「업데이트 적용」이 활성**이고 dual-agent 스테이징(또는 multipart로 tar.gz만 전송)일 때만 표시한다. `GET …/update-status?ip=` 결과로 `can_apply`가 false이면(`AllowSameVersionUpdate` false로 원격이 이미 스테이징과 동일 버전 등) **적용 버튼·variant 선택을 함께 비활성·숨김**한다 — 업로드 영역에 파일만 선택해 있어도 서버 판단을 덮어쓰지 않는다.
 - **CLI**: `agent --apply-update -agent-variant=compute|control`.
 - **REST**: `POST …/apply-update` JSON `agent_variant` 필드 또는 multipart `agent_variant` 필드.
 
@@ -353,7 +353,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 **권장 — 저장소 스크립트**
 
-1. 에이전트 바이너리 빌드: 루트에서 **`make`** 또는 **`make build`** → **`build/image/contrabass-moleU-control`**(BuildVariant=control)·**`build/image/contrabass-moleU-compute`**(BuildVariant=compute) 두 파일 생성. 각 바이너리에 `-X main.VersionKey`·`-X main.BuildVariant`가 주입된다.
+1. 에이전트 바이너리 빌드: 루트에서 **`make`** 또는 **`make build`** → **`build/image/contrabass-moleU-control`**(BuildVariant=control)·**`build/image/contrabass-moleU-compute`**(BuildVariant=compute) 두 파일 생성. 각 바이너리에 `-X main.VersionKey`·`-X main.BuildVariant`가 주입된다. **`Makefile`** 은 편의상 **`contrabass-moleU-compute`** 를 저장소 루트 **`./contrabass-moleU`** 로도 복사한다(로컬 실행·레거시 스크립트 호환).
 2. 설정 파일 준비: 예시 **`cfg/agent.local.yml`**(배포 대상 환경에 맞게 수정).
 3. 번들 생성:
 
@@ -455,7 +455,8 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **스크립트 본문 요약**  
   - **PATH**: `export PATH="/usr/bin:/bin:/usr/local/bin:${PATH:-}"` (transient 유닛 대비).  
   - **config 읽기**: 적용 대상 `versions/<인자 버전 키>/agent.local.yml` 에서 `MaintenancePort`, `SystemctlServiceName` 등(실패 시 기본값, `|| true`).  
-  - **update.sh**: 인자 **버전 키** 하나. `{BASE}/versions/{버전 키}/contrabass-moleU`(실행 파일명은 빌드·`appmeta.BinaryName`과 동일) 존재·실행 가능 확인 → 서비스 중지 → `previous` 갱신 → `current` 를 해당 버전으로 교체 → 서비스 시작 → `curl` 로 `http://127.0.0.1:${HTTP_PORT}/version` 헬스. 실패 시 `rollback.sh`.  
+  - **update.sh**: 인자 **버전 키** 하나. `{BASE}/versions/{버전 키}/contrabass-moleU`(실행 파일명은 빌드·`appmeta.BinaryName`과 동일) 존재·실행 가능 확인 → 서비스 중지 → `previous` 갱신 → `current` 를 해당 버전으로 교체 → 서비스 시작 → **헬스**(아래). 실패 시 **`invoke_rollback`** 으로 `rollback.sh` 호출·기록(롤백 성공/실패 exit 코드 구분).  
+  - **헬스(재시도)**: `systemctl is-active` 를 **`SERVICE_ACTIVE_MAX_ATTEMPTS`×`SERVICE_ACTIVE_INTERVAL`**(기본 15×2초)까지 재시도한 뒤, `http://127.0.0.1:${HTTP_PORT}/version` 에 **`HEALTH_INITIAL_SLEEP`**(기본 2초) 후 **`HEALTH_MAX_ATTEMPTS`×`HEALTH_RETRY_INTERVAL`**(기본 20×3초)까지 GET 재시도. 서비스가 중간에 내려가면 즉시 롤백. 본문이 **`<BinaryName> <버전 키>`** 한 줄과 일치해야 성공. 환경 변수로 조정: `HEALTH_INITIAL_SLEEP`, `HEALTH_RETRY_INTERVAL`, `HEALTH_MAX_ATTEMPTS`, `SERVICE_ACTIVE_MAX_ATTEMPTS`, `SERVICE_ACTIVE_INTERVAL`.  
   - **rollback.sh**: `previous` 가 있으면 서비스 중지 → `current` 를 `previous` 와 동일 대상으로 교체 → 시작.  
   - **기록**: `update_history.log` 에 prepend 방식으로 한 줄씩 추가.
 
@@ -534,8 +535,8 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - 표시 내용: **CPU UUID**(맨 위), 에이전트 버전, **IP**(여러 개면 쉼표 구분, 같은 호스트의 여러 응답에서 host_ip를 취합), **응답한 IP**(실제로 Discovery 응답을 보낸 UDP 발신지 IP, 여러 개면 취합), 호스트명, 서비스 포트, CPU, MEMORY. 동일 CPU UUID의 여러 응답은 **한 카드**로 병합하며, IP와 응답한 IP는 모두 취합해 표시하고 CPU·메모리는 하나만 표시한다.
   - 내 정보와 동일한 형태(카드/테이블 등)로 보여주어 일관된 UX를 유지한다.
 - **원격 적용 후**: 원격 에이전트 업데이트가 성공하면 **Discovery를 다시 수행하지 않고**, 해당 호스트 카드만 갱신한다.  
-  - **카드 버전 즉시 갱신(낙관적 갱신)**: apply-update API 성공 시점에 이미 알고 있는 **적용 버전**으로 카드의 버전 표시(`data-host-version` 속성 및 버전 dd 텍스트)를 **즉시** 갱신하고, 적용 버튼 활성/비활성 상태를 다시 계산한다.  
-  - **지연 후 host-info 및 패널 전체 현행화**: 약 5초 후부터 `GET /api/v1/host-info?ip=...`를 **2초 간격으로 최대 8회** 재시도한다. **성공 시** 카드 호스트 정보를 덮어쓴 뒤 **업데이트 기록(update-log)·agent.local.yml(current)·설치된 버전(versions/list)·서비스 상태(service-status)** 및 로컬 **update-status**(스테이징 표시)를 한꺼번에 다시 불러온다. **재시도를 모두 소진해도** 가능한 API는 동일하게 호출하여 남은 정보를 갱신한다. 그 후 업데이트 인디케이터를 숨긴다.
+  - **카드 버전 즉시 갱신(낙관적 갱신)**: apply-update API 성공 시점에 이미 알고 있는 **적용 버전**으로 카드의 버전 표시(`data-host-version` 속성 및 버전 dd 텍스트)를 **즉시** 갱신한다. 이때 **오래된 `can_apply`로 버튼을 다시 켜지 않는다**.  
+  - **지연 후 host-info 및 패널 전체 현행화**: 약 5초 후부터 `GET /api/v1/host-info?ip=...`를 **2초 간격으로 최대 8회** 재시도한다. **성공 시** 카드 호스트 정보를 덮어쓴 뒤 **업데이트 기록(update-log)·agent.local.yml(current)·설치된 버전(versions/list)·서비스 상태(service-status)**·해당 IP **`GET …/update-status?ip=`** 및 로컬 **update-status**를 한꺼번에 다시 불러 **`can_apply`·variant 표시**를 서버와 일치시킨다. **재시도를 모두 소진해도** 가능한 API는 동일하게 호출한다. 적용 실패·완료 후에도 동일 IP에 대해 **`update-status?ip=`** 를 다시 조회한다. 그 후 업데이트 인디케이터를 숨긴다.
 
 ### 6.1 systemctl status 표시 (내 정보·발견된 호스트 공통)
 
@@ -564,13 +565,13 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **config 변경**: 번들을 만들기 전에 로컬에서 `agent.local.yml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
 - **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, 적용 버튼으로 `POST /api/v1/apply-update` (`{ "version": "..." }`). 성공 시 에이전트(`contrabass-mole.service`) 재시작으로 연결이 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 약 4초 후부터 `GET /api/v1/self`를 **2초 간격 최대 15회** 폴링하여 서버가 다시 뜨면 **업데이트 기록·agent.local.yml·설치된 버전·서비스 상태·update-status**를 모두 다시 불러와 현행화한다. 대기 중 업데이트 로그는 **2초 간격**으로 조용히 갱신한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다. 실패 시 에러 메시지.
 - **적용 (원격)**  
-  - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 브라우저는 **`GET …/update-status?ip=<해당 호스트 IP>`** 를 호출해 받은 **`can_apply`**·**`apply_version`**(및 스테이징 목록)을 사용한다 — **로컬 스테이징**과 **그 호스트의 현재 버전**(원격 `GET …/self`)에 대해 서버가 **`StagingUpdateAvailable`**(§5.5.4)로 계산한 결과와 일치시킨다. 단순히 **스테이징 최상위 버전 문자열과 카드 `data-host-version`만 비교**하지 않는다(과거 불일치 방지). 원격 비교 조회가 진행 중이면 버튼을 비활성·짧은 안내로 둘 수 있다. 카드에는 `data-host-version`에 버전 키를 저장한다.  
+  - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 브라우저는 **`GET …/update-status?ip=<해당 호스트 IP>`** 를 호출해 받은 **`can_apply`**·**`apply_version`**·**`remote_current_version`**(및 스테이징 목록)을 사용한다 — **로컬 스테이징**과 **그 호스트의 현재 버전**(원격 `GET …/self`)에 대해 서버가 **`StagingUpdateAvailable`**·**`AllowSameVersionUpdate`**(§5.5.4·§7.1)로 계산한 결과와 일치시킨다. **`can_apply`가 확정된 응답(`ok`)이 있으면**, 업로드 영역의 **파일 선택만으로는** 버튼을 켜지 않는다. `can_apply`가 false이고 원격이 스테이징과 동일 버전이면 툴팁에 동일 버전 재적용 안내를 표시한다. 단순히 **스테이징 최상위 버전 문자열과 카드 `data-host-version`만 비교**하지 않는다. 원격 비교 조회가 진행 중이면 버튼·variant를 비활성·숨김·짧은 안내로 둔다. 카드에는 `data-host-version`·`data-build-variant`에 버전 키·variant를 저장한다.  
   - **버튼 스타일**: 활성화 시 **초록색** 계열(로컬 적용 버튼과 동일)로 표시하여 적용 가능 상태를 직관적으로 구분한다.  
   - **클릭 동작**: 적용할 버전은 **`update-status` 응답의 `apply_version`**(또는 동등한 서버 판단)을 우선한다. 파일 선택이 없고 스테이징에 버전이 있으면 JSON `{ version, ip }` 로 로컬 서버에 보내며, 서버는 원격 에이전트의 upload API·apply-update API를 호출하여 배포한다. **번들 파일을 함께 선택한 경우**에는 multipart `ip`, **`bundle`** 로 전송하여 서버가 원격에 tar.gz 업로드 후 apply-update를 호출한다(스테이징 없이 원격만 갱신).  
   - **적용 성공 후 카드 버전 표시**: JSON 적용 시에는 요청에 넣은 `version`을, multipart 적용 시에는 서버 성공 메시지에서 파싱한 버전을 사용하여, **host-info 응답을 기다리지 않고** 해당 호스트 카드의 버전 표시를 즉시 갱신한다. 이후 지연 후 host-info가 성공하면 전체 호스트 정보로 한 번 더 갱신된다.  
   - **툴팁**:  
     - 비활성·스테이징에 파일 없음: "먼저 업데이트 영역에서 버전을 업로드하세요"  
-    - 비활성·적용 불가(서버 `can_apply` false 등): "최신 버전입니다" 등  
+    - 비활성·적용 불가(서버 `can_apply` false, 동일 버전·`AllowSameVersionUpdate` false 등): "최신 버전입니다" 또는 동일 버전·설정 안내  
     - 활성: 적용 가능한 **버전 키**를 표시(서버 `apply_version` 기준)
 - **스테이징 버전 표시**: 「업로드된 버전 삭제」 버튼 옆에 현재 스테이징에 올라간 버전(예: "스테이징: 1.2.3")을 표시한다. 스테이징이 비어 있으면 표시하지 않는다.
 - **업데이트 인디케이터**: 로컬·원격 카드 모두, 업데이트 적용이 진행 중일 때 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. **로컬**은 `/self` 폴링 성공(또는 폴링 종료) 후 숨긴다. **원격**은 host-info 폴링·패널 갱신 완료 후 숨긴다. 요청 실패 시 즉시 숨긴다.

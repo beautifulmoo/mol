@@ -516,6 +516,9 @@ h3 {
   font-size: 0.8rem;
   margin-right: 0.35rem;
 }
+.card-variant-selector[hidden] {
+  display: none !important;
+}
 .card-variant-option {
   display: inline-flex;
   align-items: center;

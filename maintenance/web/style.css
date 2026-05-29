@@ -574,6 +574,15 @@ h3 {
   background: #2563eb;
   border-color: #2563eb;
 }
+#apply-update-btn:not(:disabled) {
+  border-color: #22c55e;
+  background: #22c55e;
+  color: #fff;
+}
+#apply-update-btn:not(:disabled):hover {
+  background: #16a34a;
+  border-color: #16a34a;
+}
 .update-form .discovery-status {
   margin-top: 0.5rem;
 }

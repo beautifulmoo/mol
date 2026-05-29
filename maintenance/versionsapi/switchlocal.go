@@ -1,6 +1,7 @@
 package versionsapi
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -9,10 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"contrabass-agent/maintenance/agentcfg"
-	"contrabass-agent/maintenance/updatescripts"
 	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/maintenance/updatescripts"
 )
 
 // stagedBundleFileName matches server/bundleupload.StagedBundleFileName (removed from versions/ after copy).
@@ -31,11 +33,82 @@ func DeployRootFromConfig(cfg *agentcfg.Config) string {
 	return d
 }
 
-// RunSwitchCurrentWithRoots performs the same steps as POST …/versions/switch-current for local (no ip / self):
-// resolve staging vs versions/, copy staging into versions/ if needed, write embedded scripts under deployRoot/current,
-// then systemd-run update.sh. deployRoot must be the normalized deploy base; installPrefix and deployBaseRaw are raw
-// YAML fields used with VersionsBaseFromParts for the versions/ tree.
-func RunSwitchCurrentWithRoots(deployRoot string, installPrefix, deployBaseRaw, version string) error {
+// RunSwitchCurrentWithRoots is the local path for apply-update and versions/switch-current (no remote HTTP).
+func RunSwitchCurrentWithRoots(deployRoot, installPrefix, deployBaseRaw, version string) error {
+	return RunSwitchCurrentWithRootsVariant(deployRoot, installPrefix, deployBaseRaw, version, "", "")
+}
+
+// RunSwitchCurrentWithRootsVariant is like RunSwitchCurrentWithRoots with explicit agent variant and ldflags fallback.
+func RunSwitchCurrentWithRootsVariant(deployRoot, installPrefix, deployBaseRaw, version, agentVariant, buildVariantFallback string) error {
+	if err := prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, agentVariant, buildVariantFallback); err != nil {
+		return err
+	}
+	return runEmbeddedUpdate(deployRoot, version)
+}
+
+// MaterializeCanonicalAgent copies the selected bundle agent (control or compute) to BinaryName in versionDir.
+// Legacy trees with only BinaryName and no dual agents are left unchanged.
+func MaterializeCanonicalAgent(versionDir, agentVariant string) error {
+	variant, err := appmeta.ParseAgentVariant(agentVariant)
+	if err != nil {
+		return err
+	}
+	if versionDir == "" {
+		return fmt.Errorf("version directory is empty")
+	}
+	if !StagingHasDualAgents(versionDir) {
+		if !dirHasAgentBinary(versionDir) {
+			return fmt.Errorf("버전 디렉터리에 %s 또는 %s/%s 가 없습니다",
+				appmeta.BinaryName, appmeta.BundleAgentControlName, appmeta.BundleAgentComputeName)
+		}
+		return nil
+	}
+	srcName := appmeta.BundleAgentBasenameForVariant(variant)
+	src := filepath.Join(versionDir, srcName)
+	dst := filepath.Join(versionDir, appmeta.BinaryName)
+	if err := copyFileRobust(src, dst, 0755); err != nil {
+		return fmt.Errorf("copy %s → %s: %w", srcName, appmeta.BinaryName, err)
+	}
+	return nil
+}
+
+// InstalledBuildVariantFromDeploy reads build_variant from deployRoot/current/contrabass-moleU --version.
+func InstalledBuildVariantFromDeploy(deployRoot string) string {
+	deployRoot = strings.TrimSuffix(strings.TrimSpace(deployRoot), "/")
+	if deployRoot == "" {
+		return ""
+	}
+	bin := filepath.Join(deployRoot, "current", appmeta.BinaryName)
+	line, err := AgentVersionLine(bin)
+	if err != nil {
+		return ""
+	}
+	return appmeta.ParseBuildVariantFromVersionLine(line)
+}
+
+// AgentVersionLine runs binPath --version, or on failure agent --version.
+func AgentVersionLine(binPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	try := func(argv ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, binPath, argv...)
+		out, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		line := strings.TrimSpace(string(out))
+		if line == "" {
+			return "", fmt.Errorf("empty version output")
+		}
+		return line, nil
+	}
+	if line, err := try("--version"); err == nil {
+		return line, nil
+	}
+	return try("agent", "--version")
+}
+
+func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, agentVariantExplicit, buildVariantFallback string) error {
 	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
 		return err
 	}
@@ -44,10 +117,32 @@ func RunSwitchCurrentWithRoots(deployRoot string, installPrefix, deployBaseRaw, 
 	if versionDir == "" {
 		return fmt.Errorf("해당 버전이 스테이징 또는 versions에 없습니다: %s", version)
 	}
+	targetDir := filepath.Join(vb, "versions", version)
 	if fromStaging {
 		if err := copyStagingToVersionsDir(deployRoot, vb, version); err != nil {
 			return fmt.Errorf("스테이징→versions 복사 실패: %w", err)
 		}
+	} else {
+		targetDir = versionDir
+	}
+	instBV := InstalledBuildVariantFromDeploy(deployRoot)
+	if instBV == "" {
+		instBV = strings.TrimSpace(buildVariantFallback)
+	}
+	variant, err := appmeta.ResolveAgentVariantForApply(agentVariantExplicit, instBV)
+	if err != nil {
+		return err
+	}
+	if err := MaterializeCanonicalAgent(targetDir, variant); err != nil {
+		return fmt.Errorf("실행 파일 준비: %w", err)
+	}
+	return nil
+}
+
+func runEmbeddedUpdate(deployRoot, version string) error {
+	deployRoot = strings.TrimSuffix(strings.TrimSpace(deployRoot), "/")
+	if deployRoot == "" {
+		deployRoot = "/var/lib/contrabass/mole"
 	}
 	currentPath := filepath.Join(deployRoot, "current")
 	if _, err := os.Stat(currentPath); err != nil {

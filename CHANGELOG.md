@@ -1,5 +1,17 @@
 # 변경 이력 (mol)
 
+## 유지보수 웹 UI · 업데이트 기록
+
+- **로그/목록 버튼**: 업데이트 기록 블록 **「로그 새로고침」**, 설치된 버전 블록 **「목록 새로고침」**.
+- **로컬 적용·로컬 switch-current**: `update-log` **2초 자동 갱신** — 이번 run의 `started` 확인 후 맨 위 줄 `success`/`failed`까지. `/self` 폴링과 **분리**; 진행 중 패널 일괄 갱신은 기록 fetch 생략. 요청은 캐시 무효화(`no-store`, `&_=`).
+- **적용 버튼**: `can_apply` 시 **초록색** 스타일.
+- **switch-current (로컬)**: `apply-update`와 동일하게 버전 트리 준비·`MaterializeCanonicalAgent` 후 `update.sh`.
+- **`update_history.log`**: `prepend_history`에 **`flock`**(`.lock` 파일).
+
+## update.sh · rollback 경로·헬스 대기
+
+- **헬스 기본값 확대**: 느린 병합 바이너리 기동 오탐 롤백 방지(기본 HTTP 재시도 약 6분, service active 약 90초). `HEALTH_*`·`SERVICE_ACTIVE_*` 환경 변수로 조정.
+
 ## Web UI · update.sh 헬스체크
 
 - **CLI `--apply-update` `-agent-variant`**: 생략 시 웹 UI와 같이 적용 대상의 설치된 `build_variant`를 따름(self: `current` 바이너리 `--version`, remote: `GET …/self`; 미상이면 `compute`).

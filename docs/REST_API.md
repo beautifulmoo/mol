@@ -77,7 +77,7 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/update-log` | **Query**: `ip` (선택). 원격이면 프록시. | **200** `success`, `data`: `{ "output": "<최대 10줄>", "recent_rollback": <bool> }`. |
+| **GET** | `{API}/update-log` | **Query**: `ip` (선택, 원격이면 `Server.HTTPPort`로 프록시). | **200** `success`, `data`: `{ "output": "<최대 10줄, 최신이 위>", "recent_rollback": <bool> }`. 응답 헤더 **`Cache-Control: no-store`**. `contrabass-mole-update.service` active이면 `recent_rollback`은 false. 웹 UI는 로컬 적용·로컬 switch-current 중 **2초 간격**으로 이 API를 호출하며(`&_=` 타임스탬프·`cache: 'no-store'`), 이번 run의 `update <버전> started` 확인 후 맨 위 줄이 `success`/`failed`일 때까지 폴링한다(`/self` 폴링과 독립). 수동 갱신 버튼: **「로그 새로고침」**. |
 | **GET** | `{API}/current-config` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "content": "<yaml 문자열>" }`. |
 | **POST** | `{API}/current-config` | **Body JSON**: `{ "content": "<yaml>", "ip": "<선택>" }` — `ip`로 원격 저장 프록시. | **200** `success`, `data`: null(로컬 저장 성공 시). 검증 실패 `fail`. |
 | **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ] }`. |

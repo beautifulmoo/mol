@@ -60,7 +60,7 @@ make   # 또는 make build
 
 **사용 방법**
 
-- **update.sh**: 웹 UI에서 “업데이트 적용” 시 에이전트가 내장 스크립트를 `{DeployBase}/current/`(실제로는 `versions/<현재>/`)에 풀고 `systemd-run`으로 실행한다(PRD §5.5.2). 인자로 **버전 하나**를 받으며, 실행 시점에 `{DeployBase}/versions/{버전}/contrabass-moleU` 가 있어야 한다. 기동 후 **`systemctl is-active`·`GET /version`을 재시도**하며, 실패 시 `rollback.sh`(`invoke_rollback`, 로그에 성공/실패 구분). 조정: `HEALTH_INITIAL_SLEEP`, `HEALTH_RETRY_INTERVAL`, `HEALTH_MAX_ATTEMPTS`, `SERVICE_ACTIVE_MAX_ATTEMPTS`, `SERVICE_ACTIVE_INTERVAL`.  
+- **update.sh**: 웹 UI에서 “업데이트 적용” 시 에이전트가 내장 스크립트를 `{DeployBase}/current/`에 풀고 `systemd-run`으로 실행한다(PRD §5.5.2). 기동 후 **`systemctl is-active`·`GET /version`을 긴 재시도**(기본 HTTP 대기 약 6분)하며, 실패 시 `rollback.sh` 실행. 조정: `HEALTH_*`, `SERVICE_ACTIVE_*` 환경 변수. `versions/<키>` 탐색은 InstallPrefix·DeployBase를 따른다.  
   업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다. 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않으며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
   - 예: `/var/lib/contrabass/mole/rollback.sh` (root 또는 동일 권한으로 실행)

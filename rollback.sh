@@ -14,13 +14,18 @@ fi
 
 prepend_history() {
     local line="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-    if [ -f "$HISTORY_LOG" ]; then
-        echo "$line" > "${HISTORY_LOG}.tmp"
-        cat "$HISTORY_LOG" >> "${HISTORY_LOG}.tmp"
-        mv "${HISTORY_LOG}.tmp" "$HISTORY_LOG"
-    else
-        echo "$line" > "$HISTORY_LOG"
-    fi
+    local lockfile="${HISTORY_LOG}.lock"
+    mkdir -p "$(dirname "$HISTORY_LOG")" 2>/dev/null || true
+    (
+        flock -w 30 9 || exit 1
+        if [ -f "$HISTORY_LOG" ]; then
+            printf '%s\n' "$line" > "${HISTORY_LOG}.tmp"
+            cat "$HISTORY_LOG" >> "${HISTORY_LOG}.tmp"
+            mv -f "${HISTORY_LOG}.tmp" "$HISTORY_LOG"
+        else
+            printf '%s\n' "$line" > "$HISTORY_LOG"
+        fi
+    ) 9>"$lockfile"
 }
 
 prepend_history "rollback started"

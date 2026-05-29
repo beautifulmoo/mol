@@ -179,9 +179,8 @@ func currentVersionKeyForApply(buildVersionKey string, cfg *agentcfg.Config) str
 }
 
 func installedBuildVariantLocal(cfg *agentcfg.Config, cliBuildVariant string) string {
-	deploy := versionsapi.DeployRootFromConfig(cfg)
-	binPath := filepath.Join(deploy, "current", appmeta.BinaryName)
-	if bv, err := server.BuildVariantFromAgentBinary(binPath); err == nil && strings.TrimSpace(bv) != "" {
+	bv := versionsapi.InstalledBuildVariantFromDeploy(versionsapi.DeployRootFromConfig(cfg))
+	if bv != "" {
 		return bv
 	}
 	return strings.TrimSpace(cliBuildVariant)

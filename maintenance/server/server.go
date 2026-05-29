@@ -64,39 +64,16 @@ func VersionKeyFromAgentBinary(binPath string) (string, error) {
 
 // BuildVariantFromAgentBinary runs the same --version invocations and returns "(control)" or "(compute)" from the line, or "" if absent.
 func BuildVariantFromAgentBinary(binPath string) (string, error) {
-	line, err := agentVersionLine(binPath)
+	line, err := versionsapi.AgentVersionLine(binPath)
 	if err != nil {
 		return "", err
 	}
 	return appmeta.ParseBuildVariantFromVersionLine(line), nil
 }
 
-// agentVersionLine runs binPath --version, or on failure agent --version, and returns the trimmed output line.
-func agentVersionLine(binPath string) (string, error) {
-	try := func(argv ...string) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, binPath, argv...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return "", fmt.Errorf("%v timed out (5s)", argv)
-			}
-			return "", err
-		}
-		return strings.TrimSpace(string(out)), nil
-	}
-
-	line, errRoot := try("--version")
-	if errRoot == nil {
-		return line, nil
-	}
-	return try("agent", "--version")
-}
-
 // versionKeyFromAgentBinary tries root --version first (legacy / transitional updates), then agent --version.
 func versionKeyFromAgentBinary(binPath string) (string, error) {
-	line, err := agentVersionLine(binPath)
+	line, err := versionsapi.AgentVersionLine(binPath)
 	if err != nil {
 		return "", fmt.Errorf("not a valid executable (--version: %v)", err)
 	}
@@ -979,10 +956,9 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 }
 
 // postApplyUpdateToTarget tells the target agent to apply the given version from its staging (ip=self).
-// runUpdateViaEmbeddedScript delegates to versionsapi.RunSwitchCurrentWithRoots (embedded update.sh via systemd-run).
-// base is the normalized DeployBase (same as apply-update local path).
-func (s *Server) runUpdateViaEmbeddedScript(base, version string) error {
-	return versionsapi.RunSwitchCurrentWithRoots(base, s.installPrefix, s.deployBase, version)
+// runUpdateViaEmbeddedScript prepares the version tree and starts embedded update.sh (apply-update / switch-current local).
+func (s *Server) runUpdateViaEmbeddedScript(base, version, agentVariant string) error {
+	return versionsapi.RunSwitchCurrentWithRootsVariant(base, s.installPrefix, s.deployBase, version, agentVariant, s.buildVariant)
 }
 
 func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version, agentVariant string) (status string, data interface{}, err error) {
@@ -1163,11 +1139,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	ip := strings.TrimSpace(req.IP)
 	if ip == "" || ip == "self" {
-		if err := MaterializeCanonicalAgent(versionDir, agentVariant); err != nil {
-			s.send(w, "fail", err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := s.runUpdateViaEmbeddedScript(base, version); err != nil {
+		if err := s.runUpdateViaEmbeddedScript(base, version, agentVariant); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
@@ -1514,7 +1486,11 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 	if base == "" {
 		base = "/var/lib/contrabass/mole"
 	}
-	if err := s.runUpdateViaEmbeddedScript(base, version); err != nil {
+	if dir, _ := s.resolveVersionDir(base, version); dir == "" {
+		s.send(w, "fail", "해당 버전이 스테이징 또는 versions에 없습니다: "+version, http.StatusOK)
+		return
+	}
+	if err := s.runUpdateViaEmbeddedScript(base, version, ""); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
@@ -1587,6 +1563,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	if recentRollback && isUpdateUnitActive() {
 		recentRollback = false
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	s.send(w, "success", map[string]interface{}{"output": output, "recent_rollback": recentRollback}, http.StatusOK)
 }
 

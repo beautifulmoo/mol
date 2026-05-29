@@ -311,7 +311,7 @@
       '<div class="card-right-log">' +
       '<h4 class="card-right-title">업데이트 기록 (최근 10건)</h4>' +
       '<div id="self-update-rollback-warning" class="update-rollback-warning" role="alert" aria-live="polite" hidden></div>' +
-      '<button type="button" id="self-update-log-refresh-btn" class="service-btn">목록 새로고침</button>' +
+      '<button type="button" id="self-update-log-refresh-btn" class="service-btn">로그 새로고침</button>' +
       '<pre id="self-update-log-output" class="update-log-output card-right-log-output">(새로고침으로 로그 불러오기)</pre>' +
       '</div>' +
       '<div class="card-right-config">' +
@@ -343,7 +343,7 @@
       '<div class="card-right-log">' +
       '<h4 class="card-right-title">업데이트 기록 (최근 10건)</h4>' +
       '<div class="update-rollback-warning card-update-rollback-warning" role="alert" aria-live="polite" hidden></div>' +
-      '<button type="button" class="service-btn card-update-log-refresh-btn">목록 새로고침</button>' +
+      '<button type="button" class="service-btn card-update-log-refresh-btn">로그 새로고침</button>' +
       '<pre class="update-log-output card-right-log-output">(새로고침으로 로그 불러오기)</pre>' +
       '</div>' +
       '<div class="card-right-config">' +
@@ -693,17 +693,19 @@
     return '최신 버전입니다';
   }
 
-  /** After apply-update: reload update log, current config, versions list, service status (and local staging state). */
+  /** After apply-update: reload panels. Skip update log while startUpdateLogPolling is active (avoid stale overwrite). */
+  var activeLogPollVersion = '';
+
   function refreshAllPanelsAfterUpdate(cardEl, ip) {
     if (ip) {
       if (!cardEl) return;
-      fetchUpdateLogForCard(cardEl, ip);
+      if (!activeLogPollVersion) fetchUpdateLogForCard(cardEl, ip);
       fetchCurrentConfigForCard(cardEl, ip);
       fetchVersionsListForCard(cardEl, ip);
       fetchServiceStatus(cardEl, ip);
       fetchUpdateStatusForRemote(ip);
     } else {
-      fetchUpdateLog();
+      if (!activeLogPollVersion) fetchUpdateLog(true);
       fetchCurrentConfig();
       fetchVersionsList();
       if (cardEl) fetchServiceStatus(cardEl, '');
@@ -769,13 +771,9 @@
       var selfCard = el('self-info') && el('self-info').querySelector('.host-card');
       if (selfCard) showCardUpdating(selfCard, true);
       if (statusEl) statusEl.textContent = '전환 반영 중… 재시작 후 정보를 자동으로 불러옵니다.';
-      var logPoll = setInterval(function () { fetchUpdateLog(true); }, 2000);
-      function finishPoll() {
-        clearInterval(logPoll);
-      }
+      startUpdateLogPolling(switchedVersion, selfCard, '');
       fetchUpdateStatus();
       pollUntilHostJsonOk(API_BASE + '/self', 15, 4000, 2000, function (body2) {
-        finishPoll();
         if (selfCard) updateHostCardDetails(selfCard, body2.data);
         refreshAllPanelsAfterUpdate(selfCard, '');
         updateAllHostApplyButtons();
@@ -784,7 +782,6 @@
         fetchUpdateStatus();
         updateVersionsSwitchButtonFromSelect(null);
       }, function (networkFailure) {
-        finishPoll();
         refreshAllPanelsAfterUpdate(selfCard, '');
         if (selfCard) showCardUpdating(selfCard, false);
         if (statusEl) {
@@ -945,6 +942,77 @@
   }
 
   var UPDATE_LOG_ROLLBACK_WARNING_HTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
+
+  function fetchUpdateLogJSON(ip) {
+    var url = API_BASE + '/update-log';
+    if (ip) url += '?ip=' + encodeURIComponent(ip);
+    url += (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + Date.now();
+    return fetch(url, { cache: 'no-store' }).then(function (res) {
+      return res.json();
+    });
+  }
+
+  /**
+   * Log is prepend-newest. Complete when we've seen this run's started, then the top line is success/failed.
+   * (Avoids stopping on an older success for the same version before the new started line appears.)
+   */
+  function updateLogRunComplete(output, version, runStartedSeen) {
+    if (!output || !version || !runStartedSeen) return false;
+    var first = (output.split('\n')[0] || '');
+    var needleSuccess = 'update ' + version + ' success';
+    var needleFailed = 'update ' + version + ' failed';
+    return first.indexOf(needleSuccess) !== -1 || first.indexOf(needleFailed) !== -1;
+  }
+
+  /** 2s poll until this run's success/failed (independent of /self; not stopped when host responds). */
+  function startUpdateLogPolling(version, cardEl, ip) {
+    if (!version) return function () {};
+    var intervalMs = 2000;
+    var maxMs = intervalMs * 450;
+    var timer = null;
+    var maxTimer = null;
+    var needleStarted = 'update ' + version + ' started';
+    var runStartedSeen = false;
+    activeLogPollVersion = version;
+
+    function stop() {
+      activeLogPollVersion = '';
+      if (timer) { clearInterval(timer); timer = null; }
+      if (maxTimer) { clearTimeout(maxTimer); maxTimer = null; }
+    }
+
+    function tick() {
+      var pre;
+      var warningEl;
+      if (ip) {
+        if (!cardEl) return;
+        pre = cardEl.querySelector('.card-right-log-output');
+        warningEl = cardEl.querySelector('.card-update-rollback-warning');
+      } else {
+        pre = el('self-update-log-output');
+        warningEl = el('self-update-rollback-warning');
+      }
+      if (!pre) return;
+      fetchUpdateLogJSON(ip)
+        .then(function (body) {
+          if (warningEl) warningEl.hidden = true;
+          applyUpdateLogResponse(pre, warningEl, body);
+          if (body.status === 'success' && body.data && body.data.output) {
+            var out = body.data.output;
+            if (out.indexOf(needleStarted) !== -1) runStartedSeen = true;
+            if (updateLogRunComplete(out, version, runStartedSeen)) {
+              stop();
+            }
+          }
+        })
+        .catch(function () {});
+    }
+
+    tick();
+    timer = setInterval(tick, intervalMs);
+    maxTimer = setTimeout(stop, maxMs);
+    return stop;
+  }
 
   function applyUpdateLogResponse(pre, warningEl, body) {
     if (body.status === 'success' && body.data) {
@@ -1368,12 +1436,8 @@
         if (body.status === 'success') {
           fetchUpdateStatus();
           if (status) status.textContent = '업데이트 적용 중… 재시작 후 정보를 자동으로 불러옵니다.';
-          var logPoll = setInterval(function () { fetchUpdateLog(true); }, 2000);
-          function finishPoll() {
-            clearInterval(logPoll);
-          }
+          startUpdateLogPolling(version, selfCard, '');
           pollUntilHostJsonOk(API_BASE + '/self', 15, 4000, 2000, function (body2) {
-            finishPoll();
             if (selfCard) updateHostCardDetails(selfCard, body2.data);
             refreshAllPanelsAfterUpdate(selfCard, '');
             updateAllHostApplyButtons();
@@ -1381,7 +1445,6 @@
             if (status) status.textContent = '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
             if (applyBtn) fetchUpdateStatus();
           }, function (networkFailure) {
-            finishPoll();
             if (selfCard) refreshAllPanelsAfterUpdate(selfCard, '');
             showCardUpdating(selfCard, false);
             if (status) {
@@ -1456,8 +1519,7 @@
     if (!pre) return;
     if (!silent) pre.textContent = '불러오는 중…';
     if (warningEl) warningEl.hidden = true;
-    fetch(API_BASE + '/update-log')
-      .then(function (res) { return res.json(); })
+    fetchUpdateLogJSON('')
       .then(function (body) { applyUpdateLogResponse(pre, warningEl, body); })
       .catch(function () {
         pre.textContent = '로그를 불러올 수 없습니다.';
@@ -1527,8 +1589,7 @@
     if (!pre) return;
     pre.textContent = '불러오는 중…';
     if (warningEl) warningEl.hidden = true;
-    fetch(API_BASE + '/update-log?ip=' + encodeURIComponent(ip))
-      .then(function (res) { return res.json(); })
+    fetchUpdateLogJSON(ip)
       .then(function (body) { applyUpdateLogResponse(pre, warningEl, body); })
       .catch(function () {
         pre.textContent = '로그를 불러올 수 없습니다.';

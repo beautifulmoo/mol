@@ -62,8 +62,17 @@ func VersionKeyFromAgentBinary(binPath string) (string, error) {
 	return versionKeyFromAgentBinary(binPath)
 }
 
-// versionKeyFromAgentBinary tries root --version first (legacy / transitional updates), then agent --version.
-func versionKeyFromAgentBinary(binPath string) (string, error) {
+// BuildVariantFromAgentBinary runs the same --version invocations and returns "(control)" or "(compute)" from the line, or "" if absent.
+func BuildVariantFromAgentBinary(binPath string) (string, error) {
+	line, err := agentVersionLine(binPath)
+	if err != nil {
+		return "", err
+	}
+	return appmeta.ParseBuildVariantFromVersionLine(line), nil
+}
+
+// agentVersionLine runs binPath --version, or on failure agent --version, and returns the trimmed output line.
+func agentVersionLine(binPath string) (string, error) {
 	try := func(argv ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -75,33 +84,37 @@ func versionKeyFromAgentBinary(binPath string) (string, error) {
 			}
 			return "", err
 		}
-		line := strings.TrimSpace(string(out))
-		want := appmeta.BinaryName + " "
-		if !strings.HasPrefix(line, want) {
-			return "", fmt.Errorf("prefix want %q, got %q", want, line)
-		}
-		key := strings.TrimSpace(strings.TrimPrefix(line, want))
-		if idx := strings.Index(key, " ("); idx >= 0 {
-			key = strings.TrimSpace(key[:idx])
-		}
-		if key == "" {
-			return "", fmt.Errorf("empty version key")
-		}
-		if err := agentcfg.ValidateVersionKeyPath(key); err != nil {
-			return "", err
-		}
-		return key, nil
+		return strings.TrimSpace(string(out)), nil
 	}
 
-	key, errRoot := try("--version")
+	line, errRoot := try("--version")
 	if errRoot == nil {
-		return key, nil
+		return line, nil
 	}
-	key, errAgent := try("agent", "--version")
-	if errAgent == nil {
-		return key, nil
+	return try("agent", "--version")
+}
+
+// versionKeyFromAgentBinary tries root --version first (legacy / transitional updates), then agent --version.
+func versionKeyFromAgentBinary(binPath string) (string, error) {
+	line, err := agentVersionLine(binPath)
+	if err != nil {
+		return "", fmt.Errorf("not a valid executable (--version: %v)", err)
 	}
-	return "", fmt.Errorf("not a valid executable (--version: %v; agent --version: %v)", errRoot, errAgent)
+	want := appmeta.BinaryName + " "
+	if !strings.HasPrefix(line, want) {
+		return "", fmt.Errorf("prefix want %q, got %q", want, line)
+	}
+	key := strings.TrimSpace(strings.TrimPrefix(line, want))
+	if idx := strings.Index(key, " ("); idx >= 0 {
+		key = strings.TrimSpace(key[:idx])
+	}
+	if key == "" {
+		return "", fmt.Errorf("empty version key")
+	}
+	if err := agentcfg.ValidateVersionKeyPath(key); err != nil {
+		return "", err
+	}
+	return key, nil
 }
 
 // validateAgentBinary runs the same version checks as bundle upload (root --version, then agent --version).

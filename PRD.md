@@ -346,7 +346,7 @@ config:
 manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된다. **적용(`apply-update`) 시점**에 `agent_variant` 파라미터(`"control"` 또는 `"compute"`, 기본 `"compute"`)로 **어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지** 결정한다(`MaterializeCanonicalAgent`). 스테이징에는 항상 두 바이너리 모두 보관되며, variant 선택 후 canonical 바이너리가 복사된다.
 
 - **웹 UI**: 로컬 패널의 variant 라디오는 **스테이징에 dual agent가 있을 때만** 표시하며, 기본 선택은 **실행 중인 `build_variant`**(self·host-info·카드 `data-build-variant`, 미상이면 `compute`). 리모트 카드의 variant 라디오는 **「업데이트 적용」이 활성**이고 dual-agent 스테이징(또는 multipart로 tar.gz만 전송)일 때만 표시한다. `GET …/update-status?ip=` 결과로 `can_apply`가 false이면(`AllowSameVersionUpdate` false로 원격이 이미 스테이징과 동일 버전 등) **적용 버튼·variant 선택을 함께 비활성·숨김**한다 — 업로드 영역에 파일만 선택해 있어도 서버 판단을 덮어쓰지 않는다.
-- **CLI**: `agent --apply-update -agent-variant=compute|control`.
+- **CLI**: `agent --apply-update -agent-variant=compute|control`. **생략 시** 적용 대상의 설치된 `build_variant`를 따른다(self: `DeployBase/current` 바이너리 `--version` 접미사 또는 CLI 바이너리 variant, remote: `GET …/self`의 `build_variant`; 미상이면 `compute`).
 - **REST**: `POST …/apply-update` JSON `agent_variant` 필드 또는 multipart `agent_variant` 필드.
 
 ##### 패키징(번들 만들기)

@@ -26,20 +26,26 @@ import (
 const bundleFormField = "bundle" // same as server.uploadBundleField
 
 // Run parses flags and runs apply-update CLI. buildVersionKey is the running binary's version (ldflags), used for local policy like GET /self.
+// cliBuildVariant is the running CLI binary's BuildVariant (ldflags), used when installed agent variant cannot be read.
 //
 //	<bin> agent --apply-update -cfg <config file> <self|remote-ip> <bundle.tar.gz>
-func Run(buildVersionKey string, args []string) int {
+func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("cfg", "", "path to config file (required)")
-	agentVariant := fs.String("agent-variant", appmeta.AgentVariantCompute, "which bundle binary becomes "+appmeta.BinaryName+" at apply: compute|control")
+	agentVariantFlag := fs.String("agent-variant", "", "control or compute; if omitted, match installed build_variant on target (compute if unknown)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg <config file> [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg=<config file> [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
 		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP).\n")
 		fmt.Fprintf(os.Stderr, "        Requires root privileges (e.g. run with sudo): writes under DeployBase and runs systemd-run.\n")
 		fmt.Fprintf(os.Stderr, "  remote-ip: multipart POST to that host's Gin (Server.HTTPPort); no local agent required.\n\n")
-		fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "  Optional flags may be written as -name=value or -name value (Go flag package).\n\n")
+		fmt.Fprintf(os.Stderr, "  -cfg=<file>\n")
+		fmt.Fprintf(os.Stderr, "        path to config file (required)\n")
+		fmt.Fprintf(os.Stderr, "  -agent-variant=control|compute\n")
+		fmt.Fprintf(os.Stderr, "        which bundle binary becomes %s at apply; if omitted, match installed\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "        build_variant on target (compute if unknown)\n")
 	}
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -99,11 +105,6 @@ func Run(buildVersionKey string, args []string) int {
 	}
 	defer func() { _ = os.RemoveAll(pb.WorkDir) }()
 	versionKey := pb.VersionKey
-	variant, err := appmeta.ParseAgentVariant(*agentVariant)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
 
 	httpClient := &http.Client{Timeout: 300 * time.Second}
 	apiPrefix := cliutil.NormalizeAPIPrefix(cfg.APIPrefix)
@@ -115,7 +116,13 @@ func Run(buildVersionKey string, args []string) int {
 			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
-		fmt.Printf("Applying bundle %s locally (current %s)\n", versionKey, cur)
+		installedBV := installedBuildVariantLocal(cfg, cliBuildVariant)
+		variant, err := appmeta.ResolveAgentVariantForApply(*agentVariantFlag, installedBV)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+			return 1
+		}
+		fmt.Printf("Applying bundle %s locally (current %s, variant %s)\n", versionKey, cur, variant)
 		if err := server.ApplyUpdateSelfFromBundleExtract(cfg, raw, pb, variant); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 			return 1
@@ -135,16 +142,22 @@ func Run(buildVersionKey string, args []string) int {
 			return 1
 		}
 		remoteBase := cliutil.RemoteBaseURL(cfg, remoteIP)
-		cur, err := fetchVersionGET(httpClient, remoteBase+apiPrefix+"/self")
+		selfInfo, err := fetchSelfGET(httpClient, remoteBase+apiPrefix+"/self")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: get remote version failed (%s): %v\n", appmeta.BinaryName, remoteBase+apiPrefix+"/self", err)
 			return 1
 		}
+		cur := selfInfo.Version
 		if !agentcfg.StagingUpdateAvailable(versionKey, cur, cfg.AllowSameVersionUpdate) {
 			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, remote current %q)\n", appmeta.BinaryName, versionKey, cur)
 			return 1
 		}
-		fmt.Printf("Applying bundle %s to remote %s (remote current %s)\n", versionKey, remoteIP, cur)
+		variant, err := appmeta.ResolveAgentVariantForApply(*agentVariantFlag, selfInfo.BuildVariant)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+			return 1
+		}
+		fmt.Printf("Applying bundle %s to remote %s (remote current %s, variant %s)\n", versionKey, remoteIP, cur, variant)
 		applyURL := remoteBase + apiPrefix + "/apply-update"
 		if err := postMultipartApplyRemote(httpClient, applyURL, remoteIP, bundlePath, variant); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: remote apply failed: %v\n", appmeta.BinaryName, err)
@@ -165,36 +178,55 @@ func currentVersionKeyForApply(buildVersionKey string, cfg *agentcfg.Config) str
 	return strings.TrimSpace(buildVersionKey)
 }
 
-func fetchVersionGET(client *http.Client, url string) (string, error) {
+func installedBuildVariantLocal(cfg *agentcfg.Config, cliBuildVariant string) string {
+	deploy := versionsapi.DeployRootFromConfig(cfg)
+	binPath := filepath.Join(deploy, "current", appmeta.BinaryName)
+	if bv, err := server.BuildVariantFromAgentBinary(binPath); err == nil && strings.TrimSpace(bv) != "" {
+		return bv
+	}
+	return strings.TrimSpace(cliBuildVariant)
+}
+
+type selfInfo struct {
+	Version      string
+	BuildVariant string
+}
+
+func fetchSelfGET(client *http.Client, url string) (selfInfo, error) {
+	var empty selfInfo
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return empty, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return empty, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return empty, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return empty, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var out struct {
 		Status string `json:"status"`
 		Data   struct {
-			Version string `json:"version"`
+			Version      string `json:"version"`
+			BuildVariant string `json:"build_variant"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("JSON: %w", err)
+		return empty, fmt.Errorf("JSON: %w", err)
 	}
 	if out.Status != "success" {
-		return "", fmt.Errorf("status %q", out.Status)
+		return empty, fmt.Errorf("status %q", out.Status)
 	}
-	return strings.TrimSpace(out.Data.Version), nil
+	return selfInfo{
+		Version:      strings.TrimSpace(out.Data.Version),
+		BuildVariant: strings.TrimSpace(out.Data.BuildVariant),
+	}, nil
 }
 
 func postMultipartApplyRemote(client *http.Client, applyURL, remoteIP, bundlePath, agentVariant string) error {

@@ -367,7 +367,7 @@ func Run(buildVersionKey string, buildVariantArg string, args []string) int {
 		case "--discovery":
 			return discoverycli.Run(args[2:])
 		case "--apply-update":
-			return applycli.Run(buildVersionKey, args[2:])
+			return applycli.Run(buildVersionKey, buildVariant, args[2:])
 		case "--versions-list":
 			return versionscli.RunList(args[2:])
 		case "--versions-switch":

@@ -170,16 +170,18 @@ contrabass-moleU agent --discovery -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --apply-update -cfg /path/to/agent.local.yml [-agent-variant=compute|control] <self|remote-ip> /path/to/bundle.tar.gz
+contrabass-moleU agent --apply-update -cfg=/path/to/agent.local.yml [-agent-variant=compute|control] <self|remote-ip> /path/to/bundle.tar.gz
 contrabass-moleU agent --apply-update -h
 ```
+
+`-cfg`·`-agent-variant` 는 **`-name=value`** 형태를 권장한다(`-cfg /path`·`-agent-variant compute` 처럼 **공백으로 값을 주는 형태**도 Go `flag` 패키지에서 동일하게 동작).
 
 ### 인자
 
 | 위치 | 설명 |
 |------|------|
 | **`-cfg`** | **필수.** 설정 파일 경로 (`config.Load`). |
-| **`-agent-variant`** | **선택.** manifest v2 번들 적용 시 `contrabass-moleU`로 설치할 바이너리 variant. `compute`(기본) 또는 `control`. |
+| **`-agent-variant`** | **선택.** manifest v2 번들 적용 시 `contrabass-moleU`로 설치할 바이너리 variant. `compute` 또는 `control`. **생략 시** 적용 대상에 이미 설치된 variant를 따른다(self: `DeployBase/current` 바이너리, remote: `GET …/self`의 `build_variant`; 확인 불가 시 `compute`). |
 | **첫 번째 인자** | **`self`**: 이 호스트에 적용. **IPv4/IPv6 주소 문자열**: 해당 원격에 적용(호스트명은 사용하지 않음). |
 | **두 번째 인자** | 업로드할 **번들 파일 경로** (`.tar.gz`). |
 
@@ -188,8 +190,8 @@ contrabass-moleU agent --apply-update -h
 1. 설정 로드 및 **`Maintenance.MaxUploadBytes`** 범위 안에서 번들 크기 확인.
 2. 번들을 임시 디렉터리에 풀어 **서버 `POST /upload` 와 동일한 검증**(`server.PrepareAgentBundleFromReader`) — manifest·해시·ELF·바이너리 버전 키(`--version`→`agent --version` 폴백) 등.
 3. **현재 버전**  
-   - **self**: **`DeployBase/current` → `versions/…` 의 버전 키**(디스크 기준 설치 current). CLI 바이너리의 `main.VersionKey` 는 **`current` 심볼릭을 읽을 수 없을 때만** 보조로 사용한다(개발용 바이너리와 배포 트리가 어긋나는 경우 구분). **`GET /self` HTTP 없음**.  
-   - **remote**: `http://<remote-ip>:Server.HTTPPort` + `APIPrefix` + `/self` — 적용 전 **`TCP`로 `<ip>:Server.HTTPPort` 연결** 가능 여부를 확인한다.
+   - **self**: **`DeployBase/current` → `versions/…` 의 버전 키**(디스크 기준 설치 current). CLI 바이너리의 `main.VersionKey` 는 **`current` 심볼릭을 읽을 수 없을 때만** 보조로 사용한다. **`GET /self` HTTP 없음**. **`-agent-variant` 생략 시** `current/contrabass-moleU`의 `--version` 접미사 `(control)`/`(compute)`로 variant를 정한다(실패 시 CLI 바이너리 variant, 그것도 없으면 `compute`).  
+   - **remote**: `http://<remote-ip>:Server.HTTPPort` + `APIPrefix` + `/self` — 적용 전 **`TCP`로 `<ip>:Server.HTTPPort` 연결** 가능 여부를 확인한다. **`build_variant`** 로 생략 시 variant를 정한다.
 4. **`StagingUpdateAvailable(번들 버전 키, 현재 버전 키)`** 가 거짓이면 업로드하지 않고 종료 코드 `1`.
 
 ### 적용 경로

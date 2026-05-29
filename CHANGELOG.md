@@ -2,6 +2,8 @@
 
 ## Web UI · update.sh 헬스체크
 
+- **CLI `--apply-update` `-agent-variant`**: 생략 시 웹 UI와 같이 적용 대상의 설치된 `build_variant`를 따름(self: `current` 바이너리 `--version`, remote: `GET …/self`; 미상이면 `compute`).
+
 - **원격 「업데이트 적용」**: `GET …/update-status?ip=`의 `can_apply`가 확정되면 업로드 파일 선택만으로 버튼을 켜지 않음. 적용 성공·실패·host-info 폴링 후 해당 IP에 대해 `update-status`를 재조회해 `AllowSameVersionUpdate: false`일 때 원격이 스테이징과 같으면 적용 버튼·variant 라디오를 비활성·숨김.
 - **Agent variant (웹)**: 로컬·리모트 라디오 기본값 = 설치된 `build_variant`(`data-build-variant`). 리모트 variant는 적용 버튼이 활성일 때만 표시.
 - **update.sh 헬스**: `systemctl is-active`·`GET /version` 재시도(환경 변수로 조정 가능). `invoke_rollback`으로 롤백 성공/실패 로그 구분. 루트·`maintenance/updatescripts/` 동기화.
@@ -13,7 +15,7 @@
 - **BuildVariant 주입**: `Makefile`이 `go build`를 두 번 수행하여 `-X main.BuildVariant=control`·`compute`를 각각 주입. `contrabass-moleU --version` 출력에 `(control)` / `(compute)` 표시. variant 미지정 빌드는 빈 문자열(정상 동작).
 - **Agent Variant 선택**: 적용(`apply-update`) 시 `agent_variant` 파라미터로 어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지 결정. 기본값 `compute`.
   - **웹 UI**: 로컬 패널·각 리모트 카드에 라디오 버튼. 스테이징에 dual agent가 있을 때만 표시.
-  - **CLI**: `--apply-update -agent-variant=compute|control`.
+  - **CLI**: `--apply-update -agent-variant=compute|control` (생략 시 설치된 `build_variant` 따름).
   - **REST**: `POST …/apply-update` JSON/multipart `agent_variant` 필드.
 - **MaterializeCanonicalAgent** (`server/agentvariant.go`): 선택된 variant를 canonical `contrabass-moleU`로 복사. 스테이징 시점에는 canonical 파일 미생성, 적용 시점에만 수행.
 - **AllowSameVersionUpdate**: `agent.local.yml`의 `AllowSameVersionUpdate: true`로 동일 버전 재적용 허용 (기본 false).
@@ -49,7 +51,7 @@
 ### `mol --apply-update` (번들 한 번에 검증·적용)
 
 - **`-cfg`**, **`[-agent-variant=compute|control]`**, **`<self|remote-ip>`**, **`<bundle.tar.gz>`** — **로컬 maintenance(8889) 불필요.**
-- `-agent-variant`: manifest v2 번들에서 canonical name으로 설치할 variant 선택 (기본 `compute`).
+- `-agent-variant`: manifest v2 번들에서 canonical name으로 설치할 variant 선택. 생략 시 대상 호스트의 설치 variant (`build_variant`) 따름.
 - 번들은 서버와 동일하게 임시 풀기·검증 후 **`StagingUpdateAvailable`** 으로만 진행. `AllowSameVersionUpdate: true`이면 동일 버전도 허용. **self** 의 "현재 버전" 비교는 **`DeployBase/current` 심볼릭** 우선.
 - **self**: **`ApplyUpdateSelfFromBundleExtract`** 로 `MaterializeCanonicalAgent`(variant→`BinaryName` 복사) + 스테이징 후 **`RunSwitchCurrentWithRoots`**.
 - **remote**: **`http://<ip>:Server.HTTPPort` + `APIPrefix` + `POST …/apply-update`** multipart(`ip`, `bundle`, `agent_variant`) — 요청은 **원격 Gin**에서 처리(§5.5.3).

@@ -58,7 +58,7 @@ func MaterializeCanonicalAgent(versionDir, agentVariant string) error {
 	}
 	if !StagingHasDualAgents(versionDir) {
 		if !dirHasAgentBinary(versionDir) {
-			return fmt.Errorf("버전 디렉터리에 %s 또는 %s/%s 가 없습니다",
+			return fmt.Errorf("version directory missing %s or %s/%s",
 				appmeta.BinaryName, appmeta.BundleAgentControlName, appmeta.BundleAgentComputeName)
 		}
 		return nil
@@ -115,12 +115,12 @@ func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, 
 	vb := VersionsBaseFromParts(installPrefix, deployBaseRaw)
 	versionDir, fromStaging := resolveVersionDirForSwitch(deployRoot, vb, version)
 	if versionDir == "" {
-		return fmt.Errorf("해당 버전이 스테이징 또는 versions에 없습니다: %s", version)
+		return fmt.Errorf("version not found in staging or versions/: %s", version)
 	}
 	targetDir := filepath.Join(vb, "versions", version)
 	if fromStaging {
 		if err := copyStagingToVersionsDir(deployRoot, vb, version); err != nil {
-			return fmt.Errorf("스테이징→versions 복사 실패: %w", err)
+			return fmt.Errorf("copy staging to versions/: %w", err)
 		}
 	} else {
 		targetDir = versionDir
@@ -134,7 +134,7 @@ func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, 
 		return err
 	}
 	if err := MaterializeCanonicalAgent(targetDir, variant); err != nil {
-		return fmt.Errorf("실행 파일 준비: %w", err)
+		return fmt.Errorf("prepare agent binary: %w", err)
 	}
 	return nil
 }
@@ -146,7 +146,7 @@ func runEmbeddedUpdate(deployRoot, version string) error {
 	}
 	currentPath := filepath.Join(deployRoot, "current")
 	if _, err := os.Stat(currentPath); err != nil {
-		return fmt.Errorf("배포 루트에 current가 없습니다. 업데이트를 적용할 수 없습니다: %s", currentPath)
+		return fmt.Errorf("DeployBase/current missing; cannot apply update: %s", currentPath)
 	}
 	updateScript := filepath.Join(currentPath, "update.sh")
 	rollbackScript := filepath.Join(currentPath, "rollback.sh")
@@ -168,7 +168,7 @@ func runEmbeddedUpdate(deployRoot, version string) error {
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(updateScript)
 		_ = os.Remove(rollbackScript)
-		return fmt.Errorf("systemd-run(update.sh) 실패: %w", err)
+		return fmt.Errorf("systemd-run(update.sh) failed: %w", err)
 	}
 	log.Printf("RunSwitchCurrentWithRoots: systemd-run --unit=%s /bin/bash %s %s", appmeta.UpdateTransientUnitStem, updateScript, version)
 	return nil
@@ -197,7 +197,7 @@ func copyStagingToVersionsDir(deployRoot, versionsBaseRoot, version string) erro
 	stg := filepath.Join(deployRoot, "staging", version)
 	ver := filepath.Join(versionsBaseRoot, "versions", version)
 	if _, err := os.Stat(stg); err != nil {
-		return fmt.Errorf("스테이징 디렉터리: %w", err)
+		return fmt.Errorf("staging directory: %w", err)
 	}
 	if err := os.RemoveAll(ver); err != nil {
 		return err

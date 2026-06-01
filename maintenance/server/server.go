@@ -332,7 +332,7 @@ func (s *Server) handleRemoteHealthCheck(w http.ResponseWriter, r *http.Request)
 	}
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if ip == "" || ip == "self" {
-		s.send(w, "fail", "ip 쿼리가 필요합니다", http.StatusOK)
+		s.send(w, "fail", "ip query parameter is required", http.StatusOK)
 		return
 	}
 	baseURL, err := s.remoteBaseURL(ip)
@@ -369,7 +369,7 @@ func (s *Server) handleRemoteHealthCheck(w http.ResponseWriter, r *http.Request)
 		s.send(w, "success", map[string]interface{}{"ok": true}, http.StatusOK)
 		return
 	}
-	s.send(w, "fail", "health 응답 형식이 아닙니다", http.StatusOK)
+	s.send(w, "fail", "health response is not in the expected format", http.StatusOK)
 }
 
 // Handler returns http.Handler that serves web and API.
@@ -597,20 +597,20 @@ func (s *Server) handleServiceStatus(w http.ResponseWriter, r *http.Request) {
 	if ip != "" && ip != "self" {
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 상태 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote service-status request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		url := baseURL + s.apiPrefix + "/service-status"
 		resp, err := remoteHTTPClient.Get(url)
 		if err != nil {
-			s.send(w, "fail", "원격 상태 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote service-status request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var out APIResponse
 		if json.Unmarshal(body, &out) != nil {
-			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 			return
 		}
 		s.send(w, out.Status, out.Data, http.StatusOK)
@@ -655,7 +655,7 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 			// 재시작만 원격 에이전트 API 호출로 처리 (SSH 키 불필요). 원격에서 systemctl restart 수행.
 			baseURL, err := s.remoteBaseURL(ip)
 			if err != nil {
-				s.send(w, "fail", "원격 재시작 요청 실패: "+err.Error(), http.StatusOK)
+				s.send(w, "fail", "remote restart request failed: "+err.Error(), http.StatusOK)
 				return
 			}
 			baseURL = baseURL + s.apiPrefix + "/service-control"
@@ -664,14 +664,14 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := remoteHTTPClient.Do(req)
 			if err != nil {
-				s.send(w, "fail", "원격 재시작 요청 실패: "+err.Error(), http.StatusOK)
+				s.send(w, "fail", "remote restart request failed: "+err.Error(), http.StatusOK)
 				return
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
 			var out APIResponse
 			if json.Unmarshal(body, &out) != nil {
-				s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+				s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 				return
 			}
 			s.send(w, out.Status, out.Data, http.StatusOK)
@@ -688,7 +688,7 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 		}
 		err := svcstatus.RunRemote(ip, sshUser, sshPort, svcName, action)
 		if err != nil {
-			s.send(w, "fail", "원격 SSH 제어 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote SSH control failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		s.send(w, "success", nil, http.StatusOK)
@@ -757,7 +757,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
 	mr, err := r.MultipartReader()
 	if err != nil {
-		s.send(w, "fail", "요청이 multipart가 아니거나 본문을 읽을 수 없습니다", http.StatusBadRequest)
+		s.send(w, "fail", "request is not multipart or body could not be read", http.StatusBadRequest)
 		return
 	}
 	// multipart.Reader는 NextPart() 시 이전 Part를 Close()하며 본문을 버린다. 번들은 루프 안에서 즉시 읽어야 한다.
@@ -768,7 +768,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			s.send(w, "fail", "요청 크기 초과이거나 multipart 읽기 실패", http.StatusBadRequest)
+			s.send(w, "fail", "request too large or multipart read failed", http.StatusBadRequest)
 			return
 		}
 		switch part.FormName() {
@@ -777,7 +777,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			_, err := io.Copy(buf, io.LimitReader(part, s.maxUploadBytes))
 			_ = part.Close()
 			if err != nil {
-				s.send(w, "fail", "번들 파트 읽기 실패: "+err.Error(), http.StatusBadRequest)
+				s.send(w, "fail", "failed to read bundle part: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			bundleData = buf.Bytes()
@@ -787,7 +787,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(bundleData) == 0 {
-		s.send(w, "fail", "번들 파일이 필요합니다 (multipart 필드 \""+uploadBundleField+"\", tar.gz)", http.StatusBadRequest)
+		s.send(w, "fail", "bundle file required (multipart field \""+uploadBundleField+"\", tar.gz)", http.StatusBadRequest)
 		return
 	}
 
@@ -802,11 +802,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	finalDir := s.stagingDir(base, pb.VersionKey)
 	if err := os.MkdirAll(filepath.Join(base, "staging"), 0755); err != nil {
-		s.send(w, "fail", "스테이징 디렉터리 생성 실패: "+err.Error(), http.StatusInternalServerError)
+		s.send(w, "fail", "failed to create staging directory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := os.MkdirAll(finalDir, 0755); err != nil {
-		s.send(w, "fail", "스테이징 버전 디렉터리 생성 실패: "+err.Error(), http.StatusInternalServerError)
+		s.send(w, "fail", "failed to create staging version directory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -817,7 +817,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.WriteFile(filepath.Join(finalDir, StagedBundleFileName), bundleData, 0644); err != nil {
 		_ = os.RemoveAll(finalDir)
-		s.send(w, "fail", "원본 번들 저장 실패: "+err.Error(), http.StatusInternalServerError)
+		s.send(w, "fail", "failed to save uploaded bundle: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	log.Printf("upload: version %s -> %s (staging)", pb.VersionKey, finalDir)
@@ -838,11 +838,11 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	version := strings.TrimSpace(req.Version)
 	if version == "" {
-		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
+		s.send(w, "fail", "version is required", http.StatusBadRequest)
 		return
 	}
 	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
-		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+		s.send(w, "fail", "version contains invalid characters", http.StatusBadRequest)
 		return
 	}
 	base := s.deployBase
@@ -854,15 +854,15 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 	clean := filepath.Clean(stagingVersionDir)
 	rel, relErr := filepath.Rel(stagingParent, clean)
 	if relErr != nil || rel == ".." || strings.HasPrefix(rel, "..") || clean == stagingParent {
-		s.send(w, "fail", "잘못된 버전 경로입니다", http.StatusBadRequest)
+		s.send(w, "fail", "invalid version path", http.StatusBadRequest)
 		return
 	}
 	if err := os.RemoveAll(stagingVersionDir); err != nil {
-		s.send(w, "fail", "삭제 실패: "+err.Error(), http.StatusOK)
+		s.send(w, "fail", "delete failed: "+err.Error(), http.StatusOK)
 		return
 	}
 	log.Printf("upload/remove: version %s removed from staging %s", version, stagingVersionDir)
-	s.send(w, "success", "버전 "+version+" 이 스테이징에서 삭제되었습니다.", http.StatusOK)
+	s.send(w, "success", "version "+version+" removed from staging.", http.StatusOK)
 }
 
 // remoteHTTPClient is used to call another agent's upload/apply APIs (no SSH/SCP).
@@ -880,7 +880,7 @@ func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, ver
 	configPath := filepath.Join(versionDir, appmeta.ConfigFileName)
 	tmp, err := os.CreateTemp("", "remote-bundle-*.tar.gz")
 	if err != nil {
-		return fmt.Errorf("임시 번들: %w", err)
+		return fmt.Errorf("temp bundle: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
@@ -895,7 +895,7 @@ func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, ver
 	if !v2Ready {
 		binPath := filepath.Join(versionDir, appmeta.BinaryName)
 		if fi, err := os.Stat(binPath); err != nil || fi.IsDir() {
-			return fmt.Errorf("번들 재생성: %s 또는 %s/%s 가 없습니다", appmeta.BinaryName, appmeta.BundleAgentControlName, appmeta.BundleAgentComputeName)
+			return fmt.Errorf("bundle rebuild: missing %s or %s/%s", appmeta.BinaryName, appmeta.BundleAgentControlName, appmeta.BundleAgentComputeName)
 		}
 		packErr = writeBundleTarGzLegacy(tmp, binPath, configPath)
 	}
@@ -913,7 +913,7 @@ func (s *Server) postUploadToTarget(ctx context.Context, baseURL, apiPrefix, ver
 func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, bundlePath string) error {
 	raw, err := os.ReadFile(bundlePath)
 	if err != nil {
-		return fmt.Errorf("번들 읽기: %w", err)
+		return fmt.Errorf("read bundle: %w", err)
 	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -936,7 +936,7 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	resp, err := remoteHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("원격 업로드 요청: %w", err)
+		return fmt.Errorf("remote upload request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -946,7 +946,7 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 	}
 	_ = json.Unmarshal(body, &out)
 	if out.Status != "success" {
-		msg := "원격 업로드 실패"
+		msg := "remote upload failed"
 		if s, ok := out.Data.(string); ok && s != "" {
 			msg = s
 		}
@@ -981,7 +981,7 @@ func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := remoteHTTPClient.Do(req)
 	if err != nil {
-		return "", nil, fmt.Errorf("원격 적용 요청: %w", err)
+		return "", nil, fmt.Errorf("remote apply request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -1008,7 +1008,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
 		mr, err := r.MultipartReader()
 		if err != nil {
-			s.send(w, "fail", "multipart 파싱 실패", http.StatusBadRequest)
+			s.send(w, "fail", "multipart parse failed", http.StatusBadRequest)
 			return
 		}
 		var remoteIP string
@@ -1020,7 +1020,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			if err != nil {
-				s.send(w, "fail", "요청 크기 초과이거나 multipart 읽기 실패", http.StatusBadRequest)
+				s.send(w, "fail", "request too large or multipart read failed", http.StatusBadRequest)
 				return
 			}
 			switch part.FormName() {
@@ -1028,7 +1028,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 				b, rerr := io.ReadAll(io.LimitReader(part, 256))
 				if rerr != nil {
 					part.Close()
-					s.send(w, "fail", "multipart 읽기 실패", http.StatusBadRequest)
+					s.send(w, "fail", "multipart read failed", http.StatusBadRequest)
 					return
 				}
 				_ = part.Close()
@@ -1038,7 +1038,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 				_, err := io.Copy(buf, io.LimitReader(part, s.maxUploadBytes))
 				_ = part.Close()
 				if err != nil {
-					s.send(w, "fail", "번들 파트 읽기 실패: "+err.Error(), http.StatusBadRequest)
+					s.send(w, "fail", "failed to read bundle part: "+err.Error(), http.StatusBadRequest)
 					return
 				}
 				bundleData = buf.Bytes()
@@ -1046,7 +1046,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 				b, rerr := io.ReadAll(io.LimitReader(part, 64))
 				_ = part.Close()
 				if rerr != nil {
-					s.send(w, "fail", "multipart 읽기 실패", http.StatusBadRequest)
+					s.send(w, "fail", "multipart read failed", http.StatusBadRequest)
 					return
 				}
 				v, verr := appmeta.ParseAgentVariant(string(b))
@@ -1062,11 +1062,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ip := remoteIP
 		if ip == "" || ip == "self" {
-			s.send(w, "fail", "원격 적용 시 ip가 필요합니다", http.StatusBadRequest)
+			s.send(w, "fail", "ip is required for remote apply", http.StatusBadRequest)
 			return
 		}
 		if len(bundleData) == 0 {
-			s.send(w, "fail", "번들 파일이 필요합니다 (multipart 필드 \""+uploadBundleField+"\", tar.gz)", http.StatusBadRequest)
+			s.send(w, "fail", "bundle file required (multipart field \""+uploadBundleField+"\", tar.gz)", http.StatusBadRequest)
 			return
 		}
 
@@ -1079,7 +1079,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 적용 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote apply failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 280*time.Second)
@@ -1094,7 +1094,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if status != "success" {
-			msg := "원격 적용 실패"
+			msg := "remote apply failed"
 			if msgStr, ok := data.(string); ok && msgStr != "" {
 				msg = msgStr
 			}
@@ -1102,7 +1102,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API, agent_variant=%s)", ip, pb.VersionKey, agentVariant)
-		s.send(w, "success", "원격 "+ip+" 에 버전 "+pb.VersionKey+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
+		s.send(w, "success", "version "+pb.VersionKey+" applied on remote "+ip+". Refresh service status.", http.StatusOK)
 		return
 	}
 
@@ -1117,11 +1117,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	version := strings.TrimSpace(req.Version)
 	if version == "" {
-		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
+		s.send(w, "fail", "version is required", http.StatusBadRequest)
 		return
 	}
 	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
-		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+		s.send(w, "fail", "version contains invalid characters", http.StatusBadRequest)
 		return
 	}
 
@@ -1133,7 +1133,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	versionDir, _ := s.resolveVersionDir(base, version)
 	if versionDir == "" {
-		s.send(w, "fail", "해당 버전이 스테이징 또는 versions에 없습니다: "+version, http.StatusOK)
+		s.send(w, "fail", "version not found in staging or versions/: "+version, http.StatusOK)
 		return
 	}
 
@@ -1143,7 +1143,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
-		s.send(w, "success", "업데이트를 적용 중입니다. 잠시 후 서버가 재시작됩니다. 아래 로그를 새로고침하세요.", http.StatusOK)
+		s.send(w, "success", "Update in progress; the service will restart shortly. Refresh the update log below.", http.StatusOK)
 		return
 	}
 
@@ -1154,14 +1154,14 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, agentVariant string) {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
-		s.send(w, "fail", "원격 적용 실패: "+err.Error(), http.StatusOK)
+		s.send(w, "fail", "remote apply failed: "+err.Error(), http.StatusOK)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
 	defer cancel()
 
 	if !dirHasAgentBinary(versionDir) && !versionsapi.StagingHasDualAgents(versionDir) {
-		s.send(w, "fail", "버전 디렉터리에 실행 파일 "+appmeta.BinaryName+" 또는 "+appmeta.BundleAgentControlName+"/"+appmeta.BundleAgentComputeName+" 이 없습니다: "+versionDir, http.StatusOK)
+		s.send(w, "fail", "version directory missing "+appmeta.BinaryName+" or "+appmeta.BundleAgentControlName+"/"+appmeta.BundleAgentComputeName+": "+versionDir, http.StatusOK)
 		return
 	}
 	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, versionDir); err != nil {
@@ -1174,7 +1174,7 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, 
 		return
 	}
 	if status != "success" {
-		msg := "원격 적용 실패"
+		msg := "remote apply failed"
 		if msgStr, ok := data.(string); ok && msgStr != "" {
 			msg = msgStr
 		}
@@ -1182,7 +1182,7 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, 
 		return
 	}
 	log.Printf("apply-update: remote %s version %s applied (upload API, agent_variant=%s)", ip, version, agentVariant)
-	s.send(w, "success", "원격 "+ip+" 에 버전 "+version+" 적용 완료. 서비스 상태를 새로고침하세요.", http.StatusOK)
+	s.send(w, "success", "version "+version+" applied on remote "+ip+". Refresh service status.", http.StatusOK)
 }
 
 func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
@@ -1219,7 +1219,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	if ip != "" && ip != "self" {
 		rv, err := s.fetchRemoteVersionKey(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 버전 조회 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote version query failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		compareKey = strings.TrimSpace(rv)
@@ -1285,20 +1285,20 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 	if ip != "" && ip != "self" {
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 versions 목록 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote versions list request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		baseURL = baseURL + s.apiPrefix + "/versions/list"
 		resp, err := remoteHTTPClient.Get(baseURL)
 		if err != nil {
-			s.send(w, "fail", "원격 versions 목록 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote versions list request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var out APIResponse
 		if json.Unmarshal(body, &out) != nil {
-			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 			return
 		}
 		s.send(w, out.Status, out.Data, http.StatusOK)
@@ -1307,7 +1307,7 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 	base := s.versionsBase()
 	list, err := versionsapi.ListInstalledVersions(base)
 	if err != nil {
-		s.send(w, "fail", "versions 디렉터리를 읽을 수 없습니다: "+err.Error(), http.StatusOK)
+		s.send(w, "fail", "cannot read versions directory: "+err.Error(), http.StatusOK)
 		return
 	}
 	s.send(w, "success", map[string]interface{}{"versions": list}, http.StatusOK)
@@ -1346,7 +1346,7 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 		}
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 버전 삭제 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote versions remove request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		baseURL = baseURL + s.apiPrefix + "/versions/remove"
@@ -1355,14 +1355,14 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 		hr.Header.Set("Content-Type", "application/json")
 		resp, err := remoteHTTPClient.Do(hr)
 		if err != nil {
-			s.send(w, "fail", "원격 버전 삭제 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote versions remove request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var out APIResponse
 		if json.Unmarshal(body, &out) != nil {
-			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 			return
 		}
 		s.send(w, out.Status, out.Data, http.StatusOK)
@@ -1384,18 +1384,18 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if ver == currentVer {
-			skipped = append(skipped, ver+" (현재 실행 중)")
+			skipped = append(skipped, ver+" (current)")
 			continue
 		}
 		if ver == previousVer {
-			skipped = append(skipped, ver+" (이전 버전, 롤백용)")
+			skipped = append(skipped, ver+" (previous, for rollback)")
 			continue
 		}
 		dir := s.versionsDir(base, ver)
 		clean := filepath.Clean(dir)
 		rel, relErr := filepath.Rel(versionsParent, clean)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, "..") || clean == versionsParent {
-			skipped = append(skipped, ver+" (잘못된 경로)")
+			skipped = append(skipped, ver+" (invalid path)")
 			continue
 		}
 		if err := os.RemoveAll(dir); err != nil {
@@ -1409,16 +1409,16 @@ func (s *Server) handleVersionsRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := ""
 	if len(removed) > 0 {
-		msg = "삭제됨: " + strings.Join(removed, ", ")
+		msg = "removed: " + strings.Join(removed, ", ")
 	}
 	if len(skipped) > 0 {
 		if msg != "" {
 			msg += ". "
 		}
-		msg += "제외: " + strings.Join(skipped, "; ")
+		msg += "skipped: " + strings.Join(skipped, "; ")
 	}
 	if msg == "" {
-		msg = "삭제할 버전을 선택하세요."
+		msg = "no versions selected for removal."
 	}
 	s.send(w, "success", msg, http.StatusOK)
 }
@@ -1440,18 +1440,18 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 	}
 	version := strings.TrimSpace(req.Version)
 	if version == "" {
-		s.send(w, "fail", "version이 필요합니다", http.StatusBadRequest)
+		s.send(w, "fail", "version is required", http.StatusBadRequest)
 		return
 	}
 	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
-		s.send(w, "fail", "version에 허용되지 않은 문자가 있습니다", http.StatusBadRequest)
+		s.send(w, "fail", "version contains invalid characters", http.StatusBadRequest)
 		return
 	}
 	ip := strings.TrimSpace(req.IP)
 	if ip != "" && ip != "self" {
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(s.apiPrefix, "/") + "/versions/switch-current"
@@ -1468,14 +1468,14 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 		hr.Header.Set("Content-Type", "application/json")
 		resp, err := remoteHTTPClient.Do(hr)
 		if err != nil {
-			s.send(w, "fail", "원격 전환 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote switch-current request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var out APIResponse
 		if json.Unmarshal(body, &out) != nil {
-			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 			return
 		}
 		s.send(w, out.Status, out.Data, http.StatusOK)
@@ -1487,14 +1487,14 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 		base = "/var/lib/contrabass/mole"
 	}
 	if dir, _ := s.resolveVersionDir(base, version); dir == "" {
-		s.send(w, "fail", "해당 버전이 스테이징 또는 versions에 없습니다: "+version, http.StatusOK)
+		s.send(w, "fail", "version not found in staging or versions/: "+version, http.StatusOK)
 		return
 	}
 	if err := s.runUpdateViaEmbeddedScript(base, version, ""); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	s.send(w, "success", "systemd-run으로 update.sh가 시작되었습니다. 서비스 재시작·헬스는 스크립트가 수행하며, 완료까지 수십 초 걸릴 수 있습니다. 실패 시 update_history.log·journal을 확인하세요.", http.StatusOK)
+	s.send(w, "success", "systemd-run started update.sh. Service restart and health checks may take tens of seconds. On failure check update_history.log and journal.", http.StatusOK)
 }
 
 func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
@@ -1506,20 +1506,20 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	if ip != "" && ip != "self" {
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 업데이트 로그 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote update-log request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		url := baseURL + s.apiPrefix + "/update-log"
 		resp, err := remoteHTTPClient.Get(url)
 		if err != nil {
-			s.send(w, "fail", "원격 업데이트 로그 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote update-log request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var out APIResponse
 		if json.Unmarshal(body, &out) != nil {
-			s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+			s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 			return
 		}
 		s.send(w, out.Status, out.Data, http.StatusOK)
@@ -1533,7 +1533,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(historyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.send(w, "success", map[string]interface{}{"output": "(아직 기록 없음)", "recent_rollback": false}, http.StatusOK)
+			s.send(w, "success", map[string]interface{}{"output": "(no entries yet)", "recent_rollback": false}, http.StatusOK)
 			return
 		}
 		s.send(w, "fail", err.Error(), http.StatusOK)
@@ -1552,7 +1552,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	}
 	output := strings.Join(outLines, "\n")
 	if output == "" {
-		output = "(아직 기록 없음)"
+		output = "(no entries yet)"
 	}
 	recentRollback := false
 	if len(lines) > 0 {
@@ -1601,21 +1601,21 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 	if ip != "" && ip != "self" {
 		baseURL, err := s.remoteBaseURL(ip)
 		if err != nil {
-			s.send(w, "fail", "원격 config 요청 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", "remote config request failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		baseURL = baseURL + s.apiPrefix + "/current-config"
 		if r.Method == http.MethodGet {
 			resp, err := remoteHTTPClient.Get(baseURL)
 			if err != nil {
-				s.send(w, "fail", "원격 config 요청 실패: "+err.Error(), http.StatusOK)
+				s.send(w, "fail", "remote config request failed: "+err.Error(), http.StatusOK)
 				return
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
 			var out APIResponse
 			if json.Unmarshal(body, &out) != nil {
-				s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+				s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 				return
 			}
 			s.send(w, out.Status, out.Data, http.StatusOK)
@@ -1627,14 +1627,14 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := remoteHTTPClient.Do(req)
 			if err != nil {
-				s.send(w, "fail", "원격 config 저장 요청 실패: "+err.Error(), http.StatusOK)
+				s.send(w, "fail", "remote config save request failed: "+err.Error(), http.StatusOK)
 				return
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
 			var out APIResponse
 			if json.Unmarshal(body, &out) != nil {
-				s.send(w, "fail", "원격 응답 파싱 실패", http.StatusOK)
+				s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 				return
 			}
 			s.send(w, out.Status, out.Data, http.StatusOK)
@@ -1643,7 +1643,7 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	configPath := s.currentConfigPath()
 	if configPath == "" {
-		s.send(w, "fail", "current 버전을 찾을 수 없습니다", http.StatusOK)
+		s.send(w, "fail", "current version symlink not found", http.StatusOK)
 		return
 	}
 	switch r.Method {
@@ -1654,7 +1654,7 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 				s.send(w, "success", map[string]interface{}{"content": ""}, http.StatusOK)
 				return
 			}
-			s.send(w, "fail", appmeta.ConfigFileName+" 읽기 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", appmeta.ConfigFileName+" read failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		s.send(w, "success", map[string]interface{}{"content": string(data)}, http.StatusOK)
@@ -1668,7 +1668,7 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := os.WriteFile(configPath, []byte(postContent), 0644); err != nil {
-			s.send(w, "fail", appmeta.ConfigFileName+" 저장 실패: "+err.Error(), http.StatusOK)
+			s.send(w, "fail", appmeta.ConfigFileName+" save failed: "+err.Error(), http.StatusOK)
 			return
 		}
 		s.send(w, "success", nil, http.StatusOK)

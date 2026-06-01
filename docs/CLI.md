@@ -27,7 +27,7 @@
 | 항목 | 설명 |
 |------|------|
 | **종료 코드** | 성공 **`0`**, 실패 **`1`**. `maintenance`·`discoverycli`·`applycli`·`versionscli`·`hostinfocli` 패키지는 **`os.Exit`를 호출하지 않고** 상위 `main`이 `os.Exit` 한다. |
-| **도움말 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`** 관련 진단 메시지는 **영문**으로 출력한다(로캘 미설치 OS 대비). `--discovery` 도움말도 영문. |
+| **도움말·API 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`** 관련 **CLI 진단 메시지**는 **영문**이다. 원격 호출 시 stdout에 찍히는 성공/실패 문구는 **원격 에이전트 REST API**의 `data` 문자열(영문)을 그대로 출력한다. `--discovery` 도움말도 영문. |
 | **버전 출력** | **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** / **`agent --version`** — 빌드 시 주입된 **`main.VersionKey`** 와 `BinaryName` 한 줄. `BuildVariant`가 주입된 경우 **`contrabass-moleU 0.4.4-test (compute)`** 형태로 variant 접미사가 붙는다. **전환용**: 루트 **`contrabass-moleU --version`** / **`-version`** 도 동일 한 줄을 출력한다(구 업데이트 스크립트 호환; PRD §4.1·§9). 설정 파일 불필요. |
 
 ---

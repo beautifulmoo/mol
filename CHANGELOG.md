@@ -1,5 +1,10 @@
 # 변경 이력 (mol)
 
+## Maintenance API messages (English)
+
+- **`maintenance/server`**: JSON `data` strings for apply-update, switch-current, upload/remove, remote proxy errors, update-log empty text, etc. are **English** (CLI and web consume the same API).
+- **`versionsapi`**: errors returned through apply/switch paths are English.
+
 ## 유지보수 웹 UI · 업데이트 기록
 
 - **로그/목록 버튼**: 업데이트 기록 블록 **「로그 새로고침」**, 설치된 버전 블록 **「목록 새로고침」**.

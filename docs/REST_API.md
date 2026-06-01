@@ -11,7 +11,7 @@
 
 | 항목 | 설명 |
 |------|------|
-| **JSON 응답(대부분의 API)** | `Content-Type: application/json`. 본문 형식: `{"status":"success"\|"fail","data":<임의>}` (`APIResponse`). 일부 오류는 HTTP 4xx와 함께 동일 형식. |
+| **JSON 응답(대부분의 API)** | `Content-Type: application/json`. 본문 형식: `{"status":"success"\|"fail","data":<임의>}` (`APIResponse`). 일부 오류는 HTTP 4xx와 함께 동일 형식. **`data`가 문자열인 경우(적용·전환·삭제 안내 등)는 영문** — CLI가 원격 응답을 그대로 출력하고, 웹 UI도 동일 API를 사용한다. |
 | **원격 프록시** | `ip` 쿼리/바디로 원격 호스트를 지정하면, 서버는 **`Server.HTTPPort`(Gin 등 외부 포트)** 로 해당 에이전트에 HTTP 요청을 보내 응답을 그대로 전달한다(`remoteBaseURL`). `Server.HTTPPort`가 유효하지 않으면 원격 호출 실패. |
 | **텍스트** | `GET /version`만 `text/plain` (JSON 아님). |
 

@@ -646,7 +646,7 @@
             if (body.status === 'success') {
               var ver;
               if (body.data && typeof body.data === 'string') {
-                var m = body.data.match(/버전\s+(\S+)\s+적용 완료/);
+                var m = body.data.match(/version\s+(\S+)\s+applied on remote/i);
                 if (m) ver = m[1];
               }
               scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);

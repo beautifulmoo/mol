@@ -1,5 +1,11 @@
 # 변경 이력 (mol)
 
+## Greenfield install script (`bin/ubuntu/contrabass-mole-new-install.sh`)
+
+- **Ubuntu initial install**: manifest v2 tar.gz → `versions/<version-key>/`, `current`, `staging/`, materialize `control|compute` → `contrabass-moleU`, systemd `contrabass-mole.service`.
+- Version key from binary **`agent --version`** (not tarball filename). Optional manifest SHA256 when `sha256sum` is available. English messages; root required (`id -u`); prints Usage when not root or wrong args.
+- Documented in **README.md**, **PRD.md §5.5.0.1**.
+
 ## Maintenance API messages (English)
 
 - **`maintenance/server`**: JSON `data` strings for apply-update, switch-current, upload/remove, remote proxy errors, update-log empty text, etc. are **English** (CLI and web consume the same API).

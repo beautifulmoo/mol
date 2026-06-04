@@ -47,16 +47,25 @@ make   # 또는 make build
 # 기본 출력: ./dist/contrabass-agent-<version>.tar.gz
 ```
 
+### 최초 설치 (Ubuntu)
+
+호스트에 **아직** `contrabass-moleU` 가 없을 때는 저장소의 **`bin/ubuntu/contrabass-mole-new-install.sh`** 로 manifest v2 번들을 한 번에 깔 수 있다. (이후 버전 변경은 웹/CLI 업데이트·`update.sh` 경로.)
+
+```bash
+# root (예: sudo)
+sudo ./bin/ubuntu/contrabass-mole-new-install.sh \
+  ./dist/contrabass-agent-<version>.tar.gz \
+  control   # 또는 compute — current 로 설치할 variant
+```
+
+- **인자**: (1) `pack-agent-tarball.sh` 가 만든 **tar.gz**, (2) `control` | `compute`.
+- **권한**: **root 필수** (`/var/lib/contrabass/mole`, `/etc/systemd/system`). 비 root 이면 Usage 출력 후 종료.
+- **동작 요약**: 번들 검증(manifest v2, `sha256sum` 있으면 해시 비교·없으면 건너뜀) → 버전 키는 바이너리 **`agent --version`** 으로 결정 → `versions/<버전 키>/` 에 풀기 → 선택 variant 를 `contrabass-moleU` 로 복사 → `current` → `staging/` 생성 → `contrabass-mole.service` 등록·기동.
+- **로그 디렉터리**: `/var/log/contrabass/mole` 생성(향후 사용 예정). 상세는 **PRD.md §5.5.0.1**.
+
 ### 업데이트·롤백 스크립트 (update.sh, rollback.sh)
 
-프로젝트 루트에 **update.sh**, **rollback.sh** 가 참고용으로 포함되어 있다. 웹 UI의 “업데이트 적용” 기능을 쓰려면 이 스크립트들을 **배포 베이스 디렉터리**에 두어야 한다.
-
-- **위치**: 설정 `DeployBase`(기본값 `/var/lib/contrabass/mole`) 아래에 두 파일을 복사한다.
-  - `{DeployBase}/update.sh`
-  - `{DeployBase}/rollback.sh`
-- 예: `/var/lib/contrabass/mole` 를 쓰는 경우
-  - `/var/lib/contrabass/mole/update.sh`, `/var/lib/contrabass/mole/rollback.sh` 로 복사 후 실행 권한 부여 (`chmod +x`).
-- 스크립트 안의 `BASE`(또는 경로)가 실제 배포 경로와 같아야 한다. 기본값은 `/var/lib/contrabass/mole` 이다. `DeployBase` 를 다르게 쓰면 스크립트 내부 경로를 그에 맞게 수정해야 한다.
+프로젝트 루트에 **update.sh**, **rollback.sh** 가 참고용으로 포함되어 있다. **운영 적용** 시에는 에이전트 바이너리에 **내장**된 스크립트가 `current/` 아래에만 풀려 실행된다(PRD §5.5.2). 루트 스크립트는 개발·참고용이다.
 
 **사용 방법**
 

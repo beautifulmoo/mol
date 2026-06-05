@@ -13,6 +13,7 @@ VERSION_KEY ?= $(shell ./maintenance/scripts/build-version.sh)
 OUTPUT_DIR ?= build/image
 BINARY_CONTROL ?= $(OUTPUT_DIR)/contrabass-moleU-control
 BINARY_COMPUTE ?= $(OUTPUT_DIR)/contrabass-moleU-compute
+STRIP ?= strip
 
 LDFLAGS_BASE = -X main.VersionKey=$(VERSION_KEY)
 
@@ -22,6 +23,7 @@ build: maintenance/updatescripts/update.sh maintenance/updatescripts/rollback.sh
 	go build -o "$(BINARY_CONTROL)" -ldflags '$(LDFLAGS_BASE) -X main.BuildVariant=control' .
 	go build -o "$(BINARY_COMPUTE)" -ldflags '$(LDFLAGS_BASE) -X main.BuildVariant=compute' .
 	chmod +x "$(BINARY_CONTROL)" "$(BINARY_COMPUTE)"
+	$(STRIP) "$(BINARY_CONTROL)" "$(BINARY_COMPUTE)"
 	cp $(BINARY_CONTROL) ./contrabass-moleU
 
 # 바이너리에 내장되는 스크립트 — 루트의 update.sh / rollback.sh 와 동기화됨

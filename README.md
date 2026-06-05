@@ -49,11 +49,11 @@ make   # 또는 make build
 
 ### 최초 설치 (Ubuntu)
 
-호스트에 **아직** `contrabass-moleU` 가 없을 때는 저장소의 **`bin/ubuntu/contrabass-mole-new-install.sh`** 로 manifest v2 번들을 한 번에 깔 수 있다. (이후 버전 변경은 웹/CLI 업데이트·`update.sh` 경로.)
+호스트에 **아직** `contrabass-moleU` 가 없을 때는 저장소의 **`bin/ubuntu/contrabass-agent-install.sh`** 로 manifest v2 번들을 한 번에 깔 수 있다. (이후 버전 변경은 웹/CLI 업데이트·`update.sh` 경로.)
 
 ```bash
 # root (예: sudo)
-sudo ./bin/ubuntu/contrabass-mole-new-install.sh \
+sudo ./bin/ubuntu/contrabass-agent-install.sh \
   ./dist/contrabass-agent-<version>.tar.gz \
   control   # 또는 compute — current 로 설치할 variant
 ```
@@ -62,6 +62,18 @@ sudo ./bin/ubuntu/contrabass-mole-new-install.sh \
 - **권한**: **root 필수** (`/var/lib/contrabass/mole`, `/etc/systemd/system`). 비 root 이면 Usage 출력 후 종료.
 - **동작 요약**: 번들 검증(manifest v2, `sha256sum` 있으면 해시 비교·없으면 건너뜀) → 버전 키는 바이너리 **`agent --version`** 으로 결정 → `versions/<버전 키>/` 에 풀기 → 선택 variant 를 `contrabass-moleU` 로 복사 → `current` → `staging/` 생성 → `contrabass-mole.service` 등록·기동.
 - **로그 디렉터리**: `/var/log/contrabass/mole` 생성(향후 사용 예정). 상세는 **PRD.md §5.5.0.1**.
+
+### 제거 (Ubuntu)
+
+설치 스크립트가 만든 **서비스·배포 트리·로그 디렉터리**를 한 번에 지울 때는 **`bin/ubuntu/contrabass-agent-uninstall.sh`** 를 쓴다.
+
+```bash
+sudo ./bin/ubuntu/contrabass-agent-uninstall.sh
+```
+
+- **인자**: 없음.
+- **권한**: **root 필수**. 비 root 이면 Usage 출력 후 종료.
+- **동작 요약**: `contrabass-mole.service` 중지·비활성 → `/etc/systemd/system/contrabass-mole.service` 삭제 → `/var/lib/contrabass/mole` 전체 삭제 → `/var/log/contrabass/mole` 삭제. 상세는 **PRD.md §5.5.0.2**.
 
 ### 업데이트·롤백 스크립트 (update.sh, rollback.sh)
 

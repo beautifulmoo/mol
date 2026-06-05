@@ -405,18 +405,25 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 | `maintenance/versionsapi/staging.go` | `StagingHasDualAgents`, `DirHasStagedAgents` |
 | `maintenance/applycli/applycli.go` | CLI `--apply-update` (`-agent-variant` 플래그) |
 | `maintenance/scripts/pack-agent-tarball.sh` | 릴리스 번들 빌드 (manifest v2) |
-| `bin/ubuntu/contrabass-mole-new-install.sh` | **최초 설치**(greenfield): manifest v2 tar.gz → `versions/`·`current`·systemd |
+| `bin/ubuntu/contrabass-agent-install.sh` | **최초 설치**(greenfield): manifest v2 tar.gz → `versions/`·`current`·systemd |
+| `bin/ubuntu/contrabass-agent-uninstall.sh` | **제거**: `contrabass-mole.service` 중지·비활성·유닛 삭제, `{DeployBase}`·로그 디렉터리 삭제 |
 | `docs/CLI.md` | `--apply-update` 사용법 |
 
 #### 5.5.0.1 최초 설치 스크립트 (greenfield installer)
 
-- **경로**: `bin/ubuntu/contrabass-mole-new-install.sh` (POSIX `sh`, **root** 필수).
-- **입력**: `contrabass-mole-new-install.sh <tar.gz> <control|compute>` — 번들은 §5.5.0·`pack-agent-tarball.sh` 산출 **manifestVersion 2** tar.gz.
+- **경로**: `bin/ubuntu/contrabass-agent-install.sh` (POSIX `sh`, **root** 필수).
+- **입력**: `contrabass-agent-install.sh <tar.gz> <control|compute>` — 번들은 §5.5.0·`pack-agent-tarball.sh` 산출 **manifestVersion 2** tar.gz.
 - **권한·Usage**: `id -u` 가 0 이 아니거나 인자가 부족하면 **Usage** 와 `error:` 한 줄(영문)을 출력하고 종료한다.
 - **검증**: `contrabass.manifest.yaml` 존재·v2, `contrabass-moleU-control`·`contrabass-moleU-compute`·`agent.local.yml` 존재. **`sha256sum` 이 있으면** manifest 의 control/compute/config SHA256 을 파일과 대조하고, **없으면** 해시 검증을 건너뛴다(경고 한 줄).
 - **버전 키**: tar 파일명이 아니라 번들 내 바이너리 **`agent --version`** 출력에서 읽는다(control·compute 키 일치 필수). 디렉터리는 `{DeployBase}/versions/<버전 키>/`.
 - **설치 후 트리**: flat 번들 멤버를 `versions/<키>/` 에 복사 → 인자 variant 로 **`contrabass-moleU` materialize** (`chmod 755`) → `current` → `versions/<키>`(상대 심볼릭, `update.sh` 와 동일) → `{DeployBase}/staging/` 생성 → `/var/log/contrabass/mole` 생성(향후 로그용).
 - **systemd**: `/etc/systemd/system/contrabass-mole.service` 에 유닛 작성, `ExecStart={DeployBase}/current/contrabass-moleU -cfg {DeployBase}/current/agent.local.yml`, `systemctl enable`·`start`. 이후 업데이트는 웹/CLI·내장 `update.sh` 로 수행한다(§5.5.3).
+
+#### 5.5.0.2 제거 스크립트 (uninstaller)
+
+- **경로**: `bin/ubuntu/contrabass-agent-uninstall.sh` (POSIX `sh`, **root** 필수, 인자 없음).
+- **동작**: `contrabass-mole.service` **stop**·**disable** → `/etc/systemd/system/contrabass-mole.service` 삭제 → `systemctl daemon-reload` → `{DeployBase}`(기본 `/var/lib/contrabass/mole`, `versions/`·`current`·`staging/`·`update_history.log` 등 전체) 및 `/var/log/contrabass/mole` 삭제. 경로가 없으면 `note:` 한 줄 후 건너뜀. 메시지는 **영문**.
+- **권한·Usage**: install(§5.5.0.1)과 동일하게 비 root 또는 인자가 있으면 Usage·`error:` 후 종료.
 
 #### 5.5.1 배포 디렉터리 구조·버전 키
 
@@ -511,7 +518,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 ### 5.6 설치된 버전(versions) API
 
-- **경로 기준**: `InstallPrefix`(설정, 비면 `DeployBase`) 아래 `versions/` 디렉터리 및 `current`·`previous` 심볼릭 링크를 사용한다. **최초 설치**는 §5.5.0.1 `contrabass-mole-new-install.sh`, 이후 목록·전환·업데이트는 동일 경로를 사용한다. `InstallPrefix`를 둔다.
+- **경로 기준**: `InstallPrefix`(설정, 비면 `DeployBase`) 아래 `versions/` 디렉터리 및 `current`·`previous` 심볼릭 링크를 사용한다. **최초 설치**는 §5.5.0.1 `contrabass-agent-install.sh`, **완전 제거**는 §5.5.0.2 `contrabass-agent-uninstall.sh`, 이후 목록·전환·업데이트는 동일 경로를 사용한다. `InstallPrefix`를 둔다.
 - **목록**: `GET {serverUrl}/api/v1/versions/list?ip=`  
   - `ip` 비어 있거나 `"self"`: `{InstallPrefix}/versions/` 디렉터리 내 각 **버전 키** 이름의 하위 디렉터리(그 안에 **`appmeta.BinaryName` 실행 파일**이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ] } }` — 여기서 `version` 문자열은 디렉터리명과 동일한 **버전 키**이다.  
   - **정렬 순서(표시용)**: **current** 대상을 맨 위 → **previous** 대상 → 그 외는 **버전 키 비교 규칙**(시맨틱 부분을 절 단위 정수로 비교한 뒤, 같으면 `-`(또는 레거시 `_`) 뒤 패치를 정수로 비교)에 따른 **내림차순**(더 “새” 버전이 위). 웹 UI에서 현재·이전·나머지 순으로 한눈에 볼 수 있다.  
@@ -737,7 +744,8 @@ Maintenance:
 - [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
 - [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; 인자 없이 실행 시 안내 후 종료; `agent -h`/`agent --help`(도움말 본문은 영문; 옵션 순서: `-h`, `-version`, **`--host-info`**, `--nic-brd`, …); **`agent --version` / `agent -version`**(권장); **루트 `--version`/`-version`**(전환용 호환); **`agent --host-info -cfg <file> <self|ip>`**(GET host-info, 원격은 유니캐스트 Discovery); `agent --nic-brd`; **`agent --discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`, 결과에 **`version=`**); **`agent --apply-update -cfg <file> <self|ip> <bundle.tar.gz>`**(번들 사전 검증·`StagingUpdateAvailable`·self는 디스크 스테이징+적용·원격은 대상 Gin에 multipart 직접, 메시지 영문); **`agent --versions-list -cfg <file> <self|ip>`** / **`agent --versions-switch -cfg <file> <self|ip> <version-key>`**(REST `versions/list`, `versions/switch-current` 대응, 메시지 영문); 번들·ELF 검증 시 바이너리 **`--version` → `agent --version`** 폴백
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
-- [ ] **최초 설치**: `bin/ubuntu/contrabass-mole-new-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
+- [ ] **최초 설치**: `bin/ubuntu/contrabass-agent-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
+- [ ] **완전 제거**: `bin/ubuntu/contrabass-agent-uninstall.sh` — root·인자 없음·service stop/disable·유닛 삭제·`DeployBase`·`/var/log/contrabass/mole` 삭제
 - [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; `update_history.log` **flock**; 로컬 적용·로컬 switch-current 후 **페이지 전체 새로고침 없이** `/self` 폴링(4초 후·2초·15회)과 **별도** update-log 폴링(2초·started→맨 위 success/failed, 캐시 무효화); 원격 적용 후 host-info 폴링(최대 8회) → 패널 일괄 현행화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; recent_rollback·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(실행 파일+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 실행 파일·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답

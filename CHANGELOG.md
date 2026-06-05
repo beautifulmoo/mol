@@ -1,6 +1,12 @@
 # 변경 이력 (mol)
 
-## Greenfield install script (`bin/ubuntu/contrabass-mole-new-install.sh`)
+## Ubuntu install/uninstall scripts (`bin/ubuntu/`)
+
+- **Rename**: `contrabass-mole-new-install.sh` → **`contrabass-agent-install.sh`** (behavior unchanged).
+- **Uninstall**: **`contrabass-agent-uninstall.sh`** — root, no args; stops/disables `contrabass-mole.service`, removes unit file, deletes `/var/lib/contrabass/mole` and `/var/log/contrabass/mole`.
+- Documented in **README.md**, **PRD.md §5.5.0.1–§5.5.0.2**.
+
+## Greenfield install script (`bin/ubuntu/contrabass-agent-install.sh`)
 
 - **Ubuntu initial install**: manifest v2 tar.gz → `versions/<version-key>/`, `current`, `staging/`, materialize `control|compute` → `contrabass-moleU`, systemd `contrabass-mole.service`.
 - Version key from binary **`agent --version`** (not tarball filename). Optional manifest SHA256 when `sha256sum` is available. English messages; root required (`id -u`); prints Usage when not root or wrong args.

@@ -1,5 +1,24 @@
 # 변경 이력 (mol)
 
+## 문서 현행화 (2026-05)
+
+- **빌드**: `make build` — dual binary + **`strip`**, 루트 `./contrabass-moleU`는 **control** 복사(README·PRD §5.5.0).
+- **CLI `--discovery`**: `version=<키> (control|compute)` (웹 UI와 동일).
+- **CLI `--host-info`**: `BUILD_VARIANT` 행.
+- **CLI `--apply-update`**: `-agent-variant` 생략 시 설치 variant 유지; REST JSON 빈 `agent_variant`는 `compute`(PRD §5.5.3).
+- **`update_history.log.lock`**: flock용 0바이트 파일, 업데이트 후 잔존 가능·다음 업데이트 차단 아님.
+- **Ubuntu**: `bin/ubuntu/contrabass-agent-install.sh` / `contrabass-agent-uninstall.sh`.
+
+## CLI `--discovery` build variant
+
+- Result lines show variant like the web UI: **`version=<key> (control|compute)`** when `DISCOVERY_RESPONSE.build_variant` is set; otherwise `version=<key>` only (or `version=?`).
+
+## CLI `--host-info` build variant
+
+- **`BUILD_VARIANT`** row in tabular output (`control` / `compute`, or `-` if unknown).
+- **`self`**: same resolution as `GET /self` — installed `current` binary `--version` suffix, else CLI ldflags `BuildVariant`.
+- **`DISCOVERY_RESPONSE`**: `build_variant` field already used by HTTP/discovery; PRD §3.4 example updated.
+
 ## Ubuntu install/uninstall scripts (`bin/ubuntu/`)
 
 - **Rename**: `contrabass-mole-new-install.sh` → **`contrabass-agent-install.sh`** (behavior unchanged).
@@ -23,7 +42,7 @@
 - **로컬 적용·로컬 switch-current**: `update-log` **2초 자동 갱신** — 이번 run의 `started` 확인 후 맨 위 줄 `success`/`failed`까지. `/self` 폴링과 **분리**; 진행 중 패널 일괄 갱신은 기록 fetch 생략. 요청은 캐시 무효화(`no-store`, `&_=`).
 - **적용 버튼**: `can_apply` 시 **초록색** 스타일.
 - **switch-current (로컬)**: `apply-update`와 동일하게 버전 트리 준비·`MaterializeCanonicalAgent` 후 `update.sh`.
-- **`update_history.log`**: `prepend_history`에 **`flock`**(`.lock` 파일).
+- **`update_history.log`**: `prepend_history`에 **`flock`**(`update_history.log.lock`). lock 파일은 0바이트로 남을 수 있으나 잠금은 프로세스 종료 시 해제되어 다음 업데이트를 막지 않는다.
 
 ## update.sh · rollback 경로·헬스 대기
 
@@ -36,7 +55,7 @@
 - **원격 「업데이트 적용」**: `GET …/update-status?ip=`의 `can_apply`가 확정되면 업로드 파일 선택만으로 버튼을 켜지 않음. 적용 성공·실패·host-info 폴링 후 해당 IP에 대해 `update-status`를 재조회해 `AllowSameVersionUpdate: false`일 때 원격이 스테이징과 같으면 적용 버튼·variant 라디오를 비활성·숨김.
 - **Agent variant (웹)**: 로컬·리모트 라디오 기본값 = 설치된 `build_variant`(`data-build-variant`). 리모트 variant는 적용 버튼이 활성일 때만 표시.
 - **update.sh 헬스**: `systemctl is-active`·`GET /version` 재시도(환경 변수로 조정 가능). `invoke_rollback`으로 롤백 성공/실패 로그 구분. 루트·`maintenance/updatescripts/` 동기화.
-- **Makefile**: `make build` 후 `contrabass-moleU-compute` → `./contrabass-moleU` 복사.
+- **Makefile**: `make build` 후 **`strip`**, **`contrabass-moleU-control`** → `./contrabass-moleU` 복사.
 
 ## Manifest v2 · Agent Variant (dual-binary)
 
@@ -55,7 +74,7 @@
 
 ## 레이아웃
 
-- **`build/`**: **`build/build.sh`** 가 루트에서 `make "$@"` 를 호출한다. **`make`** 기본 산출 바이너리는 **`build/image/contrabass-moleU`** (`Makefile` 의 `OUTPUT_DIR`·`BINARY`).
+- **`build/`**: **`build/build.sh`** 가 루트에서 `make "$@"` 를 호출한다. **`make build`** 산출: **`build/image/contrabass-moleU-control`**·**`contrabass-moleU-compute`**(+ **`strip`**), 루트 **`./contrabass-moleU`** 는 control 복사본.
 - **`cfg/`**: 예시 에이전트 설정 **`agent.local.yml`** (`pack-agent-tarball.sh` 기본 `--config` 소스 경로).
 - **`maintenance/`**: `maintenance.go`에 **`Run(binVersion, args []string) int`**(서비스·CLI 진입; `args`는 보통 `os.Args`), `discovery`, `discoverycli`(`--discovery`), `applycli`, `versionscli`(`--versions-list` / `--versions-switch`), **`cliutil`**(CLI 공용: 원격 Gin URL·`APIPrefix`·TCP 확인), `versionsapi`(로컬 `versions/`·로컬 switch/apply 공통), `hostinfoapi`, `hostinfocli`(`--host-info`), `hostinfo`, `server`(HTTP·`applylocal` 로컬 번들 스테이징), `svcstatus`, `web` 패키지가 여기에 있다. 루트 Gin용 **`GinProxyConfig`** 는 **`ginproxy_config.go`**, 바깥 Gin→maintenance HTTP 프록시 구현은 **`ginproxy/`** 서브패키지이며 **`RegisterMaintenanceProxy`** 는 `maintenance` 패키지가 `ginproxy` 로 브리지한다(**임베드 시 `contrabass-agent/maintenance` import 하나**로 `GinProxyConfig`·`RegisterMaintenanceProxy` 사용). **`maintenance/scripts/`**·**`maintenance/packaging/`**(빌드·번들 보조). Go import는 `contrabass-agent/maintenance/<패키지>` 형태.
 - **루트 `main.go`**: **`<bin> -cfg …`**(`IsServiceModeRootCfg`)일 때만 **`MyGIN()`** + **`router.Run(Server.HTTPPort)`**(메인 고루틴) + **`go func() { os.Exit(maintenance.Run(…)) }()`**; **`<bin> agent …`** 전체는 Gin 없이 **`os.Exit(Run(…))`** 만. **시그널**(`SIGINT`/`SIGTERM`)은 **`maintenance.runServiceWithConfigPath`** 의 `signal.Notify`만 — **`main`은 시그널 미등록**. 바깥 Gin JSON API는 **`routerGroupJSON`** 그룹에만 `Content-Type: application/json`(전역 미들웨어는 maintenance UI MIME 깨짐).
@@ -92,7 +111,7 @@
 - **`reply_udp_port`**: `DISCOVERY_REQUEST` JSON에 로컬 바인드 포트를 넣고, 원격은 응답을 **그 포트**로 유니캐스트한다. UDP 소스 포트가 잘못 보이는 환경에서도 동작하도록 함.
 - **다중 NIC**: 서비스 mol과 동일하게, brd 서브넷에 맞춰 **인터페이스별 `로컬IP:src-port` UDP 소켓**을 열어 브로드캐스트를 보냄 (`discovery.OpenDiscoveryClientUDP`, `SendDiscoveryClientBroadcast`).
 - **시작 시 출력**: 사용하는 **브로드캐스트(brd) 주소**를 모두 한 줄씩 출력.
-- **결과**: `[...]` 안에는 **응답한 IP**(`responded_from_ip`, UDP 패킷 실제 발신지)만 표시. 줄 끝에 **`version=<DISCOVERY_RESPONSE.version>`**(에이전트 버전 키).
+- **결과**: `[...]` 안에는 **응답한 IP**(`responded_from_ip`, UDP 패킷 실제 발신지)만 표시. 줄 끝 **`version=<키> (control|compute)`** — variant는 웹 UI와 같이 버전 뒤 괄호(없으면 `version=<키>`만, 버전 없으면 `version=?`).
 - **`[Local]` / `[Remote]`**: (1) 로컬 `hostinfo`의 CPU UUID와 응답 `cpu_uuid` 일치(대소문자 무시) → Local. (2) 아니면 **응답한 IP**가 이 머신의 IPv4와 겹치면 Local(보조).
 - **UX**: 같은 줄 `Discovering ... N` 카운트다운 후 `Discovery Done.`(이전 줄 덮어쓰기).
 

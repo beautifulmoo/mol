@@ -19,16 +19,16 @@ make
 # 또는: ./build/build.sh
 ```
 
-또는 (Make 없이; 웹 embed·내장 스크립트 동기화는 생략됨):
+또는 (Make 없이; **dual variant·strip·embed 스크립트 동기화는 생략** — 개발용 단일 바이너리만):
 
 ```bash
 cd ~/work/mol
 mkdir -p build/image
-go build -o build/image/contrabass-moleU -ldflags "-X main.VersionKey=0.4.4-4-gc44d420" .
+go build -o build/image/contrabass-moleU-control -ldflags "-X main.VersionKey=0.4.4-4-gc44d420 -X main.BuildVariant=control" .
 ```
 
 - 반드시 **`maintenance/web/` 디렉터리가 있는 프로젝트 루트**에서 빌드할 것. 그래야 `maintenance/web/index.html` 등이 바이너리에 들어갑니다.
-- **`make build`** 는 `build/image/contrabass-moleU-control`·`contrabass-moleU-compute` 두 바이너리를 만들고, **`contrabass-moleU-compute`** 를 저장소 루트 **`./contrabass-moleU`** 로 복사한다.
+- **`make build`** 는 `build/image/contrabass-moleU-control`·`contrabass-moleU-compute` 두 바이너리를 만들고, **`strip`** 으로 심볼을 제거한 뒤 **`contrabass-moleU-control`** 을 저장소 루트 **`./contrabass-moleU`** 로 복사한다(`STRIP` 변수로 도구 변경 가능).
 - **버전 키**는 `make`/`make build` 시 `maintenance/scripts/build-version.sh`가 `git describe --tags --long --always` **전체 문자열**(예: `0.4.4-4-gc44d420`)을 `main.VersionKey`에 주입한다. 비교 시에는 접미사 `-g<해시>`를 빼고 시맨틱·패치만 본다. 덮어쓰기: `make build VERSION_KEY=...`.
 - **다른 Go 프로젝트에 붙일 때**: 에이전트 핵심은 **`contrabass-agent/maintenance`** import 하나로 `Run`·`IsServiceModeRootCfg`·`IsServiceModeAgentCfg`·`IsAgentSubcommand`·`GinProxyConfig`·`RegisterMaintenanceProxy` 등에 접근하면 된다(바깥 Gin→maintenance HTTP 프록시는 내부 **`maintenance/ginproxy`**). 이 저장소의 **`main.go`** 는 **`<bin> -cfg …`일 때만** `MyGIN()` + `router.Run` + `go os.Exit(Run(…))` 패턴을 쓰고, **시그널은 `maintenance` 서비스 루프만** 처리한다. 호스트 Gin에 JSON API가 있으면 **전역 `application/json` 미들웨어 대신** 라우트 그룹만 지정한다(루트 `routerGroupJSON` 참고).
 
@@ -81,8 +81,9 @@ sudo ./bin/ubuntu/contrabass-agent-uninstall.sh
 
 **사용 방법**
 
-- **update.sh**: 웹 UI에서 “업데이트 적용” 시 에이전트가 내장 스크립트를 `{DeployBase}/current/`에 풀고 `systemd-run`으로 실행한다(PRD §5.5.2). 기동 후 **`systemctl is-active`·`GET /version`을 긴 재시도**(기본 HTTP 대기 약 6분)하며, 실패 시 `rollback.sh` 실행. 조정: `HEALTH_*`, `SERVICE_ACTIVE_*` 환경 변수. `versions/<키>` 탐색은 InstallPrefix·DeployBase를 따른다.  
-  업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다. 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않으며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.
+- **update.sh**: 웹 UI·CLI `--apply-update` 적용 시 에이전트가 내장 스크립트를 `{DeployBase}/current/`에 풀고 `systemd-run`으로 실행한다(PRD §5.5.2). 기동 후 **`systemctl is-active`·`GET /version`을 긴 재시도**(기본 HTTP 대기 약 6분)하며, 실패 시 `rollback.sh` 실행. 조정: `HEALTH_*`, `SERVICE_ACTIVE_*` 환경 변수. `versions/<키>` 탐색은 InstallPrefix·DeployBase를 따른다.  
+  업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다. 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않으며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.  
+  **`update_history.log`** 기록 시 **`flock`** 으로 동시 쓰기를 막으며, **`update_history.log.lock`**(0바이트일 수 있음)이 `{DeployBase}`에 남을 수 있다. 잠금은 프로세스 종료 시 풀리므로 **다음 업데이트를 막지 않는다**(진행 중 업데이트가 있을 때만 lock 파일을 삭제하지 말 것).
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
   - 예: `/var/lib/contrabass/mole/rollback.sh` (root 또는 동일 권한으로 실행)
 - `{DeployBase}/previous` 심볼릭 링크가 있어야 하며(최소 한 번 업데이트가 된 뒤에만 유효), 없으면 “no previous version”으로 종료된다.
@@ -107,7 +108,10 @@ sudo ./bin/ubuntu/contrabass-agent-uninstall.sh
 | `agent -h`, `agent --help` | 사용법 출력 |
 | `agent --version`, `agent -version` | 빌드 버전 한 줄 출력 후 종료 |
 | `agent --nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
-| `agent --discovery` | 설정 파일 없이 UDP Discovery만 수행. `contrabass-moleU agent --discovery -h` 로 플래그 확인 |
+| `agent --discovery` | 설정 파일 없이 UDP Discovery만. 결과: `version=<키> (control\|compute)`(웹 UI와 동일, variant 없으면 괄호 생략). `agent --discovery -h` 로 플래그 확인 |
+| `agent --host-info -cfg <file> <self\|ip>` | 로컬/원격 호스트 정보(표 형식, `BUILD_VARIANT` 포함). maintenance HTTP 불필요 |
+| `agent --apply-update -cfg <file> [-agent-variant=…] <self\|ip> <bundle.tar.gz>` | 번들 검증·적용. `-agent-variant` 생략 시 설치 variant 유지 |
+| `agent --versions-list` / `--versions-switch` | 설치 버전 목록·current 전환. `-cfg` 필수. 상세는 **docs/CLI.md** |
 
 **`--discovery` 예** (로컬 에이전트 서비스 없이 원격만 탐색):
 
@@ -118,6 +122,7 @@ contrabass-moleU agent --discovery --dest-port=9999 --src-port=9998 --timeout=10
 - 시작 시 **브로드캐스트(brd) 주소**를 모두 출력합니다. **다중 NIC**에서는 에이전트 서비스와 같이 **인터페이스별로 `로컬IP:src-port` UDP 소켓**을 열어 각 brd로 보냅니다(단일 `0.0.0.0`만 쓸 때보다 src≠dest·다중 서브넷에서 안정적).
 - 브로드캐스트 **목적지**는 `dest-port`(원격 에이전트의 Discovery listen 포트)입니다. 요청 JSON에 **`reply_udp_port`**(로컬 바인드 포트)를 넣어, 원격 에이전트는 응답을 **그 포트**로 보냅니다. (구버전 바이너리는 `reply_udp_port`를 무시하고 패킷의 소스 포트만 쓰므로, 그 경우 원격도 최신 바이너리로 맞추는 것이 좋습니다.)
 - 결과 한 줄의 `[...]`에는 **응답한 IP**만 넣습니다(각 UDP 패킷의 실제 발신지 = `responded_from_ip`). 원격의 모든 NIC 주소(`host_ips`)는 포함하지 않으며, 에이전트/웹 접속에 쓸 수 있는 주소와 맞춥니다.
+- 줄 끝 **`version=<버전 키> (control|compute)`** — variant는 웹 카드와 같이 버전 뒤 괄호(`build_variant` 없으면 `version=<키>`만, 버전 없으면 `version=?`).
 - 각 줄 앞에 **`[Local]`** / **`[Remote]`** 를 붙입니다. (1) 로컬 `hostinfo`의 **CPU UUID**와 응답 `cpu_uuid`가 같으면(대소문자 무시) Local. (2) 그렇지 않아도 **응답한 IP** 중 하나가 이 머신의 IPv4와 같으면 Local(서비스 프로세스와 CLI의 UUID 수집 차이 등에 대한 보조).
 - `src-port`가 이미 사용 중이면 바인딩 오류로 종료합니다.
 - 방화벽이 **들어오는 UDP**(원격 에이전트의 응답)를 `src-port`로 허용하는지 확인하세요. 응답이 타임아웃 직전에 도착하는 경우를 위해 수신은 카운트다운 종료 후 잠시 더 열어 둡니다.

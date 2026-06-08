@@ -30,7 +30,7 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형). |
+| **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형, `version`·**`build_variant`** 등). |
 | **GET** | `{API}/health` | 없음 | **200** `success`, `data`: `{ "ok": true }` — HTTP 헬스(원격 에이전트 `Server.HTTPPort` 경로 동일). |
 | **GET** | `{API}/remote-health-check` | **Query**: `ip` (필수, 원격 호스트 IP). 이 서버가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`). | **200** `success` (원격 헬스 OK) / `fail` (연결·HTTP·응답 형식 오류). |
 | **GET** | `{API}/host-info` | **Query**: `ip` (선택). 비어 있거나 `self`면 `/self`와 동일. 그 외 해당 IP로 **UDP 유니캐스트** Discovery. | **200** `success` + 단일 호스트 객체, 또는 `fail` + 메시지. |
@@ -67,7 +67,9 @@
 | **POST** | `{API}/upload` | **multipart/form-data**: 필드 **`bundle`** — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + 에이전트 + config 등, `maintenance/scripts/pack-agent-tarball.sh` 참고). 본문 상한은 설정 `Maintenance.MaxUploadBytes`(기본 64MiB). | **200** `success`, `data`: `{ "version": "<버전 키>" }`. 검증 실패 **400** `fail`. |
 | **POST** | `{API}/upload/remove` | **Body JSON**: `{ "version": "<버전 키>" }` — 스테이징 디렉터리만 삭제. | **200** `success` / `fail`. |
 | **GET** | `{API}/update-status` | **Query**: `ip` (선택). 비어 있거나 `self`면 **이 서버**의 `current`와 로컬 스테이징을 비교. **원격 IP**면 해당 호스트 `GET .../self`의 `version`과 **이 서버의 로컬 스테이징**을 비교해 원격에 적용 가능한지 판단(`StagingUpdateAvailable`, 설정 `AllowSameVersionUpdate` 반영). | **200** `success`, `data`: 로컬만일 때 `current_version`, 스테이징 `staging_versions`, `can_apply`, `apply_version`, `remove_version`, `update_in_progress`, `staging_dual_agents`. 원격 `ip`일 때 추가로 `remote_ip`, `remote_current_version`, `can_apply`/`apply_version`은 **원격 기준**. 웹 UI는 원격 카드마다 이 API를 호출해 적용 버튼·variant 표시를 맞춘다(적용 후 해당 `ip` 재조회). 원격 조회 실패 시 `fail`. |
-| **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>"}` — 로컬이면 스테이징/versions에서 적용·`systemd-run` 비동기, 원격이면 해당 호스트로 업로드 API 후 apply. (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
+| **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>", "agent_variant":"control"\|"compute" (선택)}` — 로컬이면 스테이징/versions에서 적용·`MaterializeCanonicalAgent`·`systemd-run` 비동기, 원격이면 해당 호스트로 업로드 API 후 apply. JSON에서 **`agent_variant` 생략·빈 문자열**이면 서버는 **`compute`** 로 처리(CLI `--apply-update` 생략 시는 설치 `build_variant` 따름). (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz), **`agent_variant`**(선택) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
+
+적용·롤백 기록은 `{DeployBase}/update_history.log`(prepend). 동시 기록은 **`flock`**(`update_history.log.lock`, 0바이트로 잔존 가능, 다음 적용 차단 아님).
 
 업로드 성공 시 스테이징 `{DeployBase}/staging/<버전 키>/` 에는 풀린 에이전트(**manifest의 `agent.path` basename**)·config(**manifest의 `config.path` basename**, 예: `agent.local.yml`) 외에 **원본 번들**이 `upload.bundle.tar.gz` 로 함께 저장된다. 로컬 적용으로 `versions/<키>/` 로 옮길 때는 **스테이징 디렉터리 전체를 그대로 복사**한 뒤 `upload.bundle.tar.gz`만 삭제한다(향후 번들에 추가 파일이 있어도 설치 트리에 반영됨). 원격 `apply-update`(JSON)는 스테이징이 남아 있으면 그 안의 `upload.bundle.tar.gz`를 그대로 `POST .../upload`에 실어 보내고, 스테이징만 지운 뒤 `versions/`에만 있으면 바이너리·config로 최소 번들을 만든다.
 
@@ -166,7 +168,7 @@ curl -sS -X POST "${BASE}${API}/upload/remove" \
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -H 'Content-Type: application/json' \
-  -d '{"version":"0.4.4-10","ip":"self"}'
+  -d '{"version":"0.4.4-10","ip":"self","agent_variant":"control"}'
 ```
 
 **원격** — JSON만: 로컬에 해당 버전 디렉터리가 있어야 하며, 서버가 원격으로 업로드·적용 API를 호출한다.
@@ -177,15 +179,13 @@ curl -sS -X POST "${BASE}${API}/apply-update" \
   -d '{"version":"0.4.4-10","ip":"192.168.0.42"}'
 ```
 
-**원격** — 파일을 이 서버에서 골라 원격에 올리며 적용(multipart, `ip` 필수):
-
-저장소에서 `make` 한 경우 에이전트 바이너리 예: `./build/image/contrabass-moleU`. 예시 설정은 `./cfg/agent.local.yml`.
+**원격** — tar.gz 번들을 이 서버에서 골라 원격에 올리며 적용(multipart, `ip` 필수):
 
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -F 'ip=192.168.0.42' \
-  -F 'agent=@/path/to/contrabass-moleU' \
-  -F 'config=@/path/to/agent.local.yml'
+  -F 'agent_variant=compute' \
+  -F 'bundle=@/path/to/contrabass-agent-0.4.4.tar.gz'
 ```
 
 ---

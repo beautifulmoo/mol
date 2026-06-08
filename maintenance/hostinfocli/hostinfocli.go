@@ -20,8 +20,9 @@ const defaultHostInfoSrcUDP = 9998
 
 // Run runs: <bin> agent --host-info -cfg <config> [flags] <self|remote-ip>
 // buildVersionKey is the same ldflags-injected value as main (used for Self VERSION field when target is self).
+// cliBuildVariant is main.BuildVariant from ldflags; used for self when installed current binary variant is unknown.
 // Flag/positional order is flexible: e.g. <ip> -cfg path works as well as -cfg path <ip>.
-func Run(buildVersionKey string, args []string) int {
+func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	cfgPath, srcPort, pos, showHelp, err := parseHostInfoArgs(args)
 	if showHelp {
 		printUsage()
@@ -66,7 +67,7 @@ func Run(buildVersionKey string, args []string) int {
 			fmt.Fprintf(os.Stderr, "%s: host info: %v\n", appmeta.BinaryName, err)
 			return 1
 		}
-		meta := hostinfoapi.SelfMetaFromConfig(cfg, displayVersion)
+		meta := hostinfoapi.SelfMetaFromConfig(cfg, displayVersion, hostinfoapi.SelfBuildVariant(cfg, cliBuildVariant))
 		data := hostinfoapi.SelfDiscoveryResponse(info, meta)
 		printHostInfo(os.Stdout, "host self (local)", data)
 		return 0
@@ -174,6 +175,7 @@ func printHostInfo(w io.Writer, label string, d discovery.DiscoveryResponse) {
 	}
 	row("SERVICE_PORT", strconv.Itoa(d.ServicePort))
 	row("VERSION", d.Version)
+	row("BUILD_VARIANT", formatBuildVariant(d.BuildVariant))
 	if d.RequestID != "" {
 		row("REQUEST_ID", d.RequestID)
 	}
@@ -190,4 +192,12 @@ func printHostInfo(w io.Writer, label string, d discovery.DiscoveryResponse) {
 		row("SELF", "true")
 	}
 	_ = tw.Flush()
+}
+
+func formatBuildVariant(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "-"
+	}
+	return v
 }

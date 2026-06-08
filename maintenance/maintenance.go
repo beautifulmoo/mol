@@ -373,7 +373,7 @@ func Run(buildVersionKey string, buildVariantArg string, args []string) int {
 		case "--versions-switch":
 			return versionscli.RunSwitch(args[2:])
 		case "--host-info":
-			return hostinfocli.Run(buildVersionKey, args[2:])
+			return hostinfocli.Run(buildVersionKey, buildVariant, args[2:])
 		}
 	}
 	fmt.Fprintf(os.Stderr, "unknown argument: %q\n\n", args[1])

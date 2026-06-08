@@ -84,7 +84,7 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 
 **로컬 maintenance HTTP는 필요 없다.** 동작은 **`GET …/host-info`** 와 같은 규칙으로, 공유 패키지 **`maintenance/hostinfoapi`** 에서 서버 핸들러와 같은 핵심 로직을 쓴다.
 
-- **`self`**: 로컬 `hostinfo`와 설정(버전 문자열·`MaintenancePort`·`DiscoveryServiceName` 등)으로 **`GET /self`** 와 동일한 `DISCOVERY_RESPONSE` 형을 만든다. `VERSION` 은 빌드 시 주입된 **`main.VersionKey`**(인자 없을 때 `0.0.0-0`)를 쓴다.
+- **`self`**: 로컬 `hostinfo`와 설정(버전 문자열·`MaintenancePort`·`DiscoveryServiceName` 등)으로 **`GET /self`** 와 동일한 `DISCOVERY_RESPONSE` 형을 만든다. `VERSION` 은 빌드 시 주입된 **`main.VersionKey`**(인자 없을 때 `0.0.0-0`)를 쓴다. **`BUILD_VARIANT`** 는 설치된 `DeployBase/current` 바이너리 `--version` 접미사(`control`/`compute`), 없으면 CLI 바이너리 ldflags 값; 미상이면 `-`.
 - **원격 IP**: **`OpenDiscoveryClientUDP`** 로 **`-src-port`**(기본 `9998`)에 바인드하고, 요청은 **`DiscoveryUDPPort`**(기본 9999)로 보낸다. 로컬 에이전트가 9999를 쓰는 경우와 충돌하지 않도록 기본 소스 포트를 9998로 둔다(`--discovery`와 동일한 발상). **`--src-port`를 `DiscoveryUDPPort`와 같게 주면** 에이전트가 떠 있을 때 바인드에 실패할 수 있다.
 
 ### 사용법
@@ -111,7 +111,7 @@ contrabass-moleU agent --host-info -h
 | **`-cfg`** | **필수.** 설정 파일 경로(Discovery·표시용 메타·버전 키 외 필드 로드). |
 | **첫 번째 인자** | **`self`**: 로컬. **IPv4/IPv6 주소**: 유니캐스트 대상(호스트명 불가). |
 
-표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, `CPU_UUID` 등 라벨·값 테이블(영문 헤더).
+표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, **`BUILD_VARIANT`**, `CPU_UUID` 등 라벨·값 테이블(영문 헤더). 원격은 Discovery 응답의 `build_variant`를 그대로 표시한다.
 
 구현: `maintenance/hostinfocli/hostinfocli.go` → `maintenance/hostinfoapi`.
 
@@ -152,11 +152,11 @@ contrabass-moleU agent --discovery -h
 ### 결과 한 줄 형식
 
 ```text
-[Local|Remote] <hostname> - <primary> : [<response IPs>] version=<agent version key>
+[Local|Remote] <hostname> - <primary> : [<response IPs>] version=<agent version key> (<control|compute>)
 ```
 
 - **`[response IPs]`**: UDP 패킷 **실제 발신지**만 취합(`responded_from_ip`).
-- **`version=`**: `DISCOVERY_RESPONSE` JSON 의 **`version`** 필드(에이전트 버전 키). 없으면 `version=?`.
+- **`version=`**: `DISCOVERY_RESPONSE` JSON 의 **`version`** 필드(에이전트 버전 키). **`build_variant`** 가 있으면 웹 UI와 같이 **`version=<key> (control|compute)`** 형태. 버전 없으면 `version=?`, variant만 없으면 괄호 생략.
 - **`[Local]`** / **`[Remote]`**: 로컬 CPU UUID와 응답 `cpu_uuid` 일치 우선, 아니면 응답 IP가 로컬 IPv4와 겹치는지로 보조 판별.
 
 구현: `maintenance/discoverycli/discovery_cli.go`.
@@ -202,6 +202,8 @@ contrabass-moleU agent --apply-update -h
 | **remote** | `http://<ip>:Server.HTTPPort` + `{APIPrefix}` + **`POST …/apply-update`** multipart: 필드 **`ip`**, **`bundle`**. 요청은 **원격 Gin**에서 처리되며, 원격이 **`POST …/upload`** 후 로컬 **`apply-update`(self)** 를 이어서 호출한다(PRD §5.5.3 multipart 원격 적용과 동일). **로컬 에이전트·maintenance 불필요.** |
 
 HTTP 클라이언트 타임아웃은 **300초** 수준(대용량 번들·느린 링크 대비).
+
+적용 시 **`update.sh`** 가 `{DeployBase}/update_history.log`에 기록하며, 동시 쓰기 방지용 **`update_history.log.lock`**(0바이트 가능)이 남을 수 있다. 업데이트 완료 후에도 lock **파일**은 지우지 않으며, **다음 `--apply-update`를 막지 않는다**.
 
 구현: `maintenance/applycli/applycli.go`, 로컬 적용 공유: `maintenance/server/applylocal.go` · `maintenance/versionsapi/switchlocal.go`.
 

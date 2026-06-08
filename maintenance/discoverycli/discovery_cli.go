@@ -32,7 +32,7 @@ func Run(args []string) int {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s agent --discovery [flags]\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n")
-		fmt.Fprintf(os.Stderr, "  Each line: [Local|Remote] hostname - primary : [response IPs] version=<agent version>\n\n")
+		fmt.Fprintf(os.Stderr, "  Each line: [Local|Remote] hostname - primary : [response IPs] version=<key> (<control|compute> if known)\n\n")
 		fs.PrintDefaults()
 	}
 	for _, a := range args {
@@ -202,11 +202,12 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 	}
 
 	type group struct {
-		hostname string
-		hostIP   string
-		cpuUUID  string
-		version  string // from DISCOVERY_RESPONSE (same as agent version key)
-		ips      map[string]struct{}
+		hostname     string
+		hostIP       string
+		cpuUUID      string
+		version      string // from DISCOVERY_RESPONSE (same as agent version key)
+		buildVariant string // from DISCOVERY_RESPONSE build_variant
+		ips          map[string]struct{}
 	}
 	groups := make(map[string]*group)
 	order := []string{}
@@ -224,11 +225,12 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 		if !ok {
 			cpu := strings.TrimSpace(r.CPUUUID)
 			g = &group{
-				hostname: r.Hostname,
-				hostIP:   "",
-				cpuUUID:  cpu,
-				version:  strings.TrimSpace(r.Version),
-				ips:      make(map[string]struct{}),
+				hostname:     r.Hostname,
+				hostIP:       "",
+				cpuUUID:      cpu,
+				version:      strings.TrimSpace(r.Version),
+				buildVariant: strings.TrimSpace(r.BuildVariant),
+				ips:          make(map[string]struct{}),
 			}
 			if g.hostname == "" {
 				g.hostname = "(no name)"
@@ -243,6 +245,9 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 			}
 			if g.version == "" {
 				g.version = strings.TrimSpace(r.Version)
+			}
+			if g.buildVariant == "" {
+				g.buildVariant = strings.TrimSpace(r.BuildVariant)
 			}
 		}
 		if r.RespondedFromIP != "" {
@@ -266,13 +271,22 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 			primary = ipList[0]
 		}
 		tag := localTag(selfUUID, strings.TrimSpace(g.cpuUUID), g.ips, localIPSet)
-		ver := g.version
-		if ver == "" {
-			ver = "?"
-		}
-		out = append(out, fmt.Sprintf("%s %s - %s : [%s] version=%s", tag, g.hostname, primary, strings.Join(ipList, ", "), ver))
+		out = append(out, fmt.Sprintf("%s %s - %s : [%s] version=%s", tag, g.hostname, primary, strings.Join(ipList, ", "), formatDiscoveryVersion(g.version, g.buildVariant)))
 	}
 	return out
+}
+
+// formatDiscoveryVersion matches web UI: version key plus optional " (control|compute)" suffix.
+func formatDiscoveryVersion(versionKey, buildVariant string) string {
+	ver := strings.TrimSpace(versionKey)
+	if ver == "" {
+		return "?"
+	}
+	bv := strings.ToLower(strings.TrimSpace(buildVariant))
+	if bv == appmeta.AgentVariantControl || bv == appmeta.AgentVariantCompute {
+		return ver + " (" + bv + ")"
+	}
+	return ver
 }
 
 func localTag(selfUUID, groupUUID string, responded map[string]struct{}, localIPs map[string]struct{}) string {

@@ -69,7 +69,7 @@
 | **GET** | `{API}/update-status` | **Query**: `ip` (선택). 비어 있거나 `self`면 **이 서버**의 `current`와 로컬 스테이징을 비교. **원격 IP**면 해당 호스트 `GET .../self`의 `version`과 **이 서버의 로컬 스테이징**을 비교해 원격에 적용 가능한지 판단(`StagingUpdateAvailable`, 설정 `AllowSameVersionUpdate` 반영). | **200** `success`, `data`: 로컬만일 때 `current_version`, 스테이징 `staging_versions`, `can_apply`, `apply_version`, `remove_version`, `update_in_progress`, `staging_dual_agents`. 원격 `ip`일 때 추가로 `remote_ip`, `remote_current_version`, `can_apply`/`apply_version`은 **원격 기준**. 웹 UI는 원격 카드마다 이 API를 호출해 적용 버튼·variant 표시를 맞춘다(적용 후 해당 `ip` 재조회). 원격 조회 실패 시 `fail`. |
 | **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>", "agent_variant":"control"\|"compute" (선택)}` — 로컬이면 스테이징/versions에서 적용·`MaterializeCanonicalAgent`·`systemd-run` 비동기, 원격이면 해당 호스트로 업로드 API 후 apply. JSON에서 **`agent_variant` 생략·빈 문자열**이면 서버는 **`compute`** 로 처리(CLI `--apply-update` 생략 시는 설치 `build_variant` 따름). (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz), **`agent_variant`**(선택) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
 
-적용·롤백 기록은 `{DeployBase}/update_history.log`(prepend). 동시 기록은 **`flock`**(`update_history.log.lock`, 0바이트로 잔존 가능, 다음 적용 차단 아님).
+적용·롤백 기록은 `{DeployBase}/update_history.log`(append, API는 **tail 10**). 동시 기록은 **`flock`**(`update_history.log.lock`, 0바이트로 잔존 가능, 다음 적용 차단 아님).
 
 업로드 성공 시 스테이징 `{DeployBase}/staging/<버전 키>/` 에는 풀린 에이전트(**manifest의 `agent.path` basename**)·config(**manifest의 `config.path` basename**, 예: `agent.local.yml`) 외에 **원본 번들**이 `upload.bundle.tar.gz` 로 함께 저장된다. 로컬 적용으로 `versions/<키>/` 로 옮길 때는 **스테이징 디렉터리 전체를 그대로 복사**한 뒤 `upload.bundle.tar.gz`만 삭제한다(향후 번들에 추가 파일이 있어도 설치 트리에 반영됨). 원격 `apply-update`(JSON)는 스테이징이 남아 있으면 그 안의 `upload.bundle.tar.gz`를 그대로 `POST .../upload`에 실어 보내고, 스테이징만 지운 뒤 `versions/`에만 있으면 바이너리·config로 최소 번들을 만든다.
 
@@ -79,7 +79,7 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/update-log` | **Query**: `ip` (선택, 원격이면 `Server.HTTPPort`로 프록시). | **200** `success`, `data`: `{ "output": "<최대 10줄, 최신이 위>", "recent_rollback": <bool> }`. 응답 헤더 **`Cache-Control: no-store`**. `contrabass-mole-update.service` active이면 `recent_rollback`은 false. 웹 UI는 로컬 적용·로컬 switch-current 중 **2초 간격**으로 이 API를 호출하며(`&_=` 타임스탬프·`cache: 'no-store'`), 이번 run의 `update <버전> started` 확인 후 맨 위 줄이 `success`/`failed`일 때까지 폴링한다(`/self` 폴링과 독립). 수동 갱신 버튼: **「로그 새로고침」**. |
+| **GET** | `{API}/update-log` | **Query**: `ip` (선택, 원격이면 `Server.HTTPPort`로 프록시). | **200** `success`, `data`: `{ "output": "<최근 10줄, 파일 맨 아래 tail>", "recent_rollback": <bool> }`. 응답 헤더 **`Cache-Control: no-store`**. `contrabass-mole-update.service` active이면 `recent_rollback`은 false. 웹 UI는 로컬 적용·로컬 switch-current 중 **2초 간격**으로 이 API를 호출하며(`&_=`·`cache: 'no-store'`), 이번 run의 `update <버전> started` 확인 후 **마지막 줄**이 `success`/`failed`일 때까지 폴링(`/self` 폴링과 독립). 웹 UI는 `output` 줄을 **역순 표시**(최신이 위). 수동 갱신: **「로그 새로고침」**. |
 | **GET** | `{API}/current-config` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "content": "<yaml 문자열>" }`. |
 | **POST** | `{API}/current-config` | **Body JSON**: `{ "content": "<yaml>", "ip": "<선택>" }` — `ip`로 원격 저장 프록시. | **200** `success`, `data`: null(로컬 저장 성공 시). 검증 실패 `fail`. |
 | **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ] }`. |

@@ -320,6 +320,7 @@
       '<div class="card-right-config-actions">' +
       '<button type="button" id="self-current-config-load-btn" class="service-btn">불러오기</button>' +
       '<button type="button" id="self-current-config-save-btn" class="service-btn">저장</button>' +
+      '<button type="button" id="self-current-config-expand-btn" class="service-btn">펼쳐보기</button>' +
       '<span id="self-current-config-status" class="discovery-status" aria-live="polite"></span>' +
       '</div></div>' +
       '<div class="card-right-versions">' +
@@ -352,6 +353,7 @@
       '<div class="card-right-config-actions">' +
       '<button type="button" class="service-btn card-current-config-load-btn">불러오기</button>' +
       '<button type="button" class="service-btn card-current-config-save-btn">저장</button>' +
+      '<button type="button" class="service-btn card-current-config-expand-btn">펼쳐보기</button>' +
       '<span class="discovery-status card-current-config-status" aria-live="polite"></span>' +
       '</div></div>' +
       '<div class="card-right-versions">' +
@@ -521,8 +523,10 @@
       if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { fetchUpdateLogForCard(cardEl, ip); });
       var configLoadBtn = cardEl.querySelector('.card-current-config-load-btn');
       var configSaveBtn = cardEl.querySelector('.card-current-config-save-btn');
+      var configExpandBtn = cardEl.querySelector('.card-current-config-expand-btn');
       if (configLoadBtn) configLoadBtn.addEventListener('click', function () { fetchCurrentConfigForCard(cardEl, ip); });
       if (configSaveBtn) configSaveBtn.addEventListener('click', function () { saveCurrentConfigForCard(cardEl, ip); });
+      if (configExpandBtn) configExpandBtn.addEventListener('click', function () { openConfigEditorModal(cardEl, ip); });
       var versionsRefreshBtn = cardEl.querySelector('.card-versions-list-refresh-btn');
       var versionsRemoveBtn = cardEl.querySelector('.card-versions-remove-btn');
       if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', function () { fetchVersionsListForCard(cardEl, ip); });
@@ -952,16 +956,34 @@
     });
   }
 
+  /** API tail is oldest-first; UI shows newest-first (reversed lines). */
+  function formatUpdateLogDisplay(output) {
+    if (output === undefined || output === null) return '(비어 있음)';
+    var s = String(output);
+    if (s === '') return '(비어 있음)';
+    if (s.indexOf('\n') === -1) return s;
+    var lines = s.split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    lines.reverse();
+    return lines.join('\n');
+  }
+
   /**
-   * Log is prepend-newest. Complete when we've seen this run's started, then the top line is success/failed.
-   * (Avoids stopping on an older success for the same version before the new started line appears.)
+   * Log file is append-newest-at-bottom. Complete when we've seen this run's started, then the last line is success/failed.
    */
   function updateLogRunComplete(output, version, runStartedSeen) {
     if (!output || !version || !runStartedSeen) return false;
-    var first = (output.split('\n')[0] || '');
+    var lines = output.split('\n');
+    var last = '';
+    for (var i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim()) {
+        last = lines[i];
+        break;
+      }
+    }
     var needleSuccess = 'update ' + version + ' success';
     var needleFailed = 'update ' + version + ' failed';
-    return first.indexOf(needleSuccess) !== -1 || first.indexOf(needleFailed) !== -1;
+    return last.indexOf(needleSuccess) !== -1 || last.indexOf(needleFailed) !== -1;
   }
 
   /** 2s poll until this run's success/failed (independent of /self; not stopped when host responds). */
@@ -1016,7 +1038,7 @@
 
   function applyUpdateLogResponse(pre, warningEl, body) {
     if (body.status === 'success' && body.data) {
-      pre.textContent = body.data.output !== undefined ? body.data.output : '(비어 있음)';
+      pre.textContent = formatUpdateLogDisplay(body.data.output);
       if (warningEl && body.data.recent_rollback) {
         warningEl.hidden = false;
         warningEl.innerHTML = UPDATE_LOG_ROLLBACK_WARNING_HTML;
@@ -1128,8 +1150,10 @@
           if (swBtnSelf) swBtnSelf.addEventListener('click', function () { doVersionsSwitch(null, ''); });
           var configLoadBtn = el('self-current-config-load-btn');
           var configSaveBtn = el('self-current-config-save-btn');
+          var configExpandBtn = el('self-current-config-expand-btn');
           if (configLoadBtn) configLoadBtn.addEventListener('click', fetchCurrentConfig);
           if (configSaveBtn) configSaveBtn.addEventListener('click', saveCurrentConfig);
+          if (configExpandBtn) configExpandBtn.addEventListener('click', function () { openConfigEditorModal(null, ''); });
           fetchUpdateLog();
           fetchCurrentConfig();
           fetchVersionsList();
@@ -1467,50 +1491,165 @@
       });
   }
 
-  function fetchCurrentConfig() {
-    var editor = el('self-current-config-editor');
-    var statusEl = el('self-current-config-status');
-    if (!editor) return;
+  function resolveConfigContext(cardEl, ip) {
+    if (!cardEl || ip === undefined || ip === null || ip === '') {
+      return {
+        cardEl: document.querySelector('#self-info .host-card') || null,
+        ip: '',
+        editor: el('self-current-config-editor'),
+        statusEl: el('self-current-config-status')
+      };
+    }
+    return {
+      cardEl: cardEl,
+      ip: ip,
+      editor: cardEl.querySelector('.card-right-config-editor'),
+      statusEl: cardEl.querySelector('.card-current-config-status')
+    };
+  }
+
+  var configModalContext = null;
+
+  function fetchCurrentConfigForContext(ctx, targetEditor, targetStatusEl) {
+    var editor = targetEditor || ctx.editor;
+    var statusEl = targetStatusEl !== undefined ? targetStatusEl : ctx.statusEl;
+    if (!editor) return Promise.resolve();
     if (statusEl) statusEl.textContent = '';
     editor.placeholder = '불러오는 중…';
-    fetch(API_BASE + '/current-config')
+    var url = API_BASE + '/current-config';
+    if (ctx.ip) url += '?ip=' + encodeURIComponent(ctx.ip);
+    return fetch(url)
       .then(function (res) { return res.json(); })
       .then(function (body) {
         editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
         if (body.status === 'success' && body.data && body.data.content !== undefined) {
           editor.value = body.data.content;
+          if (ctx.editor && editor !== ctx.editor) ctx.editor.value = body.data.content;
           if (statusEl) statusEl.textContent = '불러왔습니다.';
         } else {
           editor.value = '';
+          if (ctx.editor && editor !== ctx.editor) ctx.editor.value = '';
           if (statusEl) statusEl.textContent = body.data || '불러오기 실패.';
         }
       })
       .catch(function () {
         editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
         editor.value = '';
+        if (ctx.editor && editor !== ctx.editor) ctx.editor.value = '';
         if (statusEl) statusEl.textContent = '불러오기 실패.';
       });
   }
 
-  function saveCurrentConfig() {
-    var editor = el('self-current-config-editor');
-    var statusEl = el('self-current-config-status');
-    if (!editor) return;
+  function saveCurrentConfigForContext(ctx, content, targetStatusEl) {
+    var statusEl = targetStatusEl !== undefined ? targetStatusEl : ctx.statusEl;
+    var payload = { content: content !== undefined ? content : (ctx.editor ? ctx.editor.value : '') };
+    if (ctx.ip) payload.ip = ctx.ip;
     if (statusEl) statusEl.textContent = '저장 중…';
-    fetch(API_BASE + '/current-config', {
+    return fetch(API_BASE + '/current-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: editor.value })
+      body: JSON.stringify(payload)
     })
       .then(function (res) { return res.json(); })
       .then(function (body) {
+        if (body.status === 'success' && ctx.editor && content !== undefined) {
+          ctx.editor.value = content;
+        }
         if (statusEl) {
           statusEl.textContent = body.status === 'success' ? '저장했습니다.' : (body.data || '저장 실패.');
         }
+        return body;
       })
       .catch(function () {
         if (statusEl) statusEl.textContent = '저장 요청 실패.';
       });
+  }
+
+  function openConfigEditorModal(cardEl, ip) {
+    configModalContext = { cardEl: cardEl || null, ip: ip || '' };
+    var ctx = resolveConfigContext(cardEl, ip);
+    var modal = el('config-editor-modal');
+    var modalEditor = el('config-editor-modal-textarea');
+    var title = el('config-editor-modal-title');
+    var modalStatus = el('config-editor-modal-status');
+    if (title) {
+      title.textContent = ip ? ('agent.local.yml (current) — ' + ip) : 'agent.local.yml (current)';
+    }
+    if (modalEditor) {
+      modalEditor.value = ctx.editor ? ctx.editor.value : '';
+      modalEditor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
+    }
+    if (modalStatus) modalStatus.textContent = '';
+    if (modal) {
+      modal.hidden = false;
+      modal.setAttribute('aria-hidden', 'false');
+    }
+    document.body.classList.add('config-modal-open');
+    if (modalEditor) modalEditor.focus();
+  }
+
+  function closeConfigEditorModal() {
+    var modalEditor = el('config-editor-modal-textarea');
+    if (configModalContext && modalEditor) {
+      var ctx = resolveConfigContext(configModalContext.cardEl, configModalContext.ip);
+      if (ctx.editor) ctx.editor.value = modalEditor.value;
+    }
+    var modal = el('config-editor-modal');
+    if (modal) {
+      modal.hidden = true;
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    document.body.classList.remove('config-modal-open');
+    configModalContext = null;
+  }
+
+  function loadConfigEditorModal() {
+    if (!configModalContext) return;
+    var ctx = resolveConfigContext(configModalContext.cardEl, configModalContext.ip);
+    fetchCurrentConfigForContext(ctx, el('config-editor-modal-textarea'), el('config-editor-modal-status'))
+      .then(function () {
+        var modalStatus = el('config-editor-modal-status');
+        if (ctx.statusEl && modalStatus) ctx.statusEl.textContent = modalStatus.textContent;
+      });
+  }
+
+  function saveConfigEditorModal() {
+    if (!configModalContext) return;
+    var ctx = resolveConfigContext(configModalContext.cardEl, configModalContext.ip);
+    var modalEditor = el('config-editor-modal-textarea');
+    var content = modalEditor ? modalEditor.value : '';
+    saveCurrentConfigForContext(ctx, content, el('config-editor-modal-status'))
+      .then(function () {
+        var modalStatus = el('config-editor-modal-status');
+        if (ctx.statusEl && modalStatus) ctx.statusEl.textContent = modalStatus.textContent;
+      });
+  }
+
+  function initConfigEditorModal() {
+    var modal = el('config-editor-modal');
+    if (!modal || modal.getAttribute('data-bound')) return;
+    modal.setAttribute('data-bound', '1');
+    var backdrop = modal.querySelector('.config-editor-modal-backdrop');
+    var closeBtn = el('config-editor-modal-close-btn');
+    var dismissBtn = el('config-editor-modal-dismiss-btn');
+    var loadBtn = el('config-editor-modal-load-btn');
+    var saveBtn = el('config-editor-modal-save-btn');
+    if (backdrop) backdrop.addEventListener('click', closeConfigEditorModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeConfigEditorModal);
+    if (dismissBtn) dismissBtn.addEventListener('click', closeConfigEditorModal);
+    if (loadBtn) loadBtn.addEventListener('click', loadConfigEditorModal);
+    if (saveBtn) saveBtn.addEventListener('click', saveConfigEditorModal);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && configModalContext) closeConfigEditorModal();
+    });
+  }
+
+  function fetchCurrentConfig() {
+    fetchCurrentConfigForContext(resolveConfigContext(null, ''));
+  }
+
+  function saveCurrentConfig() {
+    saveCurrentConfigForContext(resolveConfigContext(null, ''));
   }
 
   function fetchUpdateLog(silent) {
@@ -1598,50 +1737,12 @@
 
   function fetchCurrentConfigForCard(cardEl, ip) {
     if (!cardEl || !ip) return;
-    var editor = cardEl.querySelector('.card-right-config-editor');
-    var statusEl = cardEl.querySelector('.card-current-config-status');
-    if (!editor) return;
-    if (statusEl) statusEl.textContent = '';
-    editor.placeholder = '불러오는 중…';
-    fetch(API_BASE + '/current-config?ip=' + encodeURIComponent(ip))
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
-        if (body.status === 'success' && body.data && body.data.content !== undefined) {
-          editor.value = body.data.content;
-          if (statusEl) statusEl.textContent = '불러왔습니다.';
-        } else {
-          editor.value = '';
-          if (statusEl) statusEl.textContent = body.data || '불러오기 실패.';
-        }
-      })
-      .catch(function () {
-        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
-        editor.value = '';
-        if (statusEl) statusEl.textContent = '불러오기 실패.';
-      });
+    fetchCurrentConfigForContext(resolveConfigContext(cardEl, ip));
   }
 
   function saveCurrentConfigForCard(cardEl, ip) {
     if (!cardEl || !ip) return;
-    var editor = cardEl.querySelector('.card-right-config-editor');
-    var statusEl = cardEl.querySelector('.card-current-config-status');
-    if (!editor) return;
-    if (statusEl) statusEl.textContent = '저장 중…';
-    fetch(API_BASE + '/current-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip: ip, content: editor.value })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (statusEl) {
-          statusEl.textContent = body.status === 'success' ? '저장했습니다.' : (body.data || '저장 실패.');
-        }
-      })
-      .catch(function () {
-        if (statusEl) statusEl.textContent = '저장 요청 실패.';
-      });
+    saveCurrentConfigForContext(resolveConfigContext(cardEl, ip));
   }
 
   function renderVersionsListIntoContainer(container, versions, cardEl) {
@@ -1870,6 +1971,7 @@
   resetUploadForm();
   fetchUpdateStatus();
   updateAllHostApplyButtons();
+  initConfigEditorModal();
   loadSelf();
 
   document.addEventListener('visibilitychange', function () {

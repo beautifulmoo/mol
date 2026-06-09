@@ -204,12 +204,12 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** — 다른 CLI와 동일하게 `agent` 접두.  
   - **전환용(루트)**: **`contrabass-moleU --version`** / **`-version`** — 구버전 업데이트·외부 스크립트가 루트 플래그만 호출하는 경우를 위해 **`agent` 없이** 한 줄 출력을 허용한다. 향후 제거·비권장으로 좁힐 수 있다.  
   - 출력 형식은 동일: **`<BinaryName> <main.VersionKey>`** 한 줄.
-- **`--host-info`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`** 한 인자. **`maintenance/hostinfoapi`** 의 `SelfDiscoveryResponse`·`RemoteHostInfo`·(원격 시) `StartEphemeralDiscovery` 로 **HTTP `GET …/host-info` 핸들러와 동일한 규칙**을 따른다 — **`self`**는 로컬 hostinfo·빌드 버전 키·설정 메타·**`build_variant`**(설치된 `current` 바이너리 `--version` 접미사, 없으면 CLI ldflags)로 `/self`와 같은 페이로드; **원격 IP**는 로컬에 UDP 리스너를 잠시 올린 뒤 **유니캐스트 Discovery**만 수행(응답의 **`build_variant`**). **CLI는 로컬 maintenance HTTP를 띄우지 않아도 동작**한다(같은 호스트에서 에이전트가 이미 `DiscoveryUDPPort`를 쓰 중이면 UDP 바인드가 실패할 수 있음). 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨로 표 형태로 출력한다(`BUILD_VARIANT` 포함, 미상이면 `-`). **`-h` 도움말 순서**: `-h` 다음에 `-version` 다음 **`--host-info`** 가 오고 그 다음 **`--nic-brd`**(이하 동일 순서).
+- **`--host-info`**: **`-apiprefix`**(선택, 기본 `/maintenance/api/v1`)와 **`<self|원격 IP>`** 한 인자. 대상 에이전트 **Gin(`Server.HTTPPort`, 기본 8888)** 에 **`GET {APIPrefix}/self`** — **대상 HTTP 서비스가 떠 있어야 한다**. 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨 표로 출력(`BUILD_VARIANT` 포함). 구현: `maintenance/hostinfocli` → `maintenance/clirest`. **`-h` 도움말 순서**: `-h` 다음 `-version` 다음 **`--host-info`** …
 - **`--nic-brd`**: §3.1.1과 동일 규칙으로 IPv4 브로드캐스트(brd)를 `NIC이름 : brd주소` 형식으로 출력(확인용) 후 종료.
 - **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만] version=<에이전트 버전 키> (<control|compute>)` 형식으로, **`responded_from_ip`**만 취합하고 **버전·variant**는 DISCOVERY_RESPONSE JSON의 **`version`**·**`build_variant`** 필드(§3.4·§9)를 표시한다(웹 UI와 같이 variant는 버전 뒤 괄호; 버전 없으면 `version=?`, variant 없으면 괄호 생략). Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
-- **`--apply-update`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**, **`<bundle.tar.gz>`** 두 인자가 필요하다. **로컬 유지보수 HTTP는 필요 없다.** (1) 번들을 임시 디렉터리에 풀어 **서버와 동일한 검증**(manifest·해시·ELF·바이너리 버전 키, §5.5.3) 후 **번들 버전 키**를 얻는다. (2) **현재 버전**: **self**는 **`DeployBase`의 `current` 심볼릭 → `versions/` 대상 버전 키**로 비교(CLI 바이너리 ldflags는 심볼릭을 읽을 수 없을 때만 보조); **원격 IP**는 `http://<ip>:Server.HTTPPort` + `APIPrefix` + `/self` (적용 전 **TCP** 연결 확인). (3) **`StagingUpdateAvailable`** 가 참일 때만 진행. (4) **self**: 스테이징 후 로컬 적용(`ApplyUpdateSelfFromBundleExtract`·`RunSwitchCurrentWithRoots`, 웹 `POST /upload`+로컬 적용과 동등; 배포 경로 쓰기·`systemd-run`은 보통 **sudo**). (5) **원격**: `http://<ip>:Server.HTTPPort` + `APIPrefix`에 **`POST …/apply-update` multipart**(`ip`, `bundle`) — 요청은 **원격 Gin**에서 처리되어 원격 `POST …/upload` 후 원격 apply-update(self)(§5.5.3과 동일). **CLI 도움말·진단 메시지**는 **영문** 정책을 따른다.
-- **`--versions-list`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**. **`self`** 는 **`versionsapi`** 로 `DeployBase`/`InstallPrefix` 기준 디스크 스캔 — **로컬 유지보수 HTTP 불필요**. **원격 IP** 는 `http://<ip>:Server.HTTPPort` + `APIPrefix` + `GET …/versions/list` 를 **그 호스트의 Gin에 직접** 호출(로컬 에이전트·유지보수 프록시 불필요). 설치된 버전·current/previous 플래그를 표로 출력(영문 헤더). `-cfg` 와 위치 인자 **순서 무관**.
-- **`--versions-switch`**: **`-cfg <설정 파일>`** 과 **`<self|원격 IP>`**, **`<버전 키>`**. **`self`**: 유지보수 HTTP 없이 로컬 전환(`systemd-run`, 서버 `switch-current` 로컬 분기와 동일). **`DeployBase`/`current` 쓰기·`systemd-run`은 보통 root 권한(예: `sudo`)이 필요**하며, **`agent --versions-switch -h`** 도움말에도 안내한다. **원격 IP**: `http://<ip>:Server.HTTPPort` + `APIPrefix` 로 **그 호스트 Gin에 직접** `POST`(JSON `version`만). 적용 전 **`TCP`로 `<ip>:Server.HTTPPort`** 연결 확인. 내장 `update.sh`를 `systemd-run`으로 실행하는 경로는 웹 UI와 동일.
+- **`--apply-update`**: **`-apiprefix`**(선택), **`-agent-variant`**(선택), **`<self|원격 IP>`**, **`<bundle.tar.gz>`**. 대상 Gin에 **`POST …/upload`** 후 **`POST …/apply-update`**(JSON). **대상 HTTP 서비스 필수**. 검증·정책·적용은 서버 핸들러가 처리(웹 UI와 동등). `maintenance/applycli` → `maintenance/clirest`. **CLI 도움말·진단 메시지**는 **영문**.
+- **`--versions-list`**: **`-apiprefix`**(선택)와 **`<self|원격 IP>`**. **`GET {APIPrefix}/versions/list`** on target Gin. **대상 HTTP 서비스 필수**.
+- **`--versions-switch`**: **`-apiprefix`**(선택), **`<self|원격 IP>`**, **`<버전 키>`**. **`POST {APIPrefix}/versions/switch-current`**. **대상 HTTP 서비스 필수**.
 
 ---
 
@@ -364,7 +364,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
    ./maintenance/scripts/pack-agent-tarball.sh [control] [compute] [config] [output.tar.gz]
    ```
 
-   - **기본 인자**: control `./build/image/contrabass-moleU-control`, compute `./build/image/contrabass-moleU-compute`, config `./cfg/agent.local.yml`, 출력 `./dist/contrabass-agent-<git-describe>.tar.gz`.
+   - **기본 인자**: control `./build/image/contrabass-moleU-control`, compute `./build/image/contrabass-moleU-compute`, config `./cfg/agent.local.yml`, 출력 `./dist/contrabass-agent-<버전 키>.tar.gz`(두 바이너리 **`agent --version`** 키 일치 필수; `build-version.sh`/`git describe` 미사용).
    - 스크립트는 세 파일의 **SHA-256** 을 각각 계산해 manifest v2 템플릿에 넣고, 임시 디렉터리에서 **`tar -czf`** 로 아카이브를 만든다. 멤버 목록을 stdout에 출력한다.
    - **필요 도구**: `sha256sum`, `tar`.
 
@@ -389,7 +389,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 | **로컬 적용** | 스테이징 후 `POST …/apply-update` `{ "version", "ip": "self" }` | 스테이징→`versions/` 복사 후 내장 **`update.sh`** `systemd-run` |
 | **원격 적용(JSON)** | 스테이징·`versions/` 에 번들 또는 풀린 트리 존재 | 이 서버가 원격 **`POST …/upload`**(`upload.bundle.tar.gz` 우선) 후 원격 **`apply-update`(self)** 호출 |
 | **원격 적용(multipart)** | `POST …/apply-update` 필드 **`ip`** + **`bundle`** | 로컬 스테이징 없이 원격만 업로드·적용 |
-| **CLI** | `contrabass-moleU agent --apply-update -cfg <file> [-agent-variant=compute\|control] <self\|ip> <bundle.tar.gz>` | 서버와 **동일 검증** 후 self는 디스크 스테이징+적용, remote는 대상 **Gin**에 multipart |
+| **CLI** | `contrabass-moleU agent --apply-update [-apiprefix=…] [-agent-variant=…] <self\|ip> <bundle.tar.gz>` | 대상 **Gin**에 `POST …/upload` + `POST …/apply-update` (`clirest`) |
 
 - **업데이트 가능 여부**: 업로드·적용 전 **`StagingUpdateAvailable`**(현재 `current` 대비 스테이징 버전 키 비교, §5.5.1)을 만족할 때만 진행한다. `AllowSameVersionUpdate` 설정이 `true`이면 동일 버전도 적용 가능.
 - **variant 선택**: v2 번들에서 `agent_variant`로 canonical name으로 설치할 바이너리를 고른다. **CLI `--apply-update`에서 `-agent-variant` 생략** 시 설치된 `build_variant`를 따른다(§352). REST JSON에서 필드를 **비우면** 서버는 `compute`로 처리한다(웹 UI는 카드의 설치 variant를 보냄).
@@ -439,7 +439,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   deploy_base/                       # 예: /var/lib/contrabass/mole (설정 키: DeployBase)
   ├── current -> versions/0.4.0-2    # 심볼릭 링크, 현재 실행 버전(버전 키)
   ├── previous -> versions/0.4.0-1
-  ├── update_history.log             # 업데이트·롤백 기록 (맨 앞에 추가, 최근 10건을 웹에 표시)
+  ├── update_history.log             # 업데이트·롤백 기록 (append, 웹에는 최근 10줄 tail)
   ├── staging/                       # 업로드 API로만 채움; 원본 번들·풀린 트리 보관
   │   └── <버전 키>/
   │       ├── contrabass-moleU-control  # manifest v2: BuildVariant=control
@@ -479,7 +479,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **update.sh**: 인자 **버전 키** 하나. `{BASE}/versions/{버전 키}/contrabass-moleU`(실행 파일명은 빌드·`appmeta.BinaryName`과 동일) 존재·실행 가능 확인 → 서비스 중지 → `previous` 갱신 → `current` 를 해당 버전으로 교체 → 서비스 시작 → **헬스**(아래). 실패 시 **`invoke_rollback`** 으로 `rollback.sh` 호출·기록(롤백 성공/실패 exit 코드 구분).  
   - **헬스(재시도)**: 병합·추가 라이브러리 링크 등 **느린 기동**을 고려해 기본 대기를 길게 둔다. `systemctl is-active` 는 **`SERVICE_ACTIVE_MAX_ATTEMPTS`×`SERVICE_ACTIVE_INTERVAL`**(기본 45×2초≈90초)까지 재시도한 뒤, `http://127.0.0.1:${HTTP_PORT}/version` 에 **`HEALTH_INITIAL_SLEEP`**(기본 5초) 후 **`HEALTH_MAX_ATTEMPTS`×`HEALTH_RETRY_INTERVAL`**(기본 72×5초, 약 6분)까지 GET 재시도. 서비스가 중간에 내려가면 즉시 롤백. 본문이 **`<BinaryName> <버전 키>`** 한 줄과 일치해야 성공. 환경 변수로 조정: `HEALTH_INITIAL_SLEEP`, `HEALTH_RETRY_INTERVAL`, `HEALTH_MAX_ATTEMPTS`, `SERVICE_ACTIVE_MAX_ATTEMPTS`, `SERVICE_ACTIVE_INTERVAL`.  
   - **rollback.sh**: `previous` 가 있으면 서비스 중지 → `current` 를 `previous` 와 동일 대상으로 교체 → 시작.  
-  - **기록**: `update_history.log` 에 prepend 방식으로 한 줄씩 추가. 동시 기록은 **`flock`**(`update_history.log.lock`, 최대 30초 대기)으로 직렬화한다. lock 파일은 **0바이트로 `{DeployBase}`에 남을 수 있으며**, 잠금은 기록 subshell 종료 시 해제되므로 **다음 업데이트를 막지 않는다**(동시에 다른 `update.sh`/`rollback.sh`가 돌 때만 대기·실패 가능).
+  - **기록**: `update_history.log` 에 **append** 방식으로 한 줄씩 추가(최신이 파일 맨 아래). 동시 기록은 **`flock`**(`update_history.log.lock`, 최대 30초 대기)으로 직렬화한다. lock 파일은 **0바이트로 `{DeployBase}`에 남을 수 있으며**, 잠금은 기록 subshell 종료 시 해제되므로 **다음 업데이트를 막지 않는다**(동시에 다른 `update.sh`/`rollback.sh`가 돌 때만 대기·실패 가능).
 
 #### 5.5.3 업로드·삭제·적용
 
@@ -512,7 +512,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **`can_apply` / `apply_version`**: 스테이징에 올라온 버전 키 중, **비교 기준 버전**(로컬이면 `current_version`, 원격이면 `remote_current_version`) 대비 **업데이트로 적용할 가치가 있는지** 판단한다 — 규칙은 동일(시맨틱·패치 비교, `StagingUpdateAvailable`). 원격 모드에서는 “**이 서버 스테이징을 그 원격에 적용할 수 있는지**”를 나타낸다.  
   - `remove_version`: 스테이징 정렬 후 **가장 오래된(맨 끝)** 항목 등 UI 삭제용으로 쓸 수 있다.  
   - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
-- **업데이트 기록** `GET .../update-log` — `{DeployBase}/update_history.log` **최신 10줄**(파일은 prepend·최신이 위). 응답 `data.output`(문자열), `data.recent_rollback`(bool). **`Cache-Control: no-store`**. `contrabass-mole-update.service`가 active이면 `recent_rollback`을 false로 내려 새 적용과 이전 실패 기록이 섞이지 않게 한다. 원격 `ip`는 `Server.HTTPPort`로 프록시.
+- **업데이트 기록** `GET .../update-log` — `{DeployBase}/update_history.log` **맨 아래 최근 10줄**(tail). 응답 `data.output`(문자열), `data.recent_rollback`(bool, **마지막 줄** 기준). **`Cache-Control: no-store`**. `contrabass-mole-update.service`가 active이면 `recent_rollback`을 false로 내려 새 적용과 이전 실패 기록이 섞이지 않게 한다. 원격 `ip`는 `Server.HTTPPort`로 프록시. 웹 UI는 tail 10줄을 **최신이 위**가 되도록 **역순 표시**(스크롤 불필요).
 - **current-cfg** `GET/POST .../current-cfg` — `current` 심볼릭 대상의 config YAML 조회·저장.
 - **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(버전 키는 describe 전체일 수 있음, 예: `contrabass-moleU 0.4.4-4-gc44d420`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
 - **에이전트 HTTP 헬스(JSON)** `GET {APIPrefix}/health` — JSON `success`, `data`에 `{ "ok": true }` 수준의 최소 응답. **원격 가용성 모니터링** 시 로컬 에이전트가 같은 경로로 노출하며(Gin이 `Server.HTTPPort`로 프록시), 웹 UI의 원격 헬스 확인은 **이 경로**를 대상으로 한다(UDP 미사용).
@@ -604,7 +604,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 - **대상**: 로컬 **「업데이트 적용」**·로컬 **「이 버전으로 적용」**(switch-current) 성공 직후. 원격 적용은 §6.3 「원격 적용 후」의 host-info 폴링 완료 시점에 update-log를 포함한 패널 일괄 갱신(진행 중 2초 폴링은 로컬 전용).
 - **주기**: 즉시 1회 + **2초 간격** `GET …/update-log`(최대 약 15분).
-- **완료 판정**: `update_history.log`는 **맨 위가 최신**이다. 해당 버전 키에 대해 로그에 **`update <버전> started`** 가 나타난 뒤, **첫 줄**이 **`update <버전> success`** 또는 **`update <버전> failed`**(부분 일치)이면 이번 실행이 끝난 것으로 보고 폴링을 멈춘다. (같은 버전의 **이전 성공** 줄만 있고 이번 `started`가 아직 없을 때 조기 종료하지 않는다.)
+- **완료 판정**: `update_history.log`는 **맨 아래가 최신**이다. 해당 버전 키에 대해 로그에 **`update <버전> started`** 가 나타난 뒤, **표시 구간의 마지막 줄**(또는 전체 파일 기준 마지막 줄)이 **`update <버전> success`** 또는 **`update <버전> failed`**(부분 일치)이면 이번 실행이 끝난 것으로 보고 폴링을 멈춘다.
 - **호스트 폴링과 분리**: `/self`·host-info 폴링이 먼저 성공해도 기록 폴링은 위 완료 조건까지 계속한다.
 - **패널 일괄 갱신과의 조합**: 기록 폴링이 돌아가는 동안 `refreshAllPanelsAfterUpdate`는 **update-log 요청을 생략**하여, 호스트 복구 직후의 일괄 갱신이 **오래된 캐시 응답**으로 기록 영역을 덮어쓰지 않게 한다. 기록 폴링이 끝난 뒤에는 수동 「로그 새로고침」·다음 일괄 갱신으로 최종 내용을 맞출 수 있다.
 - **재시작 구간**: maintenance HTTP가 잠시 끊기면 해당 tick은 실패할 수 있으나, 에이전트 기동 후 다음 tick에서 `started`→`success` 순으로 반영된다.
@@ -744,11 +744,11 @@ Maintenance:
 - [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
 - [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
-- [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; 인자 없이 실행 시 안내 후 종료; `agent -h`/`agent --help`(도움말 본문은 영문; 옵션 순서: `-h`, `-version`, **`--host-info`**, `--nic-brd`, …); **`agent --version` / `agent -version`**(권장); **루트 `--version`/`-version`**(전환용 호환); **`agent --host-info -cfg <file> <self|ip>`**(GET host-info, `BUILD_VARIANT` 행, 원격은 유니캐스트 Discovery); `agent --nic-brd`; **`agent --discovery`**(UDP만, `--dest-port`/`--src-port`/`--timeout`, 결과 **`version=<키> (control|compute)`**); **`agent --apply-update -cfg <file> <self|ip> <bundle.tar.gz>`**(`-agent-variant` 생략 시 설치 variant 유지); **`agent --versions-list` / `--versions-switch`**; 번들·ELF 검증 시 바이너리 **`--version` → `agent --version`** 폴백
+- [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; **`--host-info` / `--apply-update` / `--versions-list` / `--versions-switch`** 는 **`-apiprefix`**(기본 `/maintenance/api/v1`)·대상 Gin REST·**서비스 필수**(`clirest`); `agent --nic-brd`; **`agent --discovery`**(UDP만); 번들·ELF 검증은 서버 `POST /upload` 시 **`--version` → `agent --version`** 폴백
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] **최초 설치**: `bin/ubuntu/contrabass-agent-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
 - [ ] **완전 제거**: `bin/ubuntu/contrabass-agent-uninstall.sh` — root·인자 없음·service stop/disable·유닛 삭제·`DeployBase`·`/var/log/contrabass/mole` 삭제
-- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; `update_history.log` **flock**(`update_history.log.lock` 잔존은 정상); 로컬 적용·로컬 switch-current 후 **페이지 전체 새로고침 없이** `/self` 폴링(4초 후·2초·15회)과 **별도** update-log 폴링(2초·started→맨 위 success/failed, 캐시 무효화); 원격 적용 후 host-info 폴링(최대 8회) → 패널 일괄 현행화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; recent_rollback·update_in_progress
+- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; `update_history.log` **append**·**flock**(`update_history.log.lock` 잔존은 정상); 로컬 적용·로컬 switch-current 후 **페이지 전체 새로고침 없이** `/self` 폴링(4초 후·2초·15회)과 **별도** update-log 폴링(2초·started→**마지막 줄** success/failed, 캐시 무효화, 로그 **역순 표시**); 원격 적용 후 host-info 폴링(최대 8회) → 패널 일괄 현행화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; recent_rollback·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(실행 파일+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 실행 파일·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답
 - [ ] 원격 적용: 호스트별 **`GET …/update-status?ip=`** 의 **`can_apply`·`apply_version`** 으로 버튼·툴팁(스테이징 최신 문자열만과 카드 버전 문자열 비교에만 의존하지 않음), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신

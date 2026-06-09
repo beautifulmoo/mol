@@ -82,38 +82,32 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 
 ## `--host-info`
 
-**로컬 maintenance HTTP는 필요 없다.** 동작은 **`GET …/host-info`** 와 같은 규칙으로, 공유 패키지 **`maintenance/hostinfoapi`** 에서 서버 핸들러와 같은 핵심 로직을 쓴다.
-
-- **`self`**: 로컬 `hostinfo`와 설정(버전 문자열·`MaintenancePort`·`DiscoveryServiceName` 등)으로 **`GET /self`** 와 동일한 `DISCOVERY_RESPONSE` 형을 만든다. `VERSION` 은 빌드 시 주입된 **`main.VersionKey`**(인자 없을 때 `0.0.0-0`)를 쓴다. **`BUILD_VARIANT`** 는 설치된 `DeployBase/current` 바이너리 `--version` 접미사(`control`/`compute`), 없으면 CLI 바이너리 ldflags 값; 미상이면 `-`.
-- **원격 IP**: **`OpenDiscoveryClientUDP`** 로 **`-src-port`**(기본 `9998`)에 바인드하고, 요청은 **`DiscoveryUDPPort`**(기본 9999)로 보낸다. 로컬 에이전트가 9999를 쓰는 경우와 충돌하지 않도록 기본 소스 포트를 9998로 둔다(`--discovery`와 동일한 발상). **`--src-port`를 `DiscoveryUDPPort`와 같게 주면** 에이전트가 떠 있을 때 바인드에 실패할 수 있다.
+대상 에이전트의 **Gin(`Server.HTTPPort`, 기본 8888)** 에 **`GET {APIPrefix}/self`** 를 호출한다. **대상 HTTP 서비스가 떠 있어야 한다** — `GET …/health` 실패 시 `agent service is not running at …` 오류(영문).
 
 ### 사용법
 
 ```text
-contrabass-moleU agent --host-info -cfg /path/to/agent.local.yml [flags] <self|remote-ip>
+contrabass-moleU agent --host-info [-apiprefix <path>] <self|remote-ip>
 contrabass-moleU agent --host-info -h
 ```
 
-### 플래그 (원격 IP일 때만 의미 있음)
+### 플래그
 
 | 플래그 | 기본값 | 설명 |
 |--------|--------|------|
-| **`-src-port`** | `9998` | 유니캐스트용 **로컬 UDP 바인드 포트**. 생략 시 항상 **9998**. 에이전트가 이미 `DiscoveryUDPPort`(보통 9999)를 쓰는 경우와 충돌하지 않게 하려는 값이다. **`--discovery`** 와 같은 패턴. |
+| **`-apiprefix`** | `/maintenance/api/v1` | Gin에 노출된 API 경로 prefix (`Maintenance.APIPrefix` 와 동일). |
 
-**`-cfg`**, **`-src-port`**, **`<self|remote-ip>`** 는 **순서와 무관**하게 줄 수 있다(예: `<ip> -cfg path` 도 유효).
-
-목적지 UDP 포트는 설정의 **`DiscoveryUDPPort`**(원격 에이전트 listen 포트)를 쓴다.
+**`-apiprefix`** 와 **`<self|remote-ip>`** 는 **순서 무관**.
 
 ### 인자
 
 | 위치 | 설명 |
 |------|------|
-| **`-cfg`** | **필수.** 설정 파일 경로(Discovery·표시용 메타·버전 키 외 필드 로드). |
-| **첫 번째 인자** | **`self`**: 로컬. **IPv4/IPv6 주소**: 유니캐스트 대상(호스트명 불가). |
+| **첫 번째 인자** | **`self`**: `http://127.0.0.1:8888{APIPrefix}/self`. **IPv4/IPv6**: 해당 호스트 Gin에 직접 요청(호스트명 불가). |
 
-표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, **`BUILD_VARIANT`**, `CPU_UUID` 등 라벨·값 테이블(영문 헤더). 원격은 Discovery 응답의 `build_variant`를 그대로 표시한다.
+표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, **`BUILD_VARIANT`**, `CPU_UUID` 등 라벨·값 테이블(영문 헤더).
 
-구현: `maintenance/hostinfocli/hostinfocli.go` → `maintenance/hostinfoapi`.
+구현: `maintenance/hostinfocli/hostinfocli.go` → `maintenance/clirest`.
 
 ---
 
@@ -165,88 +159,62 @@ contrabass-moleU agent --discovery -h
 
 ## `--apply-update`
 
-번들 **tar.gz** 를 검증한 뒤, **업데이트 정책**(`maintenance/agentcfg.StagingUpdateAvailable`)을 만족할 때만 **스테이징·적용**을 한 번에 수행한다. 번들 구성(manifest·패키징·검증)은 **[PRD.md §5.5.0](../PRD.md)**. **로컬 maintenance(8889)는 필요 없다** — **`self`** 는 디스크에 스테이징 후 `systemd-run` 적용(`server.ApplyUpdateSelfFromBundleExtract`), **원격 IP** 는 해당 호스트 **Gin**에 multipart `POST …/apply-update`만 보낸다.
+대상 에이전트 Gin에 **`POST {APIPrefix}/upload`**(번들 검증·스테이징) 후 **`POST {APIPrefix}/apply-update`**(JSON `version`·`ip:self`·`agent_variant`)를 호출한다. 웹 UI의 업로드+적용과 동등. **대상 HTTP 서비스가 떠 있어야 한다.**
 
 ### 사용법
 
 ```text
-contrabass-moleU agent --apply-update -cfg=/path/to/agent.local.yml [-agent-variant=compute|control] <self|remote-ip> /path/to/bundle.tar.gz
+contrabass-moleU agent --apply-update [-apiprefix=<path>] [-agent-variant=compute|control] <self|remote-ip> /path/to/bundle.tar.gz
 contrabass-moleU agent --apply-update -h
 ```
-
-`-cfg`·`-agent-variant` 는 **`-name=value`** 형태를 권장한다(`-cfg /path`·`-agent-variant compute` 처럼 **공백으로 값을 주는 형태**도 Go `flag` 패키지에서 동일하게 동작).
 
 ### 인자
 
 | 위치 | 설명 |
 |------|------|
-| **`-cfg`** | **필수.** 설정 파일 경로 (`config.Load`). |
-| **`-agent-variant`** | **선택.** manifest v2 번들 적용 시 `contrabass-moleU`로 설치할 바이너리 variant. `compute` 또는 `control`. **생략 시** 적용 대상에 이미 설치된 variant를 따른다(self: `DeployBase/current` 바이너리, remote: `GET …/self`의 `build_variant`; 확인 불가 시 `compute`). |
-| **첫 번째 인자** | **`self`**: 이 호스트에 적용. **IPv4/IPv6 주소 문자열**: 해당 원격에 적용(호스트명은 사용하지 않음). |
+| **`-apiprefix`** | **선택.** API path prefix (기본 `/maintenance/api/v1`). |
+| **`-agent-variant`** | **선택.** `compute` 또는 `control`. **생략 시** `GET …/self`의 `build_variant`(없으면 CLI ldflags, 그것도 없으면 `compute`). |
+| **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
 | **두 번째 인자** | 업로드할 **번들 파일 경로** (`.tar.gz`). |
 
-### 사전 조건·검증
+검증·업로드 상한·적용 정책은 **대상 서버** 설정·핸들러가 처리한다. HTTP 클라이언트 타임아웃 **300초**.
 
-1. 설정 로드 및 **`Maintenance.MaxUploadBytes`** 범위 안에서 번들 크기 확인.
-2. 번들을 임시 디렉터리에 풀어 **서버 `POST /upload` 와 동일한 검증**(`server.PrepareAgentBundleFromReader`) — manifest·해시·ELF·바이너리 버전 키(`--version`→`agent --version` 폴백) 등.
-3. **현재 버전**  
-   - **self**: **`DeployBase/current` → `versions/…` 의 버전 키**(디스크 기준 설치 current). CLI 바이너리의 `main.VersionKey` 는 **`current` 심볼릭을 읽을 수 없을 때만** 보조로 사용한다. **`GET /self` HTTP 없음**. **`-agent-variant` 생략 시** `current/contrabass-moleU`의 `--version` 접미사 `(control)`/`(compute)`로 variant를 정한다(실패 시 CLI 바이너리 variant, 그것도 없으면 `compute`).  
-   - **remote**: `http://<remote-ip>:Server.HTTPPort` + `APIPrefix` + `/self` — 적용 전 **`TCP`로 `<ip>:Server.HTTPPort` 연결** 가능 여부를 확인한다. **`build_variant`** 로 생략 시 variant를 정한다.
-4. **`StagingUpdateAvailable(번들 버전 키, 현재 버전 키)`** 가 거짓이면 업로드하지 않고 종료 코드 `1`.
-
-### 적용 경로
-
-| 대상 | 동작 |
-|------|------|
-| **self** | 검증된 번들을 `DeployBase` 아래 스테이징한 뒤 `versionsapi.RunSwitchCurrentWithRoots` 와 동일한 로컬 적용(웹 `POST /upload` + 로컬 `apply-update` 와 동등). **`DeployBase/current` 등에 쓰기·`systemd-run` 은 보통 root 권한(예: `sudo`) 필요** — **`agent --apply-update -h`** 에도 동일 안내. |
-| **remote** | `http://<ip>:Server.HTTPPort` + `{APIPrefix}` + **`POST …/apply-update`** multipart: 필드 **`ip`**, **`bundle`**. 요청은 **원격 Gin**에서 처리되며, 원격이 **`POST …/upload`** 후 로컬 **`apply-update`(self)** 를 이어서 호출한다(PRD §5.5.3 multipart 원격 적용과 동일). **로컬 에이전트·maintenance 불필요.** |
-
-HTTP 클라이언트 타임아웃은 **300초** 수준(대용량 번들·느린 링크 대비).
-
-적용 시 **`update.sh`** 가 `{DeployBase}/update_history.log`에 기록하며, 동시 쓰기 방지용 **`update_history.log.lock`**(0바이트 가능)이 남을 수 있다. 업데이트 완료 후에도 lock **파일**은 지우지 않으며, **다음 `--apply-update`를 막지 않는다**.
-
-구현: `maintenance/applycli/applycli.go`, 로컬 적용 공유: `maintenance/server/applylocal.go` · `maintenance/versionsapi/switchlocal.go`.
+구현: `maintenance/applycli/applycli.go` → `maintenance/clirest`.
 
 ---
 
 ## `--versions-list`
 
-- **`self`**: **로컬 maintenance HTTP 없이** 동작한다. 설정의 **`InstallPrefix`**(비어 있으면 **`DeployBase`**, 둘 다 없으면 기본 `/var/lib/contrabass/mole`) 아래 `versions/` 를 읽어, HTTP `GET …/versions/list`(로컬)과 동일한 규칙으로 목록을 만든다(`maintenance/versionsapi`).
-- **원격 IP**: 해당 호스트의 **Gin**(`Server.HTTPPort`, 기본 8888)으로 `GET http://<ip>:<port>{APIPrefix}/versions/list` 를 직접 호출한다. **로컬 에이전트·maintenance(8889)는 필요 없다** — 원격만 리슨 중이면 된다(적용 전 `--versions-switch`와 같이 TCP 연결 가능 여부를 확인).
+대상 에이전트 Gin에 **`GET {APIPrefix}/versions/list`** 를 호출한다. **대상 HTTP 서비스가 떠 있어야 한다.**
 
 ### 사용법
 
 ```text
-contrabass-moleU agent --versions-list -cfg /path/to/agent.local.yml <self|remote-ip>
+contrabass-moleU agent --versions-list [-apiprefix <path>] <self|remote-ip>
 contrabass-moleU agent --versions-list -h
 ```
-
-`-cfg` 와 `<self|remote-ip>` 는 **순서 무관**(위치 인자 한 개).
 
 ### 인자
 
 | 위치 | 설명 |
 |------|------|
-| **`-cfg`** | **필수.** 설정 파일 경로. |
-| **첫 번째 인자** | **`self`**: 로컬 디스크. **IPv4/IPv6 주소**: 원격(호스트명 불가). |
+| **`-apiprefix`** | **선택.** 기본 `/maintenance/api/v1`. |
+| **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
 
 표준 출력: `host …` 한 줄 후 `VERSION` / `CURRENT` / `PREVIOUS` 컬럼 테이블.
 
-구현: `maintenance/versionscli/versionscli.go` (`RunList`) → `maintenance/versionsapi`.
+구현: `maintenance/versionscli/versionscli.go` (`RunList`) → `maintenance/clirest`.
 
 ---
 
 ## `--versions-switch`
 
-스테이징 또는 `versions/`에 있는 **버전 키**를 **current**로 바꾸기 위해 `POST …/versions/switch-current`를 호출한다(서버가 내장 `update.sh`를 `systemd-run`으로 실행).
-
-- **`self`**: **로컬 HTTP 없이** 동작한다(스테이징/versions 해석·필요 시 복사·`current/`에 embedded 스크립트 기록 후 `systemd-run` — 서버 `POST …/versions/switch-current` 로컬 처리와 동일). **`DeployBase`/`current` 쓰기·`systemd-run`은 보통 root 권한(예: `sudo`)이 필요**하며, **`agent --versions-switch -h`** 에도 안내한다. **로컬 에이전트·maintenance(8889) 불필요.**
-- **원격 IP**: 해당 호스트 **Gin**으로 `POST http://<ip>:<port>{APIPrefix}/versions/switch-current` 를 **직접** 호출한다. 바디는 `version`만. **로컬 에이전트는 필요 없다.** 적용 전 **`TCP`로 `<ip>:Server.HTTPPort`** 연결 가능 여부를 확인한다.
+대상 에이전트 Gin에 **`POST {APIPrefix}/versions/switch-current`**(JSON `version`)를 호출한다. **대상 HTTP 서비스가 떠 있어야 한다.**
 
 ### 사용법
 
 ```text
-contrabass-moleU agent --versions-switch -cfg /path/to/agent.local.yml <self|remote-ip> <version-key>
+contrabass-moleU agent --versions-switch [-apiprefix <path>] <self|remote-ip> <version-key>
 contrabass-moleU agent --versions-switch -h
 ```
 
@@ -254,11 +222,11 @@ contrabass-moleU agent --versions-switch -h
 
 | 위치 | 설명 |
 |------|------|
-| **`-cfg`** | **필수.** 설정 파일 경로. |
+| **`-apiprefix`** | **선택.** 기본 `/maintenance/api/v1`. |
 | **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
-| **두 번째 인자** | 전환할 **버전 키** (`--versions-list` 첫 컬럼과 동일). |
+| **두 번째 인자** | 전환할 **버전 키**. |
 
-구현: `maintenance/versionscli/versionscli.go` (`RunSwitch`).
+구현: `maintenance/versionscli/versionscli.go` (`RunSwitch`) → `maintenance/clirest`.
 
 ---
 

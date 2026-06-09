@@ -1,48 +1,34 @@
-// Package applycli implements `contrabass-moleU agent --apply-update` (bundle preflight + upload + apply in one shot).
+// Package applycli implements `contrabass-moleU agent --apply-update` via REST (upload + apply-update).
 package applycli
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"mime/multipart"
-	"net"
-	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/appmeta"
-	"contrabass-agent/maintenance/cliutil"
-	"contrabass-agent/maintenance/server"
-	"contrabass-agent/maintenance/versionsapi"
+	"contrabass-agent/maintenance/clirest"
 )
 
-const bundleFormField = "bundle" // same as server.uploadBundleField
-
-// Run parses flags and runs apply-update CLI. buildVersionKey is the running binary's version (ldflags), used for local policy like GET /self.
-// cliBuildVariant is the running CLI binary's BuildVariant (ldflags), used when installed agent variant cannot be read.
+// Run parses flags and runs apply-update CLI.
 //
-//	<bin> agent --apply-update -cfg <config file> <self|remote-ip> <bundle.tar.gz>
+//	<bin> agent --apply-update [-apiprefix <path>] [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>
 func Run(buildVersionKey, cliBuildVariant string, args []string) int {
+	_ = buildVersionKey
+
 	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	cfgPath := fs.String("cfg", "", "path to config file (required)")
+	apiPrefixFlag := fs.String("apiprefix", "", fmt.Sprintf("API path prefix (default %s)", clirest.DefaultAPIPrefix))
 	agentVariantFlag := fs.String("agent-variant", "", "control or compute; if omitted, match installed build_variant on target (compute if unknown)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update -cfg=<config file> [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
-		fmt.Fprintf(os.Stderr, "  Validates the bundle, compares versions, and uploads/applies only when an update is allowed.\n")
-		fmt.Fprintf(os.Stderr, "  self: stage bundle and apply locally (no local maintenance HTTP).\n")
-		fmt.Fprintf(os.Stderr, "        Requires root privileges (e.g. run with sudo): writes under DeployBase and runs systemd-run.\n")
-		fmt.Fprintf(os.Stderr, "  remote-ip: multipart POST to that host's Gin (Server.HTTPPort); no local agent required.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update [-apiprefix=<path>] [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "  POST {APIPrefix}/upload then POST {APIPrefix}/apply-update on the target agent (Gin port %d).\n", clirest.DefaultHTTPPort)
+		fmt.Fprintf(os.Stderr, "  The target agent HTTP service must be running.\n\n")
 		fmt.Fprintf(os.Stderr, "  Optional flags may be written as -name=value or -name value (Go flag package).\n\n")
-		fmt.Fprintf(os.Stderr, "  -cfg=<file>\n")
-		fmt.Fprintf(os.Stderr, "        path to config file (required)\n")
+		fmt.Fprintf(os.Stderr, "  -apiprefix=<path>\n")
+		fmt.Fprintf(os.Stderr, "        API path prefix (default %s)\n", clirest.DefaultAPIPrefix)
 		fmt.Fprintf(os.Stderr, "  -agent-variant=control|compute\n")
 		fmt.Fprintf(os.Stderr, "        which bundle binary becomes %s at apply; if omitted, match installed\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "        build_variant on target (compute if unknown)\n")
@@ -62,11 +48,6 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 		fs.Usage()
 		return 1
 	}
-	if strings.TrimSpace(*cfgPath) == "" {
-		fmt.Fprintf(os.Stderr, "%s: -cfg <config file> is required\n", appmeta.BinaryName)
-		fs.Usage()
-		return 1
-	}
 
 	target := strings.TrimSpace(pos[0])
 	bundlePath := strings.TrimSpace(pos[1])
@@ -74,206 +55,58 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: target and bundle path must not be empty\n", appmeta.BinaryName)
 		return 1
 	}
+	if err := clirest.ValidateTarget(target); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
 
-	cfg, err := agentcfg.Load(*cfgPath)
+	client := clirest.DefaultHTTPClient(300 * time.Second)
+	apiPrefix := *apiPrefixFlag
+	if err := clirest.EnsureServiceRunning(client, target, apiPrefix); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
+
+	selfInfo, err := clirest.GetSelf(client, target, apiPrefix)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: load config: %v\n", appmeta.BinaryName, err)
+		fmt.Fprintf(os.Stderr, "%s: get target version: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
-
-	maxBytes := agentcfg.ClampMaxUploadBytes(cfg.MaxUploadBytes.Int())
-
-	fi, err := os.Stat(bundlePath)
+	installedBV := strings.TrimSpace(selfInfo.BuildVariant)
+	if installedBV == "" {
+		installedBV = strings.TrimSpace(cliBuildVariant)
+	}
+	if installedBV == "" {
+		installedBV = "compute"
+	}
+	variant, err := clirest.ResolveAgentVariantForTarget(*agentVariantFlag, installedBV)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: bundle: %v\n", appmeta.BinaryName, err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
-	if fi.Size() > maxBytes {
-		fmt.Fprintf(os.Stderr, "%s: bundle size %d exceeds configured limit %d\n", appmeta.BinaryName, fi.Size(), maxBytes)
-		return 1
-	}
-	raw, err := os.ReadFile(bundlePath)
+
+	versionKey, err := clirest.UploadBundle(client, target, apiPrefix, bundlePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: read bundle: %v\n", appmeta.BinaryName, err)
+		fmt.Fprintf(os.Stderr, "%s: upload: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 
-	pb, err := server.PrepareAgentBundleFromReader(os.TempDir(), bytes.NewReader(raw), maxBytes)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: bundle validation failed: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-	defer func() { _ = os.RemoveAll(pb.WorkDir) }()
-	versionKey := pb.VersionKey
-
-	httpClient := &http.Client{Timeout: 300 * time.Second}
-	apiPrefix := cliutil.NormalizeAPIPrefix(cfg.APIPrefix)
-
-	switch strings.ToLower(target) {
-	case "self":
-		cur := currentVersionKeyForApply(buildVersionKey, cfg)
-		if !agentcfg.StagingUpdateAvailable(versionKey, cur, cfg.AllowSameVersionUpdate) {
-			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, current %q)\n", appmeta.BinaryName, versionKey, cur)
-			return 1
-		}
-		installedBV := installedBuildVariantLocal(cfg, cliBuildVariant)
-		variant, err := appmeta.ResolveAgentVariantForApply(*agentVariantFlag, installedBV)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
-			return 1
-		}
+	cur := strings.TrimSpace(selfInfo.Version)
+	if strings.EqualFold(target, "self") {
 		fmt.Printf("Applying bundle %s locally (current %s, variant %s)\n", versionKey, cur, variant)
-		if err := server.ApplyUpdateSelfFromBundleExtract(cfg, raw, pb, variant); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
-			return 1
-		}
+	} else {
+		fmt.Printf("Applying bundle %s to remote %s (current %s, variant %s)\n", versionKey, target, cur, variant)
+	}
+
+	msg, err := clirest.ApplyUpdateJSON(client, target, apiPrefix, versionKey, variant)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: apply: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
+	if strings.TrimSpace(msg) != "" {
+		fmt.Println(msg)
+	} else {
 		fmt.Println("Apply update requested; the agent will restart shortly.")
-		return 0
-
-	default:
-		remoteIP := target
-		if net.ParseIP(remoteIP) == nil {
-			fmt.Fprintf(os.Stderr, "%s: remote target must be a valid IP address: %q\n", appmeta.BinaryName, remoteIP)
-			return 1
-		}
-		addr := cliutil.RemoteDialAddr(cfg, remoteIP)
-		if err := cliutil.DialTCP(addr, 5*time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: cannot connect to %s (agent HTTP port must be reachable): %v\n", appmeta.BinaryName, addr, err)
-			return 1
-		}
-		remoteBase := cliutil.RemoteBaseURL(cfg, remoteIP)
-		selfInfo, err := fetchSelfGET(httpClient, remoteBase+apiPrefix+"/self")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: get remote version failed (%s): %v\n", appmeta.BinaryName, remoteBase+apiPrefix+"/self", err)
-			return 1
-		}
-		cur := selfInfo.Version
-		if !agentcfg.StagingUpdateAvailable(versionKey, cur, cfg.AllowSameVersionUpdate) {
-			fmt.Fprintf(os.Stderr, "%s: update not needed or not allowed by policy (bundle %q, remote current %q)\n", appmeta.BinaryName, versionKey, cur)
-			return 1
-		}
-		variant, err := appmeta.ResolveAgentVariantForApply(*agentVariantFlag, selfInfo.BuildVariant)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
-			return 1
-		}
-		fmt.Printf("Applying bundle %s to remote %s (remote current %s, variant %s)\n", versionKey, remoteIP, cur, variant)
-		applyURL := remoteBase + apiPrefix + "/apply-update"
-		if err := postMultipartApplyRemote(httpClient, applyURL, remoteIP, bundlePath, variant); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: remote apply failed: %v\n", appmeta.BinaryName, err)
-			return 1
-		}
-		fmt.Printf("Remote %s updated to version %s.\n", remoteIP, versionKey)
-		return 0
 	}
-}
-
-// currentVersionKeyForApply is the "installed current" for policy: DeployBase/current → versions/<name>,
-// not the CLI binary's ldflags (the binary may be a dev build while /var/lib/... still points at an older key).
-func currentVersionKeyForApply(buildVersionKey string, cfg *agentcfg.Config) string {
-	deploy := versionsapi.DeployRootFromConfig(cfg)
-	if cur := versionsapi.ResolveSymlinkVersion(deploy, "current"); cur != "" {
-		return cur
-	}
-	return strings.TrimSpace(buildVersionKey)
-}
-
-func installedBuildVariantLocal(cfg *agentcfg.Config, cliBuildVariant string) string {
-	bv := versionsapi.InstalledBuildVariantFromDeploy(versionsapi.DeployRootFromConfig(cfg))
-	if bv != "" {
-		return bv
-	}
-	return strings.TrimSpace(cliBuildVariant)
-}
-
-type selfInfo struct {
-	Version      string
-	BuildVariant string
-}
-
-func fetchSelfGET(client *http.Client, url string) (selfInfo, error) {
-	var empty selfInfo
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
-	if err != nil {
-		return empty, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return empty, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return empty, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return empty, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var out struct {
-		Status string `json:"status"`
-		Data   struct {
-			Version      string `json:"version"`
-			BuildVariant string `json:"build_variant"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return empty, fmt.Errorf("JSON: %w", err)
-	}
-	if out.Status != "success" {
-		return empty, fmt.Errorf("status %q", out.Status)
-	}
-	return selfInfo{
-		Version:      strings.TrimSpace(out.Data.Version),
-		BuildVariant: strings.TrimSpace(out.Data.BuildVariant),
-	}, nil
-}
-
-func postMultipartApplyRemote(client *http.Client, applyURL, remoteIP, bundlePath, agentVariant string) error {
-	f, err := os.Open(bundlePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	if err := w.WriteField("ip", remoteIP); err != nil {
-		return err
-	}
-	if err := w.WriteField("agent_variant", agentVariant); err != nil {
-		return err
-	}
-	part, err := w.CreateFormFile(bundleFormField, filepath.Base(bundlePath))
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return err
-	}
-	if err := w.Close(); err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, applyURL, &buf)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out server.APIResponse
-	if json.Unmarshal(body, &out) != nil {
-		return fmt.Errorf("parse remote apply response: %s", strings.TrimSpace(string(body)))
-	}
-	if out.Status != "success" {
-		if s, ok := out.Data.(string); ok && s != "" {
-			return fmt.Errorf("%s", s)
-		}
-		return fmt.Errorf("remote apply failed: status=%s", out.Status)
-	}
-	return nil
+	return 0
 }

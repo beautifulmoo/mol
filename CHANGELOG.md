@@ -36,13 +36,18 @@
 - **`maintenance/server`**: JSON `data` strings for apply-update, switch-current, upload/remove, remote proxy errors, update-log empty text, etc. are **English** (CLI and web consume the same API).
 - **`versionsapi`**: errors returned through apply/switch paths are English.
 
+## CLI · REST 전환 (`-cfg` 제거, `-apiprefix`)
+
+- **`--host-info`**, **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**: 설정 파일 **`-cfg` 제거**. 대상 에이전트 **Gin(기본 8888)** 의 **`{APIPrefix}`** REST만 사용(`maintenance/clirest`). **`-apiprefix`** 선택(기본 **`/maintenance/api/v1`**). 대상 **`self`/원격 IP** 서비스 미기동 시 `agent service is not running at …` (영문).
+- **서비스 기동** **`<bin> -cfg <file>`** / **`agent -cfg <file>`** 는 변경 없음.
+
 ## 유지보수 웹 UI · 업데이트 기록
 
 - **로그/목록 버튼**: 업데이트 기록 블록 **「로그 새로고침」**, 설치된 버전 블록 **「목록 새로고침」**.
-- **로컬 적용·로컬 switch-current**: `update-log` **2초 자동 갱신** — 이번 run의 `started` 확인 후 맨 위 줄 `success`/`failed`까지. `/self` 폴링과 **분리**; 진행 중 패널 일괄 갱신은 기록 fetch 생략. 요청은 캐시 무효화(`no-store`, `&_=`).
+- **로컬 적용·로컬 switch-current**: `update-log` **2초 자동 갱신** — 이번 run의 `started` 확인 후 **마지막 줄** `success`/`failed`까지. `/self` 폴링과 **분리**; 진행 중 패널 일괄 갱신은 기록 fetch 생략. 요청은 캐시 무효화(`no-store`, `&_=`). 로그 tail 10줄 **역순 표시**(최신이 위).
 - **적용 버튼**: `can_apply` 시 **초록색** 스타일.
 - **switch-current (로컬)**: `apply-update`와 동일하게 버전 트리 준비·`MaterializeCanonicalAgent` 후 `update.sh`.
-- **`update_history.log`**: `prepend_history`에 **`flock`**(`update_history.log.lock`). lock 파일은 0바이트로 남을 수 있으나 잠금은 프로세스 종료 시 해제되어 다음 업데이트를 막지 않는다.
+- **`update_history.log`**: `append_history`에 **`flock`**(`update_history.log.lock`). lock 파일은 0바이트로 남을 수 있으나 잠금은 프로세스 종료 시 해제되어 다음 업데이트를 막지 않는다.
 
 ## update.sh · rollback 경로·헬스 대기
 
@@ -67,7 +72,7 @@
   - **REST**: `POST …/apply-update` JSON/multipart `agent_variant` 필드.
 - **MaterializeCanonicalAgent** (`server/agentvariant.go`): 선택된 variant를 canonical `contrabass-moleU`로 복사. 스테이징 시점에는 canonical 파일 미생성, 적용 시점에만 수행.
 - **AllowSameVersionUpdate**: `agent.local.yml`의 `AllowSameVersionUpdate: true`로 동일 버전 재적용 허용 (기본 false).
-- **pack-agent-tarball.sh**: manifest v2 기반 번들 생성. control·compute·config 세 파일의 SHA-256을 각각 계산.
+- **pack-agent-tarball.sh**: manifest v2 번들 생성. control·compute·config SHA-256. 기본 출력 파일명은 두 바이너리 **`agent --version`** 키(일치 필수), `build-version.sh` 미사용.
 - **버전 키 검증**: `--version` 출력의 `(control)` / `(compute)` 접미사를 검증 시 제거.
 - **UI Build Variant 표시**: 로컬·리모트 호스트 카드에 현재 실행 중인 variant를 badge로 표시.
 - **관련 파일**: `maintenance/appmeta/agentvariant.go`, `maintenance/versionsapi/staging.go`, `maintenance/server/agentvariant.go`.

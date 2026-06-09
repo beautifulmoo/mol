@@ -20,34 +20,28 @@ cleanup_scripts() {
 	rm -f "$SCRIPT_DIR/update.sh" "$SCRIPT_DIR/rollback.sh"
 }
 
-prepend_history() {
+append_history() {
     local line="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
     local lockfile="${HISTORY_LOG}.lock"
     mkdir -p "$(dirname "$HISTORY_LOG")" 2>/dev/null || true
     (
         flock -w 30 9 || exit 1
-        if [ -f "$HISTORY_LOG" ]; then
-            printf '%s\n' "$line" > "${HISTORY_LOG}.tmp"
-            cat "$HISTORY_LOG" >> "${HISTORY_LOG}.tmp"
-            mv -f "${HISTORY_LOG}.tmp" "$HISTORY_LOG"
-        else
-            printf '%s\n' "$line" > "$HISTORY_LOG"
-        fi
+        printf '%s\n' "$line" >> "$HISTORY_LOG"
     ) 9>"$lockfile"
 }
 
 invoke_rollback() {
     local reason="$1"
-    prepend_history "update $NEW_VERSION failed ($reason), invoking rollback"
+    append_history "update $NEW_VERSION failed ($reason), invoking rollback"
     echo "update failed ($reason), invoking rollback.sh" >&2
     set +e
     /bin/bash "$SCRIPT_DIR/rollback.sh"
     local rc=$?
     set -e
     if [ "$rc" -eq 0 ]; then
-        prepend_history "rollback completed after update failure"
+        append_history "rollback completed after update failure"
     else
-        prepend_history "rollback failed (exit $rc) after update failure; check current symlink and journal"
+        append_history "rollback failed (exit $rc) after update failure; check current symlink and journal"
     fi
     cleanup_scripts
     exit 1
@@ -145,7 +139,7 @@ set_current_link() {
 NEW_VERSION="${1:?usage: update.sh <version>}"
 _cfg_paths="$SCRIPT_DIR/agent.local.yml"
 NEW_DIR=$(find_new_version_dir "$NEW_VERSION" "$_cfg_paths") || {
-    prepend_history "update $NEW_VERSION failed: new binary not found under versions/ or staging"
+    append_history "update $NEW_VERSION failed: new binary not found under versions/ or staging"
     echo "new binary not found for version $NEW_VERSION (checked InstallPrefix/DeployBase from $_cfg_paths and $BASE)" >&2
     cleanup_scripts
     exit 1
@@ -168,18 +162,18 @@ if [ -z "${HTTP_PORT:-}" ] && [ -f "$_cfg_paths" ]; then
     [ -n "$v" ] && SERVICE=$v
 fi
 if [ -z "${HTTP_PORT:-}" ]; then
-    prepend_history "update $NEW_VERSION failed: MaintenancePort not found in agent.local.yml"
+    append_history "update $NEW_VERSION failed: MaintenancePort not found in agent.local.yml"
     echo "MaintenancePort not found in agent.local.yml" >&2
     cleanup_scripts
     exit 1
 fi
 
-prepend_history "update $NEW_VERSION started"
+append_history "update $NEW_VERSION started"
 
 systemctl stop $SERVICE
 
 systemctl is-active --quiet $SERVICE && {
-    prepend_history "update $NEW_VERSION failed: service did not stop"
+    append_history "update $NEW_VERSION failed: service did not stop"
     echo "service did not stop" >&2
     cleanup_scripts
     exit 1
@@ -214,6 +208,6 @@ if [ "$HEALTH_LINE" != "$EXPECTED_LINE" ]; then
     invoke_rollback "health check: bad /version body (expected '${EXPECTED_LINE}', got '${HEALTH_LINE}')"
 fi
 
-prepend_history "update $NEW_VERSION success"
+append_history "update $NEW_VERSION success"
 echo "update to $NEW_VERSION successful"
 cleanup_scripts

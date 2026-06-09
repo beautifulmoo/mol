@@ -12,37 +12,31 @@ if [ -L "$BASE/previous" ] && [ -f "$BASE/previous/agent.local.yml" ]; then
     [ -n "$v" ] && SERVICE=$v
 fi
 
-prepend_history() {
+append_history() {
     local line="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
     local lockfile="${HISTORY_LOG}.lock"
     mkdir -p "$(dirname "$HISTORY_LOG")" 2>/dev/null || true
     (
         flock -w 30 9 || exit 1
-        if [ -f "$HISTORY_LOG" ]; then
-            printf '%s\n' "$line" > "${HISTORY_LOG}.tmp"
-            cat "$HISTORY_LOG" >> "${HISTORY_LOG}.tmp"
-            mv -f "${HISTORY_LOG}.tmp" "$HISTORY_LOG"
-        else
-            printf '%s\n' "$line" > "$HISTORY_LOG"
-        fi
+        printf '%s\n' "$line" >> "$HISTORY_LOG"
     ) 9>"$lockfile"
 }
 
-prepend_history "rollback started"
+append_history "rollback started"
 
 cleanup_scripts() {
 	rm -f "$SCRIPT_DIR/update.sh" "$SCRIPT_DIR/rollback.sh"
 }
 
 [ -L "$BASE/previous" ] || {
-    prepend_history "rollback failed: no previous version"
+    append_history "rollback failed: no previous version"
     echo "no previous version"
     cleanup_scripts
     exit 1
 }
 
 systemctl stop $SERVICE || {
-    prepend_history "rollback failed: service did not stop"
+    append_history "rollback failed: service did not stop"
     cleanup_scripts
     exit 1
 }
@@ -50,11 +44,11 @@ systemctl stop $SERVICE || {
 ln -sfn "$(readlink $BASE/previous)" "$BASE/current"
 
 systemctl start $SERVICE || {
-    prepend_history "rollback failed: service did not start"
+    append_history "rollback failed: service did not start"
     cleanup_scripts
     exit 1
 }
 
-prepend_history "rollback success"
+append_history "rollback success"
 echo "rollback completed"
 cleanup_scripts

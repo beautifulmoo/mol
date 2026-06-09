@@ -59,6 +59,22 @@
       </div>
     </aside>
   </main>
+  <div id="config-editor-modal" class="config-editor-modal" hidden aria-hidden="true">
+    <div class="config-editor-modal-backdrop"></div>
+    <div class="config-editor-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="config-editor-modal-title">
+      <div class="config-editor-modal-header">
+        <h3 id="config-editor-modal-title" class="config-editor-modal-title">agent.local.yml (current)</h3>
+        <button type="button" id="config-editor-modal-close-btn" class="config-editor-modal-close" title="닫기" aria-label="닫기">&times;</button>
+      </div>
+      <textarea id="config-editor-modal-textarea" class="config-editor config-editor-modal-textarea" placeholder="불러오기로 current 버전의 agent.local.yml을 불러옵니다." spellcheck="false"></textarea>
+      <div class="config-editor-modal-actions">
+        <button type="button" id="config-editor-modal-load-btn" class="service-btn">불러오기</button>
+        <button type="button" id="config-editor-modal-save-btn" class="service-btn">저장</button>
+        <button type="button" id="config-editor-modal-dismiss-btn" class="service-btn">닫기</button>
+        <span id="config-editor-modal-status" class="discovery-status" aria-live="polite"></span>
+      </div>
+    </div>
+  </div>
   <script src="client-runtime.js"></script>
   <script src="app.js"></script>
 </body>

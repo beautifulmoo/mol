@@ -1546,7 +1546,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	const maxLines = 10
 	var outLines []string
 	if len(lines) > maxLines {
-		outLines = lines[:maxLines]
+		outLines = lines[len(lines)-maxLines:]
 	} else {
 		outLines = lines
 	}
@@ -1556,8 +1556,8 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 	}
 	recentRollback := false
 	if len(lines) > 0 {
-		first := strings.ToLower(lines[0])
-		recentRollback = strings.Contains(first, "rollback") || strings.Contains(first, "failed")
+		last := strings.ToLower(lines[len(lines)-1])
+		recentRollback = strings.Contains(last, "rollback") || strings.Contains(last, "failed")
 	}
 	// 업데이트 진행 중에는 롤백 경고 숨김 (이전 실패 기록이 새 적용과 혼동되지 않도록)
 	if recentRollback && isUpdateUnitActive() {

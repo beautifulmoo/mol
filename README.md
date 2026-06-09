@@ -109,9 +109,9 @@ sudo ./bin/ubuntu/contrabass-agent-uninstall.sh
 | `agent --version`, `agent -version` | 빌드 버전 한 줄 출력 후 종료 |
 | `agent --nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
 | `agent --discovery` | 설정 파일 없이 UDP Discovery만. 결과: `version=<키> (control\|compute)`(웹 UI와 동일, variant 없으면 괄호 생략). `agent --discovery -h` 로 플래그 확인 |
-| `agent --host-info -cfg <file> <self\|ip>` | 로컬/원격 호스트 정보(표 형식, `BUILD_VARIANT` 포함). maintenance HTTP 불필요 |
-| `agent --apply-update -cfg <file> [-agent-variant=…] <self\|ip> <bundle.tar.gz>` | 번들 검증·적용. `-agent-variant` 생략 시 설치 variant 유지 |
-| `agent --versions-list` / `--versions-switch` | 설치 버전 목록·current 전환. `-cfg` 필수. 상세는 **docs/CLI.md** |
+| `agent --host-info [-apiprefix=…] <self\|ip>` | `GET …/self` via Gin (기본 prefix `/maintenance/api/v1`). 대상 서비스 필수 |
+| `agent --apply-update [-apiprefix=…] [-agent-variant=…] <self\|ip> <bundle.tar.gz>` | `POST …/upload` + `POST …/apply-update`. 대상 서비스 필수 |
+| `agent --versions-list` / `--versions-switch` | REST API. `-apiprefix` 선택(기본 `/maintenance/api/v1`). 상세는 **docs/CLI.md** |
 
 **`--discovery` 예** (로컬 에이전트 서비스 없이 원격만 탐색):
 

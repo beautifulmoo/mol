@@ -13,17 +13,17 @@ import (
 
 // Config holds application configuration (YAML).
 type Config struct {
-	DiscoveryServiceName       string `yaml:"DiscoveryServiceName"`
-	DiscoveryBroadcastAddress  string `yaml:"DiscoveryBroadcastAddress"` // fallback when automatic brd collection (PRD 3.1.1) finds none
+	DiscoveryServiceName      string `yaml:"DiscoveryServiceName"`
+	DiscoveryBroadcastAddress string `yaml:"DiscoveryBroadcastAddress"` // fallback when automatic brd collection (PRD 3.1.1) finds none
 	// DiscoveryBroadcastAddresses []string `yaml:"DiscoveryBroadcastAddresses"` // 주석: 물리 NIC brd 자동 수집 사용
-	DiscoveryUDPPort           int    `yaml:"DiscoveryUDPPort"`
-	MaintenanceListenAddress   string `yaml:"MaintenanceListenAddress"` // e.g. "127.0.0.1" (internal only) or "0.0.0.0"
-	MaintenancePort            int    `yaml:"MaintenancePort"`
-	ServerHTTPPort             int    `yaml:"-"` // from top-level Server.HTTPPort (Gin). Used for remote calls.
-	WebPrefix                  string `yaml:"WebPrefix"`
-	APIPrefix                  string `yaml:"APIPrefix"`
-	DiscoveryTimeoutSeconds    int    `yaml:"DiscoveryTimeoutSeconds"`
-	DiscoveryDeduplicate bool `yaml:"DiscoveryDeduplicate"`
+	DiscoveryUDPPort         int    `yaml:"DiscoveryUDPPort"`
+	MaintenanceListenAddress string `yaml:"MaintenanceListenAddress"` // e.g. "127.0.0.1" (internal only) or "0.0.0.0"
+	MaintenancePort          int    `yaml:"MaintenancePort"`
+	ServerHTTPPort           int    `yaml:"-"` // from top-level Server.HTTPPort (Gin). Used for remote calls.
+	WebPrefix                string `yaml:"WebPrefix"`
+	APIPrefix                string `yaml:"APIPrefix"`
+	DiscoveryTimeoutSeconds  int    `yaml:"DiscoveryTimeoutSeconds"`
+	DiscoveryDeduplicate     bool   `yaml:"DiscoveryDeduplicate"`
 	// Systemctl service status (self + discovered hosts)
 	SystemctlServiceName string `yaml:"SystemctlServiceName"` // e.g. "contrabass-mole.service"
 	DeployBase           string `yaml:"DeployBase"`           // e.g. "/var/lib/contrabass/mole" for staging/, update.sh
@@ -78,15 +78,15 @@ func Default() Config {
 		MaintenanceListenAddress:  "127.0.0.1",
 		MaintenancePort:           0,
 		ServerHTTPPort:            0,
-		WebPrefix:                 "/web",
-		APIPrefix:                 "/api/v1",
+		WebPrefix:                 "/maintenance",
+		APIPrefix:                 "/maintenance/api/v1",
 		DiscoveryTimeoutSeconds:   10,
 		DiscoveryDeduplicate:      true,
 		SystemctlServiceName:      "contrabass-mole.service",
 		DeployBase:                "/var/lib/contrabass/mole",
 		SSHPort:                   22,
 		SSHUser:                   "root",
-		MaxUploadBytes: uploadBytesExpr(DefaultMaxUploadBytes),
+		MaxUploadBytes:            uploadBytesExpr(DefaultMaxUploadBytes),
 		RemoteHealth: RemoteHealthConfig{
 			IntervalSeconds:  10,
 			TimeoutSeconds:   2,

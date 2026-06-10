@@ -214,6 +214,8 @@ h3 {
   display: flex;
   gap: 0.5rem;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
 }
 .service-status-header-row .status-refresh-btn,
 .service-status-header-row .service-restart-btn {
@@ -508,6 +510,28 @@ h3 {
 }
 .agent-variant-option code {
   font-size: 0.85em;
+}
+.reuse-config-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #e4e4e7;
+}
+.reuse-config-option[hidden],
+#reuse-previous-config-wrap[hidden] {
+  display: none !important;
+}
+.reuse-config-option input {
+  margin-top: 0.15rem;
+}
+.update-reuse-config {
+  margin-top: 0.35rem;
+}
+.card-reuse-config-option {
+  flex-basis: 100%;
+  max-width: 18em;
 }
 .card-variant-selector {
   display: inline-flex;

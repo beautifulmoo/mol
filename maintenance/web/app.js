@@ -32,6 +32,26 @@
       '</span>';
   }
 
+  function cardReuseConfigHtml() {
+    return '<label class="reuse-config-option card-reuse-config-option" hidden>' +
+      '<input type="checkbox" class="card-reuse-previous-config" checked>' +
+      '<span>이전버전의 환경설정 파일 재사용</span></label>';
+  }
+
+  function hasStagingOnServer() {
+    return !!(lastUpdateStatus.staging_versions && lastUpdateStatus.staging_versions.length > 0);
+  }
+
+  function updateReuseConfigVisibility() {
+    var show = hasStagingOnServer();
+    var localWrap = el('reuse-previous-config-wrap');
+    if (localWrap) localWrap.hidden = !show;
+    var cardOpts = document.querySelectorAll('.card-reuse-config-option');
+    for (var i = 0; i < cardOpts.length; i++) {
+      cardOpts[i].hidden = !show;
+    }
+  }
+
   function applyLocalVariantDefault() {
     var fs = el('agent-variant-fieldset');
     if (!fs || fs.hidden) return;
@@ -43,6 +63,49 @@
   function getSelectedAgentVariant() {
     var sel = document.querySelector('input[name="agent-variant"]:checked');
     return (sel && sel.value) ? sel.value : 'compute';
+  }
+
+  function getReusePreviousConfig() {
+    var wrap = el('reuse-previous-config-wrap');
+    if (!wrap || wrap.hidden) return false;
+    var cb = el('reuse-previous-config');
+    return !(cb && !cb.checked);
+  }
+
+  function getCardReusePreviousConfig(cardEl) {
+    if (!cardEl) return false;
+    var wrap = cardEl.querySelector('.card-reuse-config-option');
+    if (!wrap || wrap.hidden) return false;
+    var cb = wrap.querySelector('.card-reuse-previous-config');
+    return !(cb && !cb.checked);
+  }
+
+  function isLocalReuseConfigVisible() {
+    var wrap = el('reuse-previous-config-wrap');
+    return !!(wrap && !wrap.hidden);
+  }
+
+  function isCardReuseConfigVisible(cardEl) {
+    if (!cardEl) return false;
+    var wrap = cardEl.querySelector('.card-reuse-config-option');
+    return !!(wrap && !wrap.hidden);
+  }
+
+  var REUSE_CONFIG_CONFIRM_MSG =
+    '정말 이전 버전의 환경설정 파일을 사용하지 않고 번들에 포함된 환경설정 파일을 사용하시겠습니까?';
+  var REUSE_CONFIG_DECLINE_MSG =
+    '「이전버전의 환경설정 파일 재사용」 체크박스를 선택한 후 다시 「업데이트 적용」 버튼을 눌러 주세요.';
+
+  function confirmApplyConfigChoice(reusePreviousConfig, reuseCheckboxVisible, onProceed) {
+    if (reuseCheckboxVisible && !reusePreviousConfig) {
+      if (window.confirm(REUSE_CONFIG_CONFIRM_MSG)) {
+        onProceed();
+      } else {
+        window.alert(REUSE_CONFIG_DECLINE_MSG);
+      }
+      return;
+    }
+    onProceed();
   }
 
   function getCardAgentVariant(cardEl) {
@@ -303,6 +366,7 @@
       '<button type="button" class="service-btn service-restart-btn">서비스 재시작</button>' +
       (isSelf ? '' :
         cardVariantRadiosHtml(host.host_ip || '', host.build_variant) +
+        cardReuseConfigHtml() +
         '<button type="button" class="service-btn service-start apply-update-host" disabled>업데이트 적용</button>') +
       '</div></div>' +
       '<pre class="service-status-output"></pre>' +
@@ -582,35 +646,86 @@
           if (summary) summary.textContent = '이 호스트에 적용할 스테이징 버전이 없거나 이미 동일 버전입니다.';
           return;
         }
-        applyHostBtn.disabled = true;
-        if (summary) summary.textContent = '업데이트 적용 중…';
-        if (card) toggleCardVariantSelector(card, false);
 
-        function recheckApplyButton() {
-          var c = applyHostBtn.closest && applyHostBtn.closest('.host-card');
-          var hip = c ? (c.getAttribute('data-host-ip') || '') : '';
-          if (hip) {
-            fetchUpdateStatusForRemote(hip);
-          } else {
-            updateAllHostApplyButtons();
+        var reusePreviousConfig = getCardReusePreviousConfig(card);
+        var reuseCheckboxVisible = isCardReuseConfigVisible(card);
+
+        confirmApplyConfigChoice(reusePreviousConfig, reuseCheckboxVisible, function () {
+          applyHostBtn.disabled = true;
+          if (summary) summary.textContent = '업데이트 적용 중…';
+          if (card) toggleCardVariantSelector(card, false);
+
+          function recheckApplyButton() {
+            var c = applyHostBtn.closest && applyHostBtn.closest('.host-card');
+            var hip = c ? (c.getAttribute('data-host-ip') || '') : '';
+            if (hip) {
+              fetchUpdateStatusForRemote(hip);
+            } else {
+              updateAllHostApplyButtons();
+            }
           }
-        }
 
-        function doApplyToHost(version) {
+          function doApplyToHost(version) {
+            showCardUpdating(cardEl, true);
+            fetch(API_BASE + '/apply-update', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                version: version,
+                ip: ip,
+                agent_variant: getCardAgentVariant(cardEl),
+                reuse_previous_config: reusePreviousConfig
+              })
+            })
+              .then(function (res) { return res.json(); })
+              .then(function (body) {
+                if (body.status === 'success') {
+                  scheduleRefreshAfterApply(cardEl, ip, summary, body.data, version);
+                } else {
+                  updateStatusUI(cardEl, null, body.data || '적용 실패');
+                  showCardUpdating(cardEl, false);
+                }
+              })
+              .catch(function () {
+                updateStatusUI(cardEl, null, '요청 실패');
+                showCardUpdating(cardEl, false);
+              })
+              .finally(recheckApplyButton);
+          }
+
+          var stV = remoteUpdateStatusByIP[ip];
+          var applicableVersion = (stV && stV.ok && stV.apply_version) ? stV.apply_version : getApplicableVersion();
+          if (applicableVersion) {
+            doApplyToHost(applicableVersion);
+            return;
+          }
+          // tar.gz 번들 선택 시: 로컬 스테이징 없이 원격으로만 전송 (multipart apply-update)
+          var bundleInput = el('upload-bundle');
+          if (!bundleInput || !bundleInput.files[0]) {
+            if (summary) summary.textContent = '원격 적용할 tar.gz 번들을 선택하세요.';
+            applyHostBtn.disabled = false;
+            recheckApplyButton();
+            return;
+          }
+          var formData = new FormData();
+          formData.append('ip', ip);
+          formData.append('bundle', bundleInput.files[0]);
+          formData.append('agent_variant', getCardAgentVariant(cardEl));
+          formData.append('reuse_previous_config', reusePreviousConfig ? 'true' : 'false');
           showCardUpdating(cardEl, true);
           fetch(API_BASE + '/apply-update', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              version: version,
-              ip: ip,
-              agent_variant: getCardAgentVariant(cardEl)
-            })
+            body: formData
           })
             .then(function (res) { return res.json(); })
             .then(function (body) {
               if (body.status === 'success') {
-                scheduleRefreshAfterApply(cardEl, ip, summary, body.data, version);
+                var ver;
+                if (body.data && typeof body.data === 'string') {
+                  var m = body.data.match(/version\s+(\S+)\s+applied on remote/i);
+                  if (m) ver = m[1];
+                }
+                scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);
               } else {
                 updateStatusUI(cardEl, null, body.data || '적용 실패');
                 showCardUpdating(cardEl, false);
@@ -621,49 +736,7 @@
               showCardUpdating(cardEl, false);
             })
             .finally(recheckApplyButton);
-        }
-
-        var stV = remoteUpdateStatusByIP[ip];
-        var applicableVersion = (stV && stV.ok && stV.apply_version) ? stV.apply_version : getApplicableVersion();
-        if (applicableVersion) {
-          doApplyToHost(applicableVersion);
-          return;
-        }
-        // tar.gz 번들 선택 시: 로컬 스테이징 없이 원격으로만 전송 (multipart apply-update)
-        var bundleInput = el('upload-bundle');
-        if (!bundleInput || !bundleInput.files[0]) {
-          if (summary) summary.textContent = '원격 적용할 tar.gz 번들을 선택하세요.';
-          recheckApplyButton();
-          return;
-        }
-        var formData = new FormData();
-        formData.append('ip', ip);
-        formData.append('bundle', bundleInput.files[0]);
-        formData.append('agent_variant', getCardAgentVariant(cardEl));
-        showCardUpdating(cardEl, true);
-        fetch(API_BASE + '/apply-update', {
-          method: 'POST',
-          body: formData
-        })
-          .then(function (res) { return res.json(); })
-          .then(function (body) {
-            if (body.status === 'success') {
-              var ver;
-              if (body.data && typeof body.data === 'string') {
-                var m = body.data.match(/version\s+(\S+)\s+applied on remote/i);
-                if (m) ver = m[1];
-              }
-              scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);
-            } else {
-              updateStatusUI(cardEl, null, body.data || '적용 실패');
-              showCardUpdating(cardEl, false);
-            }
-          })
-          .catch(function () {
-            updateStatusUI(cardEl, null, '요청 실패');
-            showCardUpdating(cardEl, false);
-          })
-          .finally(recheckApplyButton);
+        });
       });
     }
     bindRemoteHealthForCard(cardEl);
@@ -754,6 +827,7 @@
       if (dds && dds.length >= 8) {
         dds[1].textContent = appliedVersion;
       }
+      startUpdateLogPolling(appliedVersion, cardEl, ip || '');
     }
     var url = API_BASE + '/host-info?ip=' + encodeURIComponent(ip);
     pollUntilHostJsonOk(url, 8, 5000, 2000, function (body) {
@@ -874,6 +948,7 @@
         getApplyButtonTitle(hostVersion, canApply, applicableVersion);
       toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
     }
+    updateReuseConfigVisibility();
   }
 
   function toggleCardVariantSelector(card, show) {
@@ -902,6 +977,21 @@
       .then(function (body) {
         if (body.status === 'success') {
           status.textContent = body.data || '스테이징에서 삭제되었습니다.';
+          lastUpdateStatus = {
+            can_apply: false,
+            apply_version: '',
+            staging_versions: [],
+            remove_version: '',
+            staging_dual_agents: false
+          };
+          var variantFs = el('agent-variant-fieldset');
+          if (variantFs) variantFs.hidden = true;
+          var applyBtn = el('apply-update-btn');
+          if (applyBtn) applyBtn.disabled = true;
+          var stagingDisplay = el('staging-version-display');
+          if (stagingDisplay) stagingDisplay.textContent = '';
+          updateReuseConfigVisibility();
+          updateAllHostApplyButtons();
           fetchUpdateStatus();
         } else {
           status.textContent = body.data || '삭제 실패.';
@@ -1036,10 +1126,19 @@
     return stop;
   }
 
+  function extractUpdateLogOutput(data) {
+    if (data === undefined || data === null) return '';
+    if (typeof data === 'string') return data;
+    if (typeof data === 'object' && data.output !== undefined && data.output !== null) {
+      return String(data.output);
+    }
+    return '';
+  }
+
   function applyUpdateLogResponse(pre, warningEl, body) {
-    if (body.status === 'success' && body.data) {
-      pre.textContent = formatUpdateLogDisplay(body.data.output);
-      if (warningEl && body.data.recent_rollback) {
+    if (body.status === 'success' && body.data !== undefined && body.data !== null) {
+      pre.textContent = formatUpdateLogDisplay(extractUpdateLogOutput(body.data));
+      if (warningEl && typeof body.data === 'object' && body.data.recent_rollback) {
         warningEl.hidden = false;
         warningEl.innerHTML = UPDATE_LOG_ROLLBACK_WARNING_HTML;
       }
@@ -1381,6 +1480,7 @@
             ? '스테이징: ' + lastUpdateStatus.staging_versions.join(', ')
             : '';
         }
+        updateReuseConfigVisibility();
         updateAllHostApplyButtons();
         fetchUpdateStatusForAllRemoteHosts();
       })
@@ -1444,51 +1544,57 @@
     var status = el('apply-update-status');
     var applyBtn = el('apply-update-btn');
     var selfCard = el('self-info') && el('self-info').querySelector('.host-card');
-    if (applyBtn) applyBtn.disabled = true;
-    status.textContent = '업데이트 적용 요청 중…';
-    showCardUpdating(selfCard, true);
-    fetch(API_BASE + '/apply-update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: version,
-        agent_variant: getSelectedAgentVariant()
+    var reusePreviousConfig = getReusePreviousConfig();
+    var reuseCheckboxVisible = isLocalReuseConfigVisible();
+
+    confirmApplyConfigChoice(reusePreviousConfig, reuseCheckboxVisible, function () {
+      if (applyBtn) applyBtn.disabled = true;
+      if (status) status.textContent = '업데이트 적용 요청 중…';
+      showCardUpdating(selfCard, true);
+      fetch(API_BASE + '/apply-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: version,
+          agent_variant: getSelectedAgentVariant(),
+          reuse_previous_config: reusePreviousConfig
+        })
       })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success') {
-          fetchUpdateStatus();
-          if (status) status.textContent = '업데이트 적용 중… 재시작 후 정보를 자동으로 불러옵니다.';
-          startUpdateLogPolling(version, selfCard, '');
-          pollUntilHostJsonOk(API_BASE + '/self', 15, 4000, 2000, function (body2) {
-            if (selfCard) updateHostCardDetails(selfCard, body2.data);
-            refreshAllPanelsAfterUpdate(selfCard, '');
-            updateAllHostApplyButtons();
-            if (selfCard) showCardUpdating(selfCard, false);
-            if (status) status.textContent = '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
-            if (applyBtn) fetchUpdateStatus();
-          }, function (networkFailure) {
-            if (selfCard) refreshAllPanelsAfterUpdate(selfCard, '');
+        .then(function (res) { return res.json(); })
+        .then(function (body) {
+          if (body.status === 'success') {
+            fetchUpdateStatus();
+            if (status) status.textContent = '업데이트 적용 중… 재시작 후 정보를 자동으로 불러옵니다.';
+            startUpdateLogPolling(version, selfCard, '');
+            pollUntilHostJsonOk(API_BASE + '/self', 15, 4000, 2000, function (body2) {
+              if (selfCard) updateHostCardDetails(selfCard, body2.data);
+              refreshAllPanelsAfterUpdate(selfCard, '');
+              updateAllHostApplyButtons();
+              if (selfCard) showCardUpdating(selfCard, false);
+              if (status) status.textContent = '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
+              if (applyBtn) fetchUpdateStatus();
+            }, function (networkFailure) {
+              if (selfCard) refreshAllPanelsAfterUpdate(selfCard, '');
+              showCardUpdating(selfCard, false);
+              if (status) {
+                status.textContent = networkFailure
+                  ? '연결 실패. 페이지를 새로고침해 보세요.'
+                  : '서버 응답이 지연됩니다. 잠시 후 새로고침하세요.';
+              }
+              if (applyBtn) fetchUpdateStatus();
+            });
+          } else {
+            if (status) status.textContent = body.data || '적용 실패.';
             showCardUpdating(selfCard, false);
-            if (status) {
-              status.textContent = networkFailure
-                ? '연결 실패. 페이지를 새로고침해 보세요.'
-                : '서버 응답이 지연됩니다. 잠시 후 새로고침하세요.';
-            }
-            if (applyBtn) fetchUpdateStatus();
-          });
-        } else {
-          status.textContent = body.data || '적용 실패.';
+            fetchUpdateStatus();
+          }
+        })
+        .catch(function () {
+          if (status) status.textContent = '요청 실패. 서버가 재시작 중일 수 있습니다. 잠시 후 페이지를 새로고침해 보세요.';
           showCardUpdating(selfCard, false);
           fetchUpdateStatus();
-        }
-      })
-      .catch(function () {
-        status.textContent = '요청 실패. 서버가 재시작 중일 수 있습니다. 잠시 후 페이지를 새로고침해 보세요.';
-        showCardUpdating(selfCard, false);
-        fetchUpdateStatus();
-      });
+        });
+    });
   }
 
   function resolveConfigContext(cardEl, ip) {

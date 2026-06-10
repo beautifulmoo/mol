@@ -488,6 +488,17 @@ func parseQueryBoolTrue(s string) bool {
 	return s == "1" || s == "true" || s == "yes" || s == "on"
 }
 
+func parseReusePreviousConfig(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return true
+	}
+	if s == "0" || s == "false" || s == "no" || s == "off" {
+		return false
+	}
+	return parseQueryBoolTrue(s)
+}
+
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
@@ -957,19 +968,20 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 
 // postApplyUpdateToTarget tells the target agent to apply the given version from its staging (ip=self).
 // runUpdateViaEmbeddedScript prepares the version tree and starts embedded update.sh (apply-update / switch-current local).
-func (s *Server) runUpdateViaEmbeddedScript(base, version, agentVariant string) error {
-	return versionsapi.RunSwitchCurrentWithRootsVariant(base, s.installPrefix, s.deployBase, version, agentVariant, s.buildVariant)
+func (s *Server) runUpdateViaEmbeddedScript(base, version, agentVariant string, reusePreviousConfig bool) error {
+	return versionsapi.RunSwitchCurrentWithRootsVariant(base, s.installPrefix, s.deployBase, version, agentVariant, s.buildVariant, reusePreviousConfig)
 }
 
-func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version, agentVariant string) (status string, data interface{}, err error) {
+func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version, agentVariant string, reusePreviousConfig bool) (status string, data interface{}, err error) {
 	applyURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/apply-update"
 	if _, err := appmeta.ParseAgentVariant(agentVariant); err != nil {
 		return "", nil, err
 	}
-	payload, err := json.Marshal(map[string]string{
-		"version":       version,
-		"ip":            "self",
-		"agent_variant": agentVariant,
+	payload, err := json.Marshal(map[string]interface{}{
+		"version":               version,
+		"ip":                    "self",
+		"agent_variant":         agentVariant,
+		"reuse_previous_config": reusePreviousConfig,
 	})
 	if err != nil {
 		return "", nil, err
@@ -993,6 +1005,54 @@ func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix
 	return out.Status, out.Data, nil
 }
 
+func (s *Server) fetchRemoteCurrentConfigContent(ctx context.Context, baseURL, apiPrefix string) (string, error) {
+	u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/current-config"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := remoteHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("remote current-config request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Status string          `json:"status"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("parse remote current-config response: %w", err)
+	}
+	if out.Status != "success" {
+		msg := "remote current-config failed"
+		var errStr string
+		if json.Unmarshal(out.Data, &errStr) == nil && errStr != "" {
+			msg = errStr
+		}
+		return "", fmt.Errorf("%s", msg)
+	}
+	var wrapped struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(out.Data, &wrapped); err != nil {
+		return "", fmt.Errorf("parse remote current-config content: %w", err)
+	}
+	return wrapped.Content, nil
+}
+
+func (s *Server) injectRemoteReuseConfigIntoVersionDir(ctx context.Context, baseURL, apiPrefix, versionDir string) error {
+	content, err := s.fetchRemoteCurrentConfigContent(ctx, baseURL, apiPrefix)
+	if err != nil {
+		return err
+	}
+	if err := versionsapi.OverwriteVersionDirConfig(versionDir, content); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(versionDir, StagedBundleFileName))
+	return nil
+}
+
 func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
@@ -1014,6 +1074,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		var remoteIP string
 		var bundleData []byte
 		agentVariant := appmeta.AgentVariantControl
+		reusePreviousConfig := true
 		for {
 			part, err := mr.NextPart()
 			if err == io.EOF {
@@ -1055,6 +1116,14 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				agentVariant = v
+			case "reuse_previous_config":
+				b, rerr := io.ReadAll(io.LimitReader(part, 16))
+				_ = part.Close()
+				if rerr != nil {
+					s.send(w, "fail", "multipart read failed", http.StatusBadRequest)
+					return
+				}
+				reusePreviousConfig = parseReusePreviousConfig(string(b))
 			default:
 				_, _ = io.Copy(io.Discard, part)
 				part.Close()
@@ -1084,11 +1153,33 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 280*time.Second)
 		defer cancel()
-		if err := s.postUploadBundlePath(ctx, baseURL, s.apiPrefix, pb.BundlePath); err != nil {
-			s.send(w, "fail", err.Error(), http.StatusOK)
+		var uploadErr error
+		if reusePreviousConfig {
+			content, err := s.fetchRemoteCurrentConfigContent(ctx, baseURL, s.apiPrefix)
+			if err != nil {
+				s.send(w, "fail", "reuse remote config: "+err.Error(), http.StatusOK)
+				return
+			}
+			pb.ConfigData = []byte(content)
+			uploadDir := filepath.Join(pb.WorkDir, "remote-staging")
+			_ = os.RemoveAll(uploadDir)
+			if err := os.MkdirAll(uploadDir, 0755); err != nil {
+				s.send(w, "fail", "remote staging dir: "+err.Error(), http.StatusOK)
+				return
+			}
+			if err := StagePreparedBundle(uploadDir, pb); err != nil {
+				s.send(w, "fail", err.Error(), http.StatusOK)
+				return
+			}
+			uploadErr = s.postUploadToTarget(ctx, baseURL, s.apiPrefix, uploadDir)
+		} else {
+			uploadErr = s.postUploadBundlePath(ctx, baseURL, s.apiPrefix, pb.BundlePath)
+		}
+		if uploadErr != nil {
+			s.send(w, "fail", uploadErr.Error(), http.StatusOK)
 			return
 		}
-		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, pb.VersionKey, agentVariant)
+		status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, pb.VersionKey, agentVariant, reusePreviousConfig)
 		if err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
@@ -1101,15 +1192,16 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", msg, http.StatusOK)
 			return
 		}
-		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API, agent_variant=%s)", ip, pb.VersionKey, agentVariant)
+		log.Printf("apply-update: remote %s version %s applied (multipart -> upload API, agent_variant=%s, reuse_previous_config=%v)", ip, pb.VersionKey, agentVariant, reusePreviousConfig)
 		s.send(w, "success", "version "+pb.VersionKey+" applied on remote "+ip+". Refresh service status.", http.StatusOK)
 		return
 	}
 
 	var req struct {
-		Version      string `json:"version"`
-		IP           string `json:"ip"`
-		AgentVariant string `json:"agent_variant"`
+		Version             string `json:"version"`
+		IP                  string `json:"ip"`
+		AgentVariant        string `json:"agent_variant"`
+		ReusePreviousConfig *bool  `json:"reuse_previous_config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.send(w, "fail", "invalid body", http.StatusBadRequest)
@@ -1137,9 +1229,14 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reusePreviousConfig := false
+	if req.ReusePreviousConfig != nil {
+		reusePreviousConfig = *req.ReusePreviousConfig
+	}
+
 	ip := strings.TrimSpace(req.IP)
 	if ip == "" || ip == "self" {
-		if err := s.runUpdateViaEmbeddedScript(base, version, agentVariant); err != nil {
+		if err := s.runUpdateViaEmbeddedScript(base, version, agentVariant, reusePreviousConfig); err != nil {
 			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
@@ -1147,11 +1244,11 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.doRemoteUpdate(w, ip, version, versionDir, agentVariant)
+	s.doRemoteUpdate(w, ip, version, versionDir, agentVariant, reusePreviousConfig)
 }
 
 // doRemoteUpdate sends files to the remote upload API (staging), then calls the remote apply-update API (no SSH/SCP).
-func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, agentVariant string) {
+func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, agentVariant string, reusePreviousConfig bool) {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
 		s.send(w, "fail", "remote apply failed: "+err.Error(), http.StatusOK)
@@ -1164,11 +1261,17 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, 
 		s.send(w, "fail", "version directory missing "+appmeta.BinaryName+" or "+appmeta.BundleAgentControlName+"/"+appmeta.BundleAgentComputeName+": "+versionDir, http.StatusOK)
 		return
 	}
+	if reusePreviousConfig {
+		if err := s.injectRemoteReuseConfigIntoVersionDir(ctx, baseURL, s.apiPrefix, versionDir); err != nil {
+			s.send(w, "fail", "reuse remote config: "+err.Error(), http.StatusOK)
+			return
+		}
+	}
 	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, versionDir); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version, agentVariant)
+	status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version, agentVariant, reusePreviousConfig)
 	if err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
@@ -1181,7 +1284,7 @@ func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, 
 		s.send(w, "fail", msg, http.StatusOK)
 		return
 	}
-	log.Printf("apply-update: remote %s version %s applied (upload API, agent_variant=%s)", ip, version, agentVariant)
+	log.Printf("apply-update: remote %s version %s applied (upload API, agent_variant=%s, reuse_previous_config=%v)", ip, version, agentVariant, reusePreviousConfig)
 	s.send(w, "success", "version "+version+" applied on remote "+ip+". Refresh service status.", http.StatusOK)
 }
 
@@ -1490,7 +1593,7 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 		s.send(w, "fail", "version not found in staging or versions/: "+version, http.StatusOK)
 		return
 	}
-	if err := s.runUpdateViaEmbeddedScript(base, version, ""); err != nil {
+	if err := s.runUpdateViaEmbeddedScript(base, version, "", false); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
@@ -1522,6 +1625,12 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "failed to parse remote response", http.StatusOK)
 			return
 		}
+		if out.Status == "success" {
+			payload := normalizeUpdateLogAPIPayload(out.Data, false)
+			w.Header().Set("Cache-Control", "no-store")
+			s.send(w, "success", payload, http.StatusOK)
+			return
+		}
 		s.send(w, out.Status, out.Data, http.StatusOK)
 		return
 	}
@@ -1530,41 +1639,77 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 		base = "/var/lib/contrabass/mole"
 	}
 	historyPath := filepath.Join(base, "update_history.log")
-	data, err := os.ReadFile(historyPath)
+	payload, err := updateLogPayloadFromFile(historyPath, isUpdateUnitActive())
 	if err != nil {
 		if os.IsNotExist(err) {
+			w.Header().Set("Cache-Control", "no-store")
 			s.send(w, "success", map[string]interface{}{"output": "(no entries yet)", "recent_rollback": false}, http.StatusOK)
 			return
 		}
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		lines = nil
+	w.Header().Set("Cache-Control", "no-store")
+	s.send(w, "success", payload, http.StatusOK)
+}
+
+const updateLogMaxLines = 10
+
+func updateLogPayloadFromFile(historyPath string, updateInProgress bool) (map[string]interface{}, error) {
+	data, err := os.ReadFile(historyPath)
+	if err != nil {
+		return nil, err
 	}
-	const maxLines = 10
-	var outLines []string
-	if len(lines) > maxLines {
-		outLines = lines[len(lines)-maxLines:]
-	} else {
-		outLines = lines
+	return normalizeUpdateLogAPIPayload(string(data), updateInProgress), nil
+}
+
+// normalizeUpdateLogAPIPayload returns tail lines oldest-first for the UI to reverse (newest on top).
+// data may be raw file bytes/string or a proxied API map with an "output" field.
+func normalizeUpdateLogAPIPayload(data interface{}, updateInProgress bool) map[string]interface{} {
+	raw := ""
+	recentRollback := false
+	switch v := data.(type) {
+	case string:
+		raw = v
+	case map[string]interface{}:
+		if o, ok := v["output"].(string); ok {
+			raw = o
+		}
+		if rb, ok := v["recent_rollback"].(bool); ok {
+			recentRollback = rb
+		}
+	case []byte:
+		raw = string(v)
+	}
+	lines := splitUpdateLogLines(raw)
+	if len(lines) == 0 {
+		return map[string]interface{}{"output": "(no entries yet)", "recent_rollback": false}
+	}
+	outLines := lines
+	if len(lines) > updateLogMaxLines {
+		outLines = lines[len(lines)-updateLogMaxLines:]
 	}
 	output := strings.Join(outLines, "\n")
-	if output == "" {
-		output = "(no entries yet)"
-	}
-	recentRollback := false
-	if len(lines) > 0 {
+	if recentRollback || len(lines) > 0 {
 		last := strings.ToLower(lines[len(lines)-1])
 		recentRollback = strings.Contains(last, "rollback") || strings.Contains(last, "failed")
 	}
-	// 업데이트 진행 중에는 롤백 경고 숨김 (이전 실패 기록이 새 적용과 혼동되지 않도록)
-	if recentRollback && isUpdateUnitActive() {
+	if recentRollback && updateInProgress {
 		recentRollback = false
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	s.send(w, "success", map[string]interface{}{"output": output, "recent_rollback": recentRollback}, http.StatusOK)
+	return map[string]interface{}{"output": output, "recent_rollback": recentRollback}
+}
+
+func splitUpdateLogLines(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "(no entries yet)" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
 }
 
 // currentConfigPath returns the path to deploy_base/current/<config file> (current symlink resolved), or "" if not available.

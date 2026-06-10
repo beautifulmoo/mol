@@ -82,7 +82,7 @@ sudo ./bin/ubuntu/contrabass-agent-uninstall.sh
 **사용 방법**
 
 - **update.sh**: 웹 UI·CLI `--apply-update` 적용 시 에이전트가 내장 스크립트를 `{DeployBase}/current/`에 풀고 `systemd-run`으로 실행한다(PRD §5.5.2). 기동 후 **`systemctl is-active`·`GET /version`을 긴 재시도**(기본 HTTP 대기 약 6분)하며, 실패 시 `rollback.sh` 실행. 조정: `HEALTH_*`, `SERVICE_ACTIVE_*` 환경 변수. `versions/<키>` 탐색은 InstallPrefix·DeployBase를 따른다.  
-  업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다. 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않으며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다.  
+  업로드는 **스테이징** `{DeployBase}/staging/{버전}/` 에만 저장된다. 로컬 적용 시 스테이징 → versions 복사 후 update.sh 를 실행한다. 스테이징은 자동 삭제하지 않으며, 삭제는 웹의 「업로드된 버전 삭제」로 수동 처리한다. 원격 적용은 스테이징 또는 versions 에 있는 파일을 그대로 사용한다. 웹 UI에서는 스테이징이 있을 때 **「이전버전의 환경설정 파일 재사용」**(기본 on)으로 **적용 직전 `current`의 config**를 새 `versions/<키>/`에 반영할 수 있으며, 원격은 orchestrator가 해당 호스트의 `current-config`를 읽어 번들에 주입한다(`reuse_previous_config`, PRD §5.5.3·§6.3).  
   **`update_history.log`** 기록 시 **`flock`** 으로 동시 쓰기를 막으며, **`update_history.log.lock`**(0바이트일 수 있음)이 `{DeployBase}`에 남을 수 있다. 잠금은 프로세스 종료 시 풀리므로 **다음 업데이트를 막지 않는다**(진행 중 업데이트가 있을 때만 lock 파일을 삭제하지 말 것).
 - **rollback.sh**: 업데이트 후 서비스가 기동에 실패하면 update.sh 가 자동으로 이 스크립트를 호출해 이전 버전으로 되돌린다. 수동 롤백이 필요할 때는 배포 베이스에서 직접 실행하면 된다.
   - 예: `/var/lib/contrabass/mole/rollback.sh` (root 또는 동일 권한으로 실행)

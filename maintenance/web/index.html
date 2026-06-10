@@ -54,6 +54,10 @@
           <button type="button" id="remove-upload-btn" class="service-btn" disabled title="서버에만 올라가 있고 아직 호스트에 적용하지 않은 버전을 삭제합니다">업로드된 버전 삭제</button>
           <span id="staging-version-display" class="staging-version-display" aria-live="polite"></span>
         </div>
+        <label id="reuse-previous-config-wrap" class="reuse-config-option update-reuse-config" hidden>
+          <input type="checkbox" id="reuse-previous-config" checked>
+          <span>이전버전의 환경설정 파일 재사용</span>
+        </label>
         <p id="upload-status" class="discovery-status"></p>
         <p id="apply-update-status" class="discovery-status"></p>
       </div>

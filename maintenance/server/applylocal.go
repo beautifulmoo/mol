@@ -39,5 +39,5 @@ func ApplyUpdateSelfFromBundleExtract(cfg *agentcfg.Config, raw []byte, pb *Prep
 		_ = os.RemoveAll(finalDir)
 		return fmt.Errorf("write staged bundle copy: %w", err)
 	}
-	return versionsapi.RunSwitchCurrentWithRootsVariant(base, cfg.InstallPrefix, cfg.DeployBase, pb.VersionKey, agentVariant, "")
+	return versionsapi.RunSwitchCurrentWithRootsVariant(base, cfg.InstallPrefix, cfg.DeployBase, pb.VersionKey, agentVariant, "", false)
 }

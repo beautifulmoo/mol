@@ -460,7 +460,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **원본 번들 보관**: 업로드 성공 시 **`upload.bundle.tar.gz`** 라는 이름으로 **클라이언트가 보낸 tar.gz 전체**를 스테이징에 함께 둔다. manifest·파일 개수가 늘어도 **원격에 동일 바이트를 다시 보낼 때** 서버가 번들 형식을 하드코딩하지 않도록 하기 위함이다. **`versions/<버전 키>/`에는 원본 번들을 두지 않는다** — 설치 트리는 실행·롤백·향후 임의 버전을 `current`로 지정하는 용도로 **풀린 파일만**이면 되며, 원본 아카이브는 필수 아님.
 - **config 파일명 규칙**: 스테이징/설치 트리에 저장되는 config 파일명은 **바이너리 상수로 고정하지 않고**, 번들 manifest의 **`config.path` basename** 을 따른다(예: `config.path: ./agent.local.yml` → 디스크에도 `agent.local.yml`). 설정 파일명이 다시 바뀌어도 번들 규약만 맞으면 동일하게 동작한다.
 - **agent 파일명 규칙**: **manifest v2**: `agent_control.path`·`agent_compute.path` basename으로 스테이징에 저장한다(`contrabass-moleU-control`, `contrabass-moleU-compute`). 스테이징 시점에는 canonical `appmeta.BinaryName`(`contrabass-moleU`)을 생성하지 않으며, **적용 시점**에 선택된 variant를 `MaterializeCanonicalAgent`로 복사한다. **v1(레거시)**: 단일 `agent.path` basename으로 저장하고, basename이 `BinaryName`과 다르면 복사한다.
-- **스테이징 → `versions/` (로컬 적용 직전)**: **`staging/<버전 키>/` 디렉터리 전체를 `versions/<버전 키>/`로 복사**한 뒤, **`upload.bundle.tar.gz`만 삭제**한다. 번들에 에이전트·config 외 파일이 추가되어도 동일 규칙으로 설치 트리에 반영된다.
+- **스테이징 → `versions/` (로컬 적용 직전)**: **`staging/<버전 키>/` 디렉터리 전체를 `versions/<버전 키>/`로 복사**한 뒤, **`upload.bundle.tar.gz`만 삭제**한다. 번들에 에이전트·config 외 파일이 추가되어도 동일 규칙으로 설치 트리에 반영된다. **`reuse_previous_config`가 true**(웹 기본)이면 **`MaterializeCanonicalAgent` 직후·`update.sh` 직전**에 **업데이트 직전 `current`가 가리키는 버전 트리**의 config 파일(manifest basename, 예: `agent.local.yml`)을 **`versions/<적용 키>/`로 복사**하여 번들에 실린 config를 덮어쓴다. (`previous` 심볼릭 링크는 `update.sh` 안에서만 갱신되므로, 복사 출처는 **적용 전 running `current`**이다. `DeployBase`와 `InstallPrefix`가 다를 때는 `deployRoot/current`·`versionsBase/current` 순으로 해석한다.)
 - **스테이징 정리**: 자동 삭제하지 않는다. 로컬 적용 후에도 스테이징을 남겨 같은 버전 키로 원격 적용을 반복할 수 있다(원본 번들이 스테이징에 남아 있으면 원격 `POST .../upload`에 그대로 실을 수 있음). 삭제는 웹 「업로드된 버전 삭제」로 **스테이징만** 수동 삭제한다.
 
 #### 5.5.2 update.sh·rollback.sh (소스·내장·실행 위치)
@@ -491,16 +491,16 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **버전 키(스테이징 디렉터리명)**: 추출·검증된 **실행 파일**에 대해 위와 동일하게 **`--version` → `agent --version`** 폴백으로 버전 키를 읽는다. 출력 한 줄 `<BinaryName> <버전 키>` 의 뒷부분을 스테이징 디렉터리명으로 쓴다. config에는 버전을 두지 않는다.  
   - **성공**: `{ "status": "success", "data": { "version": "<버전 키>" } }`.
 - **업로드 삭제** `POST .../upload/remove` — Body `{ "version": "<버전 키>" }`. **스테이징** 만 삭제; `versions/` 는 유지.
-- **적용 (로컬)** `POST .../apply-update`, Body `{ "version": "<버전 키>", "ip": "self" 또는 생략, "agent_variant": "control"|"compute" (선택) }`  
+- **적용 (로컬)** `POST .../apply-update`, Body `{ "version": "<버전 키>", "ip": "self" 또는 생략, "agent_variant": "control"|"compute" (선택), "reuse_previous_config": true|false (선택) }`  
   - 소스: 스테이징 우선, 없으면 `versions/`.  
-  - 스테이징에만 있으면 **`staging/<버전 키>/` 전체를 `versions/<버전 키>/`로 복사**한 뒤 **`upload.bundle.tar.gz`만 제거**하고 `update.sh` 경로로 진행한다(§5.5.1). v2 dual-agent 트리는 **`MaterializeCanonicalAgent`** 로 `agent_variant`(비면 설치 `build_variant`, 서버 ldflags 폴백)에 맞게 `contrabass-moleU`를 준비한다.  
+  - 스테이징에만 있으면 **`staging/<버전 키>/` 전체를 `versions/<버전 키>/`로 복사**한 뒤 **`upload.bundle.tar.gz`만 제거**하고 `update.sh` 경로로 진행한다(§5.5.1). v2 dual-agent 트리는 **`MaterializeCanonicalAgent`** 로 `agent_variant`(비면 설치 `build_variant`, 서버 ldflags 폴백)에 맞게 `contrabass-moleU`를 준비한다. **`reuse_previous_config`가 true**이면 §5.5.1의 **적용 전 `current` config 복사**를 수행한다. **생략·false**이면 번들(스테이징)의 config가 그대로 `versions/<키>/`에 남는다.  
   - **`{DeployBase}/current` 존재 필수**(심볼릭 링크 또는 그에 준하는 배포). 없으면 적용 불가.  
   - 내장 `update.sh`·`rollback.sh` 내용을 **`{DeployBase}/current/update.sh`**, `.../rollback.sh` 로 쓴 뒤(실제 파일은 `current` 가 가리키는 `versions/<현재 버전 키>/` 아래),  
     `systemd-run --unit=contrabass-mole-update --property=RemainAfterExit=yes /bin/bash <그 경로>/update.sh <적용할 버전 키>`  
   - 응답은 즉시 성공(백그라운드 적용). 에이전트는 root로 동작·sudo 없음.
 - **적용 (원격)**  
-  - **JSON** `{"version":"<키>","ip":"<원격 IP>"}`: 요청을 받은 서버가 **`resolveVersionDir`**로 로컬 **`staging/` 또는 `versions/`** 에서 해당 버전 디렉터리를 고른 뒤, (1) **`POST http://<원격>:<Server.HTTPPort>/api/v1/upload`** — **로컬 업로드와 동일한 API**이며, 해당 디렉터리에 **`upload.bundle.tar.gz`가 있으면 그 파일을 multipart `bundle`로 그대로 보내고**, 없으면(스테이징 삭제 후 `versions/`만 남은 경우 등) **`BinaryName` + `agent.local.yml`로 최소 tar.gz를 생성**해 보낸다. (2) **`POST .../apply-update`** with `{"version":"<키>","ip":"self"}`. 원격 에이전트는 로컬과 동일하게 `current` 아래에 스크립트를 풀고 실행한다. **`version`은 항상 버전 키 문자열**이다.  
-  - **multipart 원격 적용**: 필드 **`ip`** + **`bundle`**(tar.gz) — 로컬 스테이징 없이 원격에만 번들 업로드·적용. 동일 **`MaxUploadBytes`** 상한.
+  - **JSON** `{"version":"<키>","ip":"<원격 IP>","agent_variant":"…"(선택),"reuse_previous_config":true|false(선택)}`: 요청을 받은 서버가 **`resolveVersionDir`**로 로컬 **`staging/` 또는 `versions/`** 에서 해당 버전 디렉터리를 고른 뒤, **`reuse_previous_config`가 true**이면 원격 **`GET …/current-config`** 로 **그 호스트의 current config**를 읽어 스테이징 트리의 config 파일을 덮어쓰고 **`upload.bundle.tar.gz`를 제거**한 뒤(재전송 시 트리에서 tar.gz를 다시 빌드), (1) **`POST http://<원격>:<Server.HTTPPort>/api/v1/upload`** — **로컬 업로드와 동일한 API**이며, 해당 디렉터리에 **`upload.bundle.tar.gz`가 있으면 그 파일을 multipart `bundle`로 그대로 보내고**, 없으면(스테이징 삭제 후 `versions/`만 남은 경우·config 주입 후 등) **풀린 트리에서 tar.gz를 생성**해 보낸다. (2) **`POST .../apply-update`** with `{"version":"<키>","ip":"self","agent_variant":"…","reuse_previous_config":…}`. 원격 에이전트는 로컬과 동일하게 준비·§5.5.1 config 복사(백업)·`current` 아래 스크립트 실행을 수행한다. **`version`은 항상 버전 키 문자열**이다.  
+  - **multipart 원격 적용**: 필드 **`ip`** + **`bundle`**(tar.gz) + **`agent_variant`**(선택) + **`reuse_previous_config`**(선택, 기본 true) — 로컬 스테이징 없이 원격에만 번들 업로드·적용. **`reuse_previous_config`가 true**이면 업로드 전에 원격 current config로 번들 내 config를 교체한 뒤 전송한다. 동일 **`MaxUploadBytes`** 상한.
 
 #### 5.5.4 업데이트 상태·기록·설정·헬스
 
@@ -512,7 +512,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **`can_apply` / `apply_version`**: 스테이징에 올라온 버전 키 중, **비교 기준 버전**(로컬이면 `current_version`, 원격이면 `remote_current_version`) 대비 **업데이트로 적용할 가치가 있는지** 판단한다 — 규칙은 동일(시맨틱·패치 비교, `StagingUpdateAvailable`). 원격 모드에서는 “**이 서버 스테이징을 그 원격에 적용할 수 있는지**”를 나타낸다.  
   - `remove_version`: 스테이징 정렬 후 **가장 오래된(맨 끝)** 항목 등 UI 삭제용으로 쓸 수 있다.  
   - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
-- **업데이트 기록** `GET .../update-log` — `{DeployBase}/update_history.log` **맨 아래 최근 10줄**(tail). 응답 `data.output`(문자열), `data.recent_rollback`(bool, **마지막 줄** 기준). **`Cache-Control: no-store`**. `contrabass-mole-update.service`가 active이면 `recent_rollback`을 false로 내려 새 적용과 이전 실패 기록이 섞이지 않게 한다. 원격 `ip`는 `Server.HTTPPort`로 프록시. 웹 UI는 tail 10줄을 **최신이 위**가 되도록 **역순 표시**(스크롤 불필요).
+- **업데이트 기록** `GET .../update-log` — `{DeployBase}/update_history.log` **맨 아래 최근 10줄**(tail, 파일 순서는 **오래된 줄→새 줄**). 응답 `data.output`(문자열), `data.recent_rollback`(bool, **파일 맨 아래 줄** 기준). **`Cache-Control: no-store`**. `contrabass-mole-update.service`가 active이면 `recent_rollback`을 false로 내려 새 적용과 이전 실패 기록이 섞이지 않게 한다. 원격 `ip`는 `Server.HTTPPort`로 프록시하며, 프록시 응답도 **동일 tail 10·`no-store`** 로 정규화한다. 웹 UI(로컬·원격 카드 공통)는 `output` 줄을 **최신이 위**가 되도록 **역순 표시**한다.
 - **current-cfg** `GET/POST .../current-cfg` — `current` 심볼릭 대상의 config YAML 조회·저장.
 - **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(버전 키는 describe 전체일 수 있음, 예: `contrabass-moleU 0.4.4-4-gc44d420`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
 - **에이전트 HTTP 헬스(JSON)** `GET {APIPrefix}/health` — JSON `success`, `data`에 `{ "ok": true }` 수준의 최소 응답. **원격 가용성 모니터링** 시 로컬 에이전트가 같은 경로로 노출하며(Gin이 `Server.HTTPPort`로 프록시), 웹 UI의 원격 헬스 확인은 **이 경로**를 대상으로 한다(UDP 미사용).
@@ -584,12 +584,13 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
   - **업로드**: `maintenance/scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리에 대해 **`versionKeyFromAgentBinary`**(§5.5.3·§12)로 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + 버전 한 줄, §12)·**agent.local.yml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
   - **config 변경**: 번들을 만들기 전에 로컬에서 `agent.local.yml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
-- **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, **「업데이트 적용」**(`POST /api/v1/apply-update`, Body `{ "version": "<버전 키>", "agent_variant": "compute"|"control" }`). 활성 시 **초록색** 버튼 스타일. 성공 시 에이전트 재시작으로 HTTP가 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 이후 **두 갱신 루프를 병렬**로 돌린다(§6.3.1). (1) **호스트**: 약 **4초 후**부터 `GET /api/v1/self`를 **2초 간격·최대 15회** — 성공 시 카드 호스트 정보·config·versions·서비스 상태·update-status 현행화. (2) **업데이트 기록**: §6.3.1. `/self`가 먼저 돌아와도 **기록 폴링은 success/failed까지 유지**한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다.
+- **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, **「업데이트 적용」**(`POST /api/v1/apply-update`, Body `{ "version": "<버전 키>", "agent_variant": "compute"|"control", "reuse_previous_config": true|false }`). **로컬 스테이징에 번들이 있을 때만** 「업데이트 적용」 버튼 아래 **「이전버전의 환경설정 파일 재사용」** 체크박스를 표시하며 **기본값은 체크(재사용)** 이다. 스테이징이 비면 체크박스를 숨긴다. 체크 해제 후 적용 시 **확인 대화상자**로 번들 config 사용 여부를 묻고, **취소** 시 `alert`로 재사용 체크 후 다시 적용하라고 안내한다(적용은 진행하지 않음). 활성 시 **초록색** 버튼 스타일. 성공 시 에이전트 재시작으로 HTTP가 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 이후 **두 갱신 루프를 병렬**로 돌린다(§6.3.1). (1) **호스트**: 약 **4초 후**부터 `GET /api/v1/self`를 **2초 간격·최대 15회** — 성공 시 카드 호스트 정보·config·versions·서비스 상태·update-status 현행화. (2) **업데이트 기록**: §6.3.1. `/self`가 먼저 돌아와도 **기록 폴링은 success/failed까지 유지**한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다.
 - **적용 (원격)**  
   - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 브라우저는 **`GET …/update-status?ip=<해당 호스트 IP>`** 를 호출해 받은 **`can_apply`**·**`apply_version`**·**`remote_current_version`**(및 스테이징 목록)을 사용한다 — **로컬 스테이징**과 **그 호스트의 현재 버전**(원격 `GET …/self`)에 대해 서버가 **`StagingUpdateAvailable`**·**`AllowSameVersionUpdate`**(§5.5.4·§7.1)로 계산한 결과와 일치시킨다. **`can_apply`가 확정된 응답(`ok`)이 있으면**, 업로드 영역의 **파일 선택만으로는** 버튼을 켜지 않는다. `can_apply`가 false이고 원격이 스테이징과 동일 버전이면 툴팁에 동일 버전 재적용 안내를 표시한다. 단순히 **스테이징 최상위 버전 문자열과 카드 `data-host-version`만 비교**하지 않는다. 원격 비교 조회가 진행 중이면 버튼·variant를 비활성·숨김·짧은 안내로 둔다. 카드에는 `data-host-version`·`data-build-variant`에 버전 키·variant를 저장한다.  
   - **버튼 스타일**: 활성화 시 **초록색** 계열(로컬 적용 버튼과 동일)로 표시하여 적용 가능 상태를 직관적으로 구분한다.  
-  - **클릭 동작**: 적용할 버전은 **`update-status` 응답의 `apply_version`**(또는 동등한 서버 판단)을 우선한다. 파일 선택이 없고 스테이징에 버전이 있으면 JSON `{ version, ip }` 로 로컬 서버에 보내며, 서버는 원격 에이전트의 upload API·apply-update API를 호출하여 배포한다. **번들 파일을 함께 선택한 경우**에는 multipart `ip`, **`bundle`** 로 전송하여 서버가 원격에 tar.gz 업로드 후 apply-update를 호출한다(스테이징 없이 원격만 갱신).  
-  - **적용 성공 후 카드 버전 표시**: JSON 적용 시에는 요청에 넣은 `version`을, multipart 적용 시에는 서버 성공 메시지에서 파싱한 버전을 사용하여, **host-info 응답을 기다리지 않고** 해당 호스트 카드의 버전 표시를 즉시 갱신한다. 이후 지연 후 host-info가 성공하면 전체 호스트 정보로 한 번 더 갱신된다.  
+  - **환경설정 재사용(원격)**: 로컬 스테이징에 번들이 있을 때만, **각 원격 카드**의 「업데이트 적용」 근처에 **독립된** 「이전버전의 환경설정 파일 재사용」 체크박스를 표시한다(기본 체크). 로컬 업데이트 패널의 체크박스와 **연동되지 않으며**, 해당 카드 적용 시 그 카드의 값만 `reuse_previous_config`로 전달한다. 스테이징 삭제 시 로컬·원격 카드의 체크박스를 모두 숨긴다. 체크 해제 후 적용 시 로컬과 동일한 확인·`alert` 규칙을 따른다.  
+  - **클릭 동작**: 적용할 버전은 **`update-status` 응답의 `apply_version`**(또는 동등한 서버 판단)을 우선한다. 파일 선택이 없고 스테이징에 버전이 있으면 JSON `{ version, ip, agent_variant, reuse_previous_config }`로 로컬 서버에 보내며, 서버는 원격 에이전트의 upload API·apply-update API를 호출하여 배포한다(§5.5.3). **번들 파일을 함께 선택한 경우**에는 multipart `ip`, **`bundle`**, **`reuse_previous_config`** 로 전송한다(스테이징 없이 원격만 갱신할 때는 체크박스가 숨겨지므로 재사용은 off).  
+  - **적용 성공 후**: JSON 적용 시에는 요청에 넣은 `version`을, multipart 적용 시에는 서버 성공 메시지에서 파싱한 버전을 사용하여, **host-info 응답을 기다리지 않고** 해당 호스트 카드의 버전 표시를 즉시 갱신한다. 이후 로컬 적용과 동일하게 **host-info 폴링**과 **§6.3.1 업데이트 기록 폴링**(`GET …/update-log?ip=`)을 병렬로 수행한다.  
   - **툴팁**:  
     - 비활성·스테이징에 파일 없음: "먼저 업데이트 영역에서 버전을 업로드하세요"  
     - 비활성·적용 불가(서버 `can_apply` false, 동일 버전·`AllowSameVersionUpdate` false 등): "최신 버전입니다" 또는 동일 버전·설정 안내  
@@ -597,12 +598,12 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **스테이징 버전 표시**: 「업로드된 버전 삭제」 버튼 옆에 현재 스테이징에 올라간 버전(예: "스테이징: 1.2.3")을 표시한다. 스테이징이 비어 있으면 표시하지 않는다.
 - **업데이트 인디케이터**: 로컬·원격 카드 모두, 업데이트 적용이 진행 중일 때 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. **로컬**은 `/self` 폴링 성공(또는 폴링 종료) 후 숨긴다. **원격**은 host-info 폴링·패널 갱신 완료 후 숨긴다. 요청 실패 시 즉시 숨긴다.
 - **파일 선택 초기화**: 번들 파일 선택만 초기화. 스테이징/versions 에 올라간 버전은 유지.
-- **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제.
-- **업데이트 기록(로그)**: 호스트 카드 오른쪽 컬럼 **「업데이트 기록 (최근 10건)」** 블록. 수동 갱신 버튼 문구는 **「로그 새로고침」**(설치된 버전 목록 블록의 **「목록 새로고침」** 과 구분). `GET /api/v1/update-log` 로 표시하며, 요청마다 쿼리 `&_=<타임스탬프>`·`fetch` `cache: 'no-store'` 로 캐시를 쓰지 않는다. **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다.
+- **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제. 삭제 성공 시 스테이징 표시·적용 버튼·**환경설정 재사용 체크박스**를 즉시 갱신한다.
+- **업데이트 기록(로그)**: 호스트 카드 오른쪽 컬럼 **「업데이트 기록 (최근 10건)」** 블록(로컬·원격 동일). 수동 갱신 버튼 문구는 **「로그 새로고침」**(설치된 버전 목록 블록의 **「목록 새로고침」** 과 구분). `GET /api/v1/update-log`(`?ip=` 원격)로 표시하며, 요청마다 쿼리 `&_=<타임스탬프>`·`fetch` `cache: 'no-store'` 로 캐시를 쓰지 않는다. API tail 10줄을 **역순 표시**(최신이 위). **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다.
 
-#### 6.3.1 업데이트 기록 자동 갱신 (로컬 적용·로컬 switch-current)
+#### 6.3.1 업데이트 기록 자동 갱신 (로컬·원격 적용·switch-current)
 
-- **대상**: 로컬 **「업데이트 적용」**·로컬 **「이 버전으로 적용」**(switch-current) 성공 직후. 원격 적용은 §6.3 「원격 적용 후」의 host-info 폴링 완료 시점에 update-log를 포함한 패널 일괄 갱신(진행 중 2초 폴링은 로컬 전용).
+- **대상**: **「업데이트 적용」**·**「이 버전으로 적용」**(switch-current) 성공 직후 — **로컬 카드와 원격 카드 모두**. 원격은 `GET …/update-log?ip=` 를 사용한다.
 - **주기**: 즉시 1회 + **2초 간격** `GET …/update-log`(최대 약 15분).
 - **완료 판정**: `update_history.log`는 **맨 아래가 최신**이다. 해당 버전 키에 대해 로그에 **`update <버전> started`** 가 나타난 뒤, **표시 구간의 마지막 줄**(또는 전체 파일 기준 마지막 줄)이 **`update <버전> success`** 또는 **`update <버전> failed`**(부분 일치)이면 이번 실행이 끝난 것으로 보고 폴링을 멈춘다.
 - **호스트 폴링과 분리**: `/self`·host-info 폴링이 먼저 성공해도 기록 폴링은 위 완료 조건까지 계속한다.
@@ -748,7 +749,7 @@ Maintenance:
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] **최초 설치**: `bin/ubuntu/contrabass-agent-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
 - [ ] **완전 제거**: `bin/ubuntu/contrabass-agent-uninstall.sh` — root·인자 없음·service stop/disable·유닛 삭제·`DeployBase`·`/var/log/contrabass/mole` 삭제
-- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; `update_history.log` **append**·**flock**(`update_history.log.lock` 잔존은 정상); 로컬 적용·로컬 switch-current 후 **페이지 전체 새로고침 없이** `/self` 폴링(4초 후·2초·15회)과 **별도** update-log 폴링(2초·started→**마지막 줄** success/failed, 캐시 무효화, 로그 **역순 표시**); 원격 적용 후 host-info 폴링(최대 8회) → 패널 일괄 현행화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; recent_rollback·update_in_progress
+- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; **`reuse_previous_config`**(적용 전 **`current` config** → `versions/<키>/`, 원격은 orchestrator가 current-config 주입+원격 apply); 웹 **환경설정 재사용** 체크박스(스테이징 있을 때만, 로컬 패널·원격 카드 각각); `update_history.log` **append**·**flock**(`update_history.log.lock` 잔존은 정상); 로컬·원격 적용·switch-current 후 **페이지 전체 새로고침 없이** host-info/`/self` 폴링과 **별도** update-log 폴링(2초·started→**마지막 줄** success/failed, tail 10·캐시 무효화·**역순 표시**); 원격 `update-log` 프록시 tail·`no-store` 정규화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; recent_rollback·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(실행 파일+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 실행 파일·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답
 - [ ] 원격 적용: 호스트별 **`GET …/update-status?ip=`** 의 **`can_apply`·`apply_version`** 으로 버튼·툴팁(스테이징 최신 문자열만과 카드 버전 문자열 비교에만 의존하지 않음), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신

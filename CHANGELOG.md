@@ -2,6 +2,8 @@
 
 ## 문서 현행화 (2026-05)
 
+- **업데이트 config 재사용**: `POST …/apply-update`의 **`reuse_previous_config`** — 적용 전 **`current` config**를 `versions/<키>/`에 복사(원격은 orchestrator가 `GET …/current-config` 주입). 웹 체크박스(스테이징 있을 때만, 로컬 패널·원격 카드 각각, 기본 on).
+- **업데이트 기록 UI**: 로컬·원격 공통 tail 10·역순 표시·적용 중 2초 폴링; 원격 `update-log` 프록시 tail·`no-store` 정규화.
 - **빌드**: `make build` — dual binary + **`strip`**, 루트 `./contrabass-moleU`는 **control** 복사(README·PRD §5.5.0).
 - **CLI `--discovery`**: `version=<키> (control|compute)` (웹 UI와 동일).
 - **CLI `--host-info`**: `BUILD_VARIANT` 행.

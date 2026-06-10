@@ -35,12 +35,14 @@ func DeployRootFromConfig(cfg *agentcfg.Config) string {
 
 // RunSwitchCurrentWithRoots is the local path for apply-update and versions/switch-current (no remote HTTP).
 func RunSwitchCurrentWithRoots(deployRoot, installPrefix, deployBaseRaw, version string) error {
-	return RunSwitchCurrentWithRootsVariant(deployRoot, installPrefix, deployBaseRaw, version, "", "")
+	return RunSwitchCurrentWithRootsVariant(deployRoot, installPrefix, deployBaseRaw, version, "", "", false)
 }
 
 // RunSwitchCurrentWithRootsVariant is like RunSwitchCurrentWithRoots with explicit agent variant and ldflags fallback.
-func RunSwitchCurrentWithRootsVariant(deployRoot, installPrefix, deployBaseRaw, version, agentVariant, buildVariantFallback string) error {
-	if err := prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, agentVariant, buildVariantFallback); err != nil {
+// When reusePreviousConfig is true, the config file from deployRoot/current (pre-update running version;
+// becomes previous after update.sh) is copied into the target version tree after staging is materialized under versions/.
+func RunSwitchCurrentWithRootsVariant(deployRoot, installPrefix, deployBaseRaw, version, agentVariant, buildVariantFallback string, reusePreviousConfig bool) error {
+	if err := prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, agentVariant, buildVariantFallback, reusePreviousConfig); err != nil {
 		return err
 	}
 	return runEmbeddedUpdate(deployRoot, version)
@@ -108,7 +110,7 @@ func AgentVersionLine(binPath string) (string, error) {
 	return try("agent", "--version")
 }
 
-func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, agentVariantExplicit, buildVariantFallback string) error {
+func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, agentVariantExplicit, buildVariantFallback string, reusePreviousConfig bool) error {
 	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
 		return err
 	}
@@ -135,6 +137,11 @@ func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, 
 	}
 	if err := MaterializeCanonicalAgent(targetDir, variant); err != nil {
 		return fmt.Errorf("prepare agent binary: %w", err)
+	}
+	if reusePreviousConfig {
+		if err := CopyPreviousConfigToVersion(deployRoot, installPrefix, deployBaseRaw, targetDir); err != nil {
+			return err
+		}
 	}
 	return nil
 }

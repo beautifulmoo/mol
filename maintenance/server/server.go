@@ -24,8 +24,9 @@ import (
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/hostinfo"
 	"contrabass-agent/maintenance/hostinfoapi"
-	"contrabass-agent/maintenance/versionsapi"
+	"contrabass-agent/maintenance/server/remoteregistry"
 	"contrabass-agent/maintenance/svcstatus"
+	"contrabass-agent/maintenance/versionsapi"
 )
 
 func copyFile(src, dst string, perm os.FileMode) error {
@@ -135,6 +136,7 @@ type Server struct {
 	remoteHealthTimeoutSec   int
 	remoteHealthThreshold    int
 	remoteHealthJitterSec    int
+	remoteRegistry           *remoteregistry.Registry
 }
 
 // Config for Server.
@@ -202,7 +204,16 @@ func New(cfg Config) *Server {
 	if s.remoteHealthJitterSec < 0 {
 		s.remoteHealthJitterSec = 0
 	}
+	s.remoteRegistry = remoteregistry.New(s.remoteHealthThreshold)
 	return s
+}
+
+// DiscoveredRemotes returns a snapshot of volatile in-memory discovered remote agents.
+func (s *Server) DiscoveredRemotes() []remoteregistry.Remote {
+	if s.remoteRegistry == nil {
+		return nil
+	}
+	return s.remoteRegistry.List()
 }
 
 func (s *Server) remoteBaseURL(ip string) (string, error) {
@@ -337,6 +348,7 @@ func (s *Server) handleRemoteHealthCheck(w http.ResponseWriter, r *http.Request)
 	}
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
+		s.remoteRegistry.RecordHealthCheck(ip, false, err.Error())
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
@@ -346,29 +358,36 @@ func (s *Server) handleRemoteHealthCheck(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
+		s.remoteRegistry.RecordHealthCheck(ip, false, err.Error())
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		s.remoteRegistry.RecordHealthCheck(ip, false, err.Error())
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
 	if err != nil {
+		s.remoteRegistry.RecordHealthCheck(ip, false, err.Error())
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		s.send(w, "fail", fmt.Sprintf("HTTP %d", resp.StatusCode), http.StatusOK)
+		msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		s.remoteRegistry.RecordHealthCheck(ip, false, msg)
+		s.send(w, "fail", msg, http.StatusOK)
 		return
 	}
 	var out APIResponse
 	if json.Unmarshal(body, &out) == nil && out.Status == "success" {
+		s.remoteRegistry.RecordHealthCheck(ip, true, "")
 		s.send(w, "success", map[string]interface{}{"ok": true}, http.StatusOK)
 		return
 	}
+	s.remoteRegistry.RecordHealthCheck(ip, false, "health response is not in the expected format")
 	s.send(w, "fail", "health response is not in the expected format", http.StatusOK)
 }
 
@@ -385,6 +404,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/discovery", s.handleDiscovery)
 	mux.HandleFunc(s.apiPrefix+"/discovery/stream", s.handleDiscoveryStream)
 	mux.HandleFunc(s.apiPrefix+"/service-status", s.handleServiceStatus)
+	mux.HandleFunc(s.apiPrefix+"/service-control/restart-all", s.handleServiceRestartAll)
 	mux.HandleFunc(s.apiPrefix+"/service-control", s.handleServiceControl)
 	mux.HandleFunc(s.apiPrefix+"/upload", s.handleUpload)
 	mux.HandleFunc(s.apiPrefix+"/upload/remove", s.handleRemoveUpload)
@@ -392,6 +412,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/apply-update", s.handleApplyUpdate)
 	mux.HandleFunc(s.apiPrefix+"/update-log", s.handleUpdateLog)
 	mux.HandleFunc(s.apiPrefix+"/current-config", s.handleCurrentConfig)
+	mux.HandleFunc(s.apiPrefix+"/current-config/push-local", s.handleCurrentConfigPushLocal)
+	mux.HandleFunc(s.apiPrefix+"/current-config/push-local-all", s.handleCurrentConfigPushLocalAll)
+	mux.HandleFunc(s.apiPrefix+"/discovered-remotes", s.handleDiscoveredRemotes)
 	mux.HandleFunc(s.apiPrefix+"/versions/list", s.handleVersionsList)
 	mux.HandleFunc(s.apiPrefix+"/versions/remove", s.handleVersionsRemove)
 	mux.HandleFunc(s.apiPrefix+"/versions/switch-current", s.handleVersionsSwitchCurrent)
@@ -437,6 +460,7 @@ func (s *Server) handleHostInfo(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
+	s.remoteRegistry.UpsertFromDiscovery(*resp)
 	s.send(w, "success", resp, http.StatusOK)
 }
 
@@ -518,6 +542,9 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []discovery.DiscoveryResponse{}
 	}
+	for _, host := range list {
+		s.remoteRegistry.UpsertFromDiscovery(host)
+	}
 	log.Printf("discovery API: returning %d host(s)", len(list))
 	s.send(w, "success", list, http.StatusOK)
 }
@@ -574,6 +601,7 @@ func (s *Server) handleDiscoveryStream(w http.ResponseWriter, r *http.Request) {
 	}
 	enc := json.NewEncoder(w)
 	for host := range ch {
+		s.remoteRegistry.UpsertFromDiscovery(host)
 		if _, err := w.Write([]byte("data: ")); err != nil {
 			return
 		}
@@ -1325,6 +1353,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 			s.send(w, "fail", "remote version query failed: "+err.Error(), http.StatusOK)
 			return
 		}
+		s.remoteRegistry.UpsertFromRemoteIP(ip)
 		compareKey = strings.TrimSpace(rv)
 	} else {
 		// Local: compare against the running agent (same as GET /self / GET /version), not only the current symlink.
@@ -1690,9 +1719,8 @@ func normalizeUpdateLogAPIPayload(data interface{}, updateInProgress bool) map[s
 		outLines = lines[len(lines)-updateLogMaxLines:]
 	}
 	output := strings.Join(outLines, "\n")
-	if recentRollback || len(lines) > 0 {
-		last := strings.ToLower(lines[len(lines)-1])
-		recentRollback = strings.Contains(last, "rollback") || strings.Contains(last, "failed")
+	if len(lines) > 0 {
+		recentRollback = historyLineIndicatesRecentRollback(lines[len(lines)-1])
 	}
 	if recentRollback && updateInProgress {
 		recentRollback = false
@@ -1729,16 +1757,19 @@ func (s *Server) currentConfigPath() string {
 func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	var postContent string
+	var backupBeforeWrite bool
 	if r.Method == http.MethodPost {
 		var reqBody struct {
-			IP      string `json:"ip"`
-			Content string `json:"content"`
+			IP                string `json:"ip"`
+			Content           string `json:"content"`
+			BackupBeforeWrite bool   `json:"backup_before_write"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			s.send(w, "fail", "invalid body", http.StatusBadRequest)
 			return
 		}
 		postContent = reqBody.Content
+		backupBeforeWrite = reqBody.BackupBeforeWrite
 		if strings.TrimSpace(reqBody.IP) != "" {
 			ip = strings.TrimSpace(reqBody.IP)
 		}
@@ -1767,7 +1798,10 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == http.MethodPost {
-			payload, _ := json.Marshal(map[string]string{"content": postContent})
+			payload, _ := json.Marshal(map[string]interface{}{
+				"content":               postContent,
+				"backup_before_write":   true,
+			})
 			req, _ := http.NewRequest(http.MethodPost, baseURL, bytes.NewReader(payload))
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := remoteHTTPClient.Do(req)
@@ -1805,15 +1839,8 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "success", map[string]interface{}{"content": string(data)}, http.StatusOK)
 		return
 	case http.MethodPost:
-		content := strings.TrimSpace(postContent)
-		if content != "" {
-			if _, err := agentcfg.LoadFromBytes([]byte(content)); err != nil {
-				s.send(w, "fail", err.Error(), http.StatusOK)
-				return
-			}
-		}
-		if err := os.WriteFile(configPath, []byte(postContent), 0644); err != nil {
-			s.send(w, "fail", appmeta.ConfigFileName+" save failed: "+err.Error(), http.StatusOK)
+		if err := saveCurrentConfigContent(configPath, postContent, backupBeforeWrite); err != nil {
+			s.send(w, "fail", err.Error(), http.StatusOK)
 			return
 		}
 		s.send(w, "success", nil, http.StatusOK)
@@ -1821,6 +1848,37 @@ func (s *Server) handleCurrentConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleCurrentConfigPushLocal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		IP string `json:"ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.send(w, "fail", "invalid body", http.StatusBadRequest)
+		return
+	}
+	ip := strings.TrimSpace(req.IP)
+	if ip == "" || ip == "self" {
+		s.send(w, "fail", "remote ip is required", http.StatusBadRequest)
+		return
+	}
+	content, err := s.readLocalCurrentConfigContent()
+	if err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	if err := s.pushConfigContentToRemote(content, ip); err != nil {
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	s.send(w, "success", map[string]string{
+		"message": "local current " + appmeta.ConfigFileName + " pushed to " + ip,
+	}, http.StatusOK)
 }
 
 func (s *Server) send(w http.ResponseWriter, status string, data interface{}, code int) {

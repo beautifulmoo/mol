@@ -1,5 +1,15 @@
 # 변경 이력 (mol)
 
+## 웹 UI · 일괄 원격 config·재시작 (2026-06)
+
+- **Discovery 옆 일괄 버튼**: 「**로컬 설정을 리모트 호스트에 일괄 복사**」(`POST …/current-config/push-local-all`), 「**리모트 호스트 일괄 재시작**」(`POST …/service-control/restart-all`). 원격 카드가 있을 때만 활성; 진행 **`N/M`**, NDJSON per-host 결과, 공용 **「결과 보기」** 모달.
+- **호스트 목록**: UI **카드 1장 = 호스트 1대**(`hosts` body: `primary_ip`, `hostname`, `cpu_uuid`, `ips[]`); IP 순차 시도·첫 성공. **`remoteregistry`**(volatile) + **`GET …/discovered-remotes`**.
+- **재시작 확인**: restart-all — 프록시 restart 후 **2s 대기·최대 45s** 폴링(`GET …/health` 또는 `service-status`의 `Active: active (running)`); connection reset/EOF는 진행 중으로 처리.
+- **업데이트 기록**: bulk 완료 시 **`config push-all finished succeeded=N failed=M`** / **`service restart-all finished …`** 요약 1줄 append(`appendDeployHistory`).
+- **`recent_rollback` 수정**: 맨 아래 줄의 `failed=N` 카운트(일괄 요약)만으로는 롤백 경고를 띄우지 않음 — **`update … failed`**·**`rollback failed`** 등 실제 실패만.
+- **상태 줄 UX**: 완료 메시지·「결과 보기」·줄 오른쪽 **×** — × 클릭 시 메시지와 결과 보기 버튼 함께 숨김.
+- **문서**: **PRD.md** §5.4·§5.4.1·§6.6, **docs/REST_API.md**.
+
 ## 문서 현행화 (2026-05)
 
 - **업데이트 config 재사용**: `POST …/apply-update`의 **`reuse_previous_config`** — 적용 전 **`current` config**를 `versions/<키>/`에 복사(원격은 orchestrator가 `GET …/current-config` 주입). 웹 체크박스(스테이징 있을 때만, 로컬 패널·원격 카드 각각, 기본 on).

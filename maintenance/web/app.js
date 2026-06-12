@@ -1318,6 +1318,356 @@
     if (dds.length >= 8) dds[3].textContent = ips.join(', ');
   }
 
+  var PUSH_CONFIG_ALL_LABEL = '로컬 설정을 리모트 호스트에 일괄 복사';
+  var RESTART_ALL_LABEL = '리모트 호스트 일괄 재시작';
+
+  function countRemoteHostCards() {
+    var list = el('discovered-hosts');
+    if (!list) return 0;
+    return list.querySelectorAll('.host-card:not(.self-card)').length;
+  }
+
+  function collectRemoteHostsFromDOM() {
+    var list = el('discovered-hosts');
+    if (!list) return [];
+    var cards = list.querySelectorAll('.host-card:not(.self-card)');
+    var hosts = [];
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var primary = (card.getAttribute('data-host-ip') || '').trim();
+      var seen = {};
+      var ips = [];
+      function addIp(ip) {
+        ip = (ip || '').trim();
+        if (ip && !seen[ip]) {
+          seen[ip] = true;
+          ips.push(ip);
+        }
+      }
+      addIp(primary);
+      (card.getAttribute('data-host-ips') || '').split(',').forEach(function (s) { addIp(s); });
+      (card.getAttribute('data-responded-from-ips') || '').split(',').forEach(function (s) { addIp(s); });
+      if (ips.length === 0) continue;
+      if (!primary) primary = ips[0];
+      hosts.push({
+        primary_ip: primary,
+        hostname: (card.getAttribute('data-hostname') || '').trim(),
+        cpu_uuid: (card.getAttribute('data-cpu-uuid') || '').trim(),
+        ips: ips
+      });
+    }
+    return hosts;
+  }
+
+  var lastPushBulkResults = { lines: [], title: '' };
+  var lastRestartBulkResults = { lines: [], title: '' };
+
+  function formatBulkHostLabel(r) {
+    var label = (r.hostname && String(r.hostname).trim()) || r.ip || '?';
+    if (r.hostname && r.ip) {
+      label = String(r.hostname).trim() + ' (' + r.ip + ')';
+    }
+    return label;
+  }
+
+  function formatConnectViaSuffix(r) {
+    if (r.connect_ip && r.tried_ips && r.tried_ips.length > 1 && r.connect_ip !== r.tried_ips[0]) {
+      return ' (' + r.connect_ip + ' 로 연결)';
+    }
+    return '';
+  }
+
+  function formatPushConfigResultLine(r) {
+    var label = formatBulkHostLabel(r);
+    if (r.status === 'success') {
+      return label + ': 성공' + formatConnectViaSuffix(r);
+    }
+    return label + ': 실패 — ' + (r.message || '알 수 없음');
+  }
+
+  function formatRestartResultLine(r) {
+    var label = formatBulkHostLabel(r);
+    if (r.status === 'success' && r.verify_ok) {
+      var detail = r.verify_detail ? ' — ' + r.verify_detail : '';
+      return label + ': 재시작 확인됨' + formatConnectViaSuffix(r) + detail;
+    }
+    var msg = r.message || r.verify_detail || '알 수 없음';
+    return label + ': 실패 — ' + msg;
+  }
+
+  function formatBulkResultsBody(results, formatLine) {
+    if (!results || !results.length) return '(결과 없음)';
+    return results.map(formatLine).join('\n');
+  }
+
+  function formatBulkSummary(evt, allOkText) {
+    if (!evt || evt.total === 0) return '';
+    if (evt.failed > 0) {
+      return '완료: 성공 ' + evt.succeeded + '대, 실패 ' + evt.failed + '대.';
+    }
+    return evt.total + allOkText;
+  }
+
+  function openBulkResultsModal(store) {
+    var modal = el('bulk-remote-results-modal');
+    var title = el('bulk-remote-results-modal-title');
+    var body = el('bulk-remote-results-body');
+    var data = store || { lines: [], title: '' };
+    if (title) title.textContent = data.title || '결과';
+    if (body) body.textContent = (data.lines && data.lines.length) ? data.lines.join('\n') : '(결과 없음)';
+    if (modal) {
+      modal.hidden = false;
+      modal.setAttribute('aria-hidden', 'false');
+    }
+    document.body.classList.add('config-modal-open');
+  }
+
+  function closeBulkResultsModal() {
+    var modal = el('bulk-remote-results-modal');
+    if (modal) {
+      modal.hidden = true;
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    document.body.classList.remove('config-modal-open');
+  }
+
+  function initBulkResultsModal() {
+    var closeBtn = el('bulk-remote-results-modal-close-btn');
+    var dismissBtn = el('bulk-remote-results-modal-dismiss-btn');
+    var backdrop = el('bulk-remote-results-modal') && el('bulk-remote-results-modal').querySelector('.config-editor-modal-backdrop');
+    if (closeBtn) closeBtn.addEventListener('click', closeBulkResultsModal);
+    if (dismissBtn) dismissBtn.addEventListener('click', closeBulkResultsModal);
+    if (backdrop) backdrop.addEventListener('click', closeBulkResultsModal);
+    var pushResultsBtn = el('push-config-all-results-btn');
+    var restartResultsBtn = el('restart-all-results-btn');
+    if (pushResultsBtn) {
+      pushResultsBtn.addEventListener('click', function () {
+        openBulkResultsModal(lastPushBulkResults);
+      });
+    }
+    if (restartResultsBtn) {
+      restartResultsBtn.addEventListener('click', function () {
+        openBulkResultsModal(lastRestartBulkResults);
+      });
+    }
+  }
+
+  function syncBulkRemoteStatusDismiss(statusEl, dismissEl) {
+    if (!dismissEl) return;
+    var hasText = statusEl && String(statusEl.textContent || '').trim().length > 0;
+    dismissEl.hidden = !hasText;
+  }
+
+  function initBulkRemoteStatusDismiss() {
+    [
+      {
+        statusId: 'push-config-all-status',
+        dismissId: 'push-config-all-status-dismiss-btn',
+        resultsId: 'push-config-all-results-btn'
+      },
+      {
+        statusId: 'restart-all-status',
+        dismissId: 'restart-all-status-dismiss-btn',
+        resultsId: 'restart-all-results-btn'
+      }
+    ].forEach(function (pair) {
+      var statusEl = el(pair.statusId);
+      var dismissBtn = el(pair.dismissId);
+      var resultsBtn = el(pair.resultsId);
+      if (!statusEl || !dismissBtn) return;
+      dismissBtn.addEventListener('click', function () {
+        statusEl.textContent = '';
+        dismissBtn.hidden = true;
+        if (resultsBtn) resultsBtn.hidden = true;
+      });
+    });
+  }
+
+  function refreshRemoteBulkButtonsState() {
+    var domCount = countRemoteHostCards();
+    var title = domCount === 0 ? 'Discovery로 원격 호스트를 먼저 찾으세요.' : '';
+    ['push-config-all-remotes-btn', 'restart-all-remotes-btn'].forEach(function (id) {
+      var btn = el(id);
+      if (!btn || btn.getAttribute('data-busy') === '1') return;
+      btn.disabled = domCount === 0;
+      btn.title = title;
+    });
+  }
+
+  function runBulkHostsNDJSON(options) {
+    var btn = options.buttonEl;
+    var statusEl = options.statusEl;
+    var dismissEl = options.dismissEl;
+    var resultsBtn = options.resultsBtnEl;
+    var label = options.label;
+    var apiPath = options.apiPath;
+    var formatLine = options.formatLine;
+    var formatSummary = options.formatSummary;
+    var resultsTitle = options.resultsTitle;
+    var onDone = options.onDone || function () {};
+    var resultsStore = options.resultsStore;
+    if (!btn || btn.disabled || btn.getAttribute('data-busy') === '1') return;
+    btn.setAttribute('data-busy', '1');
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = '';
+    if (dismissEl) dismissEl.hidden = true;
+    if (resultsBtn) resultsBtn.hidden = true;
+    if (resultsStore) {
+      resultsStore.lines = [];
+      resultsStore.title = resultsTitle;
+    }
+
+    var hosts = collectRemoteHostsFromDOM();
+    fetch(API_BASE + apiPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hosts: hosts })
+    })
+      .then(function (res) {
+        if (!res.ok || !res.body) {
+          throw new Error('HTTP ' + res.status);
+        }
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var doneHandled = false;
+        var progressResults = [];
+
+        function finish(evt) {
+          if (doneHandled) return;
+          doneHandled = true;
+          btn.textContent = label;
+          btn.removeAttribute('data-busy');
+          if (resultsStore) {
+            resultsStore.lines = progressResults.map(formatLine);
+          }
+          if (resultsBtn) resultsBtn.hidden = progressResults.length === 0;
+          if (statusEl) {
+            if (evt && evt.total === 0) {
+              statusEl.textContent = hosts.length
+                ? '원격 호스트에 연결할 수 없습니다. Discovery를 다시 실행해 보세요.'
+                : (options.emptyText || '대상 호스트가 없습니다. Discovery를 실행하세요.');
+            } else if (evt) {
+              statusEl.textContent = formatSummary(evt) || '요청이 중단되었습니다.';
+            } else {
+              statusEl.textContent = '요청이 중단되었습니다.';
+            }
+            syncBulkRemoteStatusDismiss(statusEl, dismissEl);
+          }
+          refreshRemoteBulkButtonsState();
+          onDone(evt, progressResults);
+          fetchUpdateLog(true);
+        }
+
+        function processLine(line) {
+          line = line.trim();
+          if (!line) return;
+          var evt;
+          try {
+            evt = JSON.parse(line);
+          } catch (parseErr) {
+            return;
+          }
+          if (evt.type === 'start') {
+            btn.textContent = '0/' + evt.total;
+          } else if (evt.type === 'progress') {
+            btn.textContent = evt.current + '/' + evt.total;
+            progressResults.push(evt);
+          } else if (evt.type === 'done') {
+            finish(evt);
+          }
+        }
+
+        function pump() {
+          return reader.read().then(function (result) {
+            if (result.done) {
+              if (buffer.trim()) processLine(buffer);
+              if (!doneHandled) finish(null);
+              return;
+            }
+            buffer += decoder.decode(result.value, { stream: true });
+            var lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (var i = 0; i < lines.length; i++) processLine(lines[i]);
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function () {
+        btn.textContent = label;
+        btn.removeAttribute('data-busy');
+        if (statusEl) statusEl.textContent = '요청 실패.';
+        syncBulkRemoteStatusDismiss(statusEl, dismissEl);
+        refreshRemoteBulkButtonsState();
+      });
+  }
+
+  function refreshRemoteConfigEditorsAfterBulkPush() {
+    var list = el('discovered-hosts');
+    if (!list) return;
+    var cards = list.querySelectorAll('.host-card:not(.self-card)');
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var ip = card.getAttribute('data-host-ip');
+      if (ip) fetchCurrentConfigForCard(card, ip);
+    }
+  }
+
+  function runPushConfigToAllRemotes() {
+    runBulkHostsNDJSON({
+      buttonEl: el('push-config-all-remotes-btn'),
+      statusEl: el('push-config-all-status'),
+      dismissEl: el('push-config-all-status-dismiss-btn'),
+      resultsBtnEl: el('push-config-all-results-btn'),
+      resultsStore: lastPushBulkResults,
+      label: PUSH_CONFIG_ALL_LABEL,
+      apiPath: '/current-config/push-local-all',
+      formatLine: formatPushConfigResultLine,
+      formatSummary: function (evt) { return formatBulkSummary(evt, '대 모두 복사했습니다.'); },
+      resultsTitle: '설정 일괄 복사 결과',
+      emptyText: '복사할 원격 호스트가 없습니다. Discovery를 실행하세요.',
+      onDone: function () {
+        refreshRemoteConfigEditorsAfterBulkPush();
+        var list = el('discovered-hosts');
+        if (!list) return;
+        var cards = list.querySelectorAll('.host-card:not(.self-card)');
+        for (var i = 0; i < cards.length; i++) {
+          fetchServiceStatus(cards[i], cards[i].getAttribute('data-host-ip') || '');
+        }
+      }
+    });
+  }
+
+  function runRestartAllRemotes() {
+    runBulkHostsNDJSON({
+      buttonEl: el('restart-all-remotes-btn'),
+      statusEl: el('restart-all-status'),
+      dismissEl: el('restart-all-status-dismiss-btn'),
+      resultsBtnEl: el('restart-all-results-btn'),
+      resultsStore: lastRestartBulkResults,
+      label: RESTART_ALL_LABEL,
+      apiPath: '/service-control/restart-all',
+      formatLine: formatRestartResultLine,
+      formatSummary: function (evt) { return formatBulkSummary(evt, '대 모두 재시작되었습니다.'); },
+      resultsTitle: '리모트 일괄 재시작 결과',
+      emptyText: '재시작할 원격 호스트가 없습니다. Discovery를 실행하세요.',
+      onDone: function () {
+        var list = el('discovered-hosts');
+        if (!list) return;
+        var cards = list.querySelectorAll('.host-card:not(.self-card)');
+        for (var i = 0; i < cards.length; i++) {
+          var card = cards[i];
+          var ip = card.getAttribute('data-host-ip') || '';
+          if (ip) {
+            fetchServiceStatus(card, ip);
+            registerRemoteHealthMonitoring(card);
+          }
+        }
+      }
+    });
+  }
+
   function runDiscovery() {
     const btn = el('discovery-btn');
     const status = el('discovery-status');
@@ -1390,6 +1740,7 @@
       status.textContent = count ? '호스트 ' + count + '개 발견.' : 'Discovery 완료 (결과 없음).';
       fetchUpdateStatusForAllRemoteHosts();
       updateAllHostApplyButtons();
+      refreshRemoteBulkButtonsState();
     });
     evtSource.onerror = function () {
       evtSource.close();
@@ -1404,6 +1755,7 @@
         status.textContent = '호스트 ' + count + '개 발견.';
       }
       updateAllHostApplyButtons();
+      refreshRemoteBulkButtonsState();
     };
   }
 
@@ -2068,6 +2420,14 @@
   }
 
   el('discovery-btn').addEventListener('click', runDiscovery);
+  var pushConfigAllBtn = el('push-config-all-remotes-btn');
+  if (pushConfigAllBtn) {
+    pushConfigAllBtn.addEventListener('click', runPushConfigToAllRemotes);
+  }
+  var restartAllBtn = el('restart-all-remotes-btn');
+  if (restartAllBtn) {
+    restartAllBtn.addEventListener('click', runRestartAllRemotes);
+  }
   el('upload-btn').addEventListener('click', doUpload);
   el('apply-update-btn').addEventListener('click', doApplyUpdate);
   el('reset-selection-btn').addEventListener('click', resetUploadForm);
@@ -2078,6 +2438,8 @@
   fetchUpdateStatus();
   updateAllHostApplyButtons();
   initConfigEditorModal();
+  initBulkResultsModal();
+  initBulkRemoteStatusDismiss();
   loadSelf();
 
   document.addEventListener('visibilitychange', function () {
@@ -2096,4 +2458,5 @@
     }
   });
   setTimeout(function () { enumerateDiscoveredRemoteHealth(); }, 0);
+  refreshRemoteBulkButtonsState();
 })();

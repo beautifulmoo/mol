@@ -168,6 +168,8 @@ Maintenance:
 
 ---
 
-자세한 동작(Discovery 메시지, 업데이트 API, 웹 UI 흐름 등)은 **PRD.md** 를 본다.
+자세한 동작(Discovery 메시지, 업데이트 API, **일괄 config 복사·원격 재시작**, 웹 UI 흐름 등)은 **PRD.md** 를 본다.
+
+REST API 경로·바디 요약은 **docs/REST_API.md** 를 본다.
 
 Discovery CLI·프로토콜 변경 요약은 **[CHANGELOG.md](CHANGELOG.md)** 를 본다.

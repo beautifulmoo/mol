@@ -57,6 +57,7 @@
 |--------|------|------|------|
 | **GET** | `{API}/service-status` | **Query**: `ip` (선택). 없음/`self` → 로컬 `systemctl status`. 지정 시 원격 `GET {API}/service-status`(Gin 포트). | **200** `success`, `data`: `{ "output": "<systemctl 문자열>" }` 형 또는 원격과 동일 구조. 실패 시 `fail`. |
 | **POST** | `{API}/service-control` | **Body JSON**: `{ "ip": "" \| "self" \| "<호스트IP>", "action": "start" \| "stop" \| "restart" }` | **200** `success` / `fail`. 원격 `restart`만 HTTP로, `start`/`stop`은 SSH. |
+| **POST** | `{API}/service-control/restart-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). 호스트별로 `POST …/service-control` restart 프록시 후 **2초 대기·최대 45초** 동안 `GET …/health` 또는 `GET …/service-status`의 `Active: active (running)` 으로 재기동 확인. 연결 끊김(connection reset·EOF 등)은 재시작 진행 중으로 간주. 완료 시 `update_history.log`에 **요약 1줄**(`service restart-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**. progress 필드: `verify_ok`, `verify_detail`, `connect_ip`, `tried_ips`. | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
 
 ---
 
@@ -79,9 +80,12 @@
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/update-log` | **Query**: `ip` (선택, 원격이면 `Server.HTTPPort`로 프록시). | **200** `success`, `data`: `{ "output": "<최근 10줄, 파일 맨 아래 tail, 오래된 줄→새 줄>", "recent_rollback": <bool> }`. 로컬·프록시 응답 모두 **`Cache-Control: no-store`** 및 tail 10 정규화. `contrabass-mole-update.service` active이면 `recent_rollback`은 false. 웹 UI는 로컬·원격 **업데이트 적용·switch-current** 중 **2초 간격**으로 이 API를 호출하며(원격은 `?ip=`, `&_=`·`cache: 'no-store'`), 이번 run의 `update <버전> started` 확인 후 **마지막 줄**이 `success`/`failed`일 때까지 폴링(host-info/`/self` 폴링과 독립). 웹 UI는 `output` 줄을 **역순 표시**(최신이 위). 수동 갱신: **「로그 새로고침」**. |
+| **GET** | `{API}/update-log` | **Query**: `ip` (선택, 원격이면 `Server.HTTPPort`로 프록시). | **200** `success`, `data`: `{ "output": "<최근 10줄, 파일 맨 아래 tail, 오래된 줄→새 줄>", "recent_rollback": <bool> }`. 로컬·프록시 응답 모두 **`Cache-Control: no-store`** 및 tail 10 정규화. `recent_rollback`은 **파일 맨 아래 줄**이 `update … failed`·`rollback failed` 등 **실제 업데이트/롤백 실패**일 때만 true(`config push-all finished`·`service restart-all finished` 요약의 `failed=N` 은 무시). `contrabass-mole-update.service` active이면 `recent_rollback`은 false. 웹 UI는 로컬·원격 **업데이트 적용·switch-current** 중 **2초 간격**으로 이 API를 호출하며(원격은 `?ip=`, `&_=`·`cache: 'no-store'`), 이번 run의 `update <버전> started` 확인 후 **마지막 줄**이 `success`/`failed`일 때까지 폴링(host-info/`/self` 폴링과 독립). 웹 UI는 `output` 줄을 **역순 표시**(최신이 위). 수동 갱신: **「로그 새로고침」**. |
 | **GET** | `{API}/current-config` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "content": "<yaml 문자열>" }`. |
-| **POST** | `{API}/current-config` | **Body JSON**: `{ "content": "<yaml>", "ip": "<선택>" }` — `ip`로 원격 저장 프록시. | **200** `success`, `data`: null(로컬 저장 성공 시). 검증 실패 `fail`. |
+| **POST** | `{API}/current-config` | **Body JSON**: `{ "content": "<yaml>", "ip": "<선택>", "backup_before_write": true\|false (선택) }` — `ip`로 원격 저장 프록시(프록시 시 원격에 **`backup_before_write`: true** 전달). 로컬 직접 저장 시 기존 파일은 **`backup_before_write`: true**일 때만 `current/` 아래 **`agent.local.yml.backup`** 으로 백업 후 덮어쓴다. | **200** `success`, `data`: null(로컬 저장 성공 시). 검증 실패 `fail`. |
+| **POST** | `{API}/current-config/push-local` | **Body JSON**: `{ "ip": "<원격 IP>" }` — **이 서버(로컬) `current`의 `agent.local.yml`** 내용을 읽어 해당 원격의 `POST …/current-config`로 전송(`backup_before_write`: true). | **200** `success`, `data`: `{ "message": "…" }` / `fail`. |
+| **POST** | `{API}/current-config/push-local-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). `ips`는 해당 카드의 접속 후보 IP(첫 성공 시 종료). 레거시 `{ "ips":[] }` 도 지원. 완료 시 로컬 `update_history.log`에 **요약 1줄**만 append(`config push-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**(호스트별 progress는 스트림·UI 「결과 보기」). | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
+| **GET** | `{API}/discovered-remotes` | 없음. | **200** `success`, `data`: `{ "remotes": [ { "primary_ip", "hostname", "health_dead", … } ] }` — 서버 메모리 레지스트리 스냅샷(헬스 실패 포함). |
 | **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ] }`. |
 | **POST** | `{API}/versions/remove` | **Body JSON**: `{ "versions": ["<키>",...], "ip": "<선택>" }` | **200** `success`, `data`: 결과 메시지 문자열(삭제·제외 요약). current/previous 가리키는 버전은 삭제 안 함. |
 | **POST** | `{API}/versions/switch-current` | **Body JSON**: `{ "version": "<버전 키>", "ip": "<선택>" }` — 로컬에서 `versions/`(또는 스테이징)에 있는 버전을 **current**로 두기 위해 내장 `update.sh`를 `systemd-run`으로 실행(`apply-update` 로컬과 동일). `ip`가 원격이면 해당 호스트 API로 프록시. | **200** `success`, `data`: 안내 문자열 / `fail`. |
@@ -120,6 +124,16 @@ curl -sS -X POST "${BASE}${API}/service-control" \
 ```
 
 `ip`를 빈 문자열로 두어도 로컬로 처리된다. `start` / `stop` 동일 형식.
+
+원격 **일괄 재시작** (`restart-all`, NDJSON):
+
+```bash
+curl -sS -N -X POST "${BASE}${API}/service-control/restart-all" \
+  -H 'Content-Type: application/json' \
+  -d '{"hosts":[{"primary_ip":"10.0.0.2","hostname":"node-b","cpu_uuid":"…","ips":["10.0.0.2"]}]}'
+```
+
+Body 생략 시 서버 **remoteregistry** fallback. 완료 시 `update_history.log`에 `service restart-all finished succeeded=N failed=M` 한 줄.
 
 ---
 
@@ -209,6 +223,42 @@ curl -sS -X POST "${BASE}${API}/current-config" \
   -H 'Content-Type: application/json' \
   -d '{"content":"# minimal\n"}'
 ```
+
+원격 `current`에 저장(기존 `agent.local.yml`은 **`agent.local.yml.backup`** 으로 백업):
+
+```bash
+curl -sS -X POST "${BASE}${API}/current-config" \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Server:\n  HTTPPort: 8888\n","ip":"192.168.0.42"}'
+```
+
+---
+
+### 로컬 current config → 원격 복사 `POST .../current-config/push-local`
+
+로컬 `current/agent.local.yml` 전체를 지정 원격의 `current`에 복사한다. 원격 측은 저장 전 기존 파일을 **`agent.local.yml.backup`** 으로 백업한다.
+
+```bash
+curl -sS -X POST "${BASE}${API}/current-config/push-local" \
+  -H 'Content-Type: application/json' \
+  -d '{"ip":"192.168.0.42"}'
+```
+
+레지스트리의 **모든 원격**에 순차 복사(진행 NDJSON):
+
+```bash
+curl -sS -N -X POST "${BASE}${API}/current-config/push-local-all"
+```
+
+화면과 동일하게 **호스트 목록**을 지정(권장):
+
+```bash
+curl -sS -N -X POST "${BASE}${API}/current-config/push-local-all" \
+  -H 'Content-Type: application/json' \
+  -d '{"hosts":[{"primary_ip":"10.0.0.2","hostname":"node-b","cpu_uuid":"…","ips":["10.0.0.2","10.0.0.3"]}]}'
+```
+
+완료 시 `update_history.log`에 `config push-all finished succeeded=N failed=M` 한 줄.
 
 ---
 

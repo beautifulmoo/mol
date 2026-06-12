@@ -20,8 +20,26 @@
       </section>
       <section class="discovery-section">
         <h2>Discovery</h2>
-        <button type="button" id="discovery-btn" class="discovery-btn">Discovery</button>
+        <div class="discovery-actions">
+          <button type="button" id="discovery-btn" class="discovery-btn">Discovery</button>
+          <button type="button" id="push-config-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">로컬 설정을 리모트 호스트에 일괄 복사</button>
+          <button type="button" id="restart-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">리모트 호스트 일괄 재시작</button>
+        </div>
         <p id="discovery-status" class="discovery-status"></p>
+        <div class="bulk-remote-status-row">
+          <div class="bulk-remote-status-main">
+            <p id="push-config-all-status" class="discovery-status" aria-live="polite"></p>
+            <button type="button" id="push-config-all-results-btn" class="service-btn" hidden>결과 보기</button>
+          </div>
+          <button type="button" id="push-config-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
+        </div>
+        <div class="bulk-remote-status-row">
+          <div class="bulk-remote-status-main">
+            <p id="restart-all-status" class="discovery-status" aria-live="polite"></p>
+            <button type="button" id="restart-all-results-btn" class="service-btn" hidden>결과 보기</button>
+          </div>
+          <button type="button" id="restart-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
+        </div>
         <h3>발견된 호스트</h3>
         <div id="discovered-hosts" class="host-list"></div>
       </section>
@@ -63,6 +81,19 @@
       </div>
     </aside>
   </main>
+  <div id="bulk-remote-results-modal" class="config-editor-modal" hidden aria-hidden="true">
+    <div class="config-editor-modal-backdrop"></div>
+    <div class="config-editor-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-remote-results-modal-title">
+      <div class="config-editor-modal-header">
+        <h3 id="bulk-remote-results-modal-title" class="config-editor-modal-title">결과</h3>
+        <button type="button" id="bulk-remote-results-modal-close-btn" class="config-editor-modal-close" title="닫기" aria-label="닫기">&times;</button>
+      </div>
+      <pre id="bulk-remote-results-body" class="bulk-remote-results-body"></pre>
+      <div class="config-editor-modal-actions">
+        <button type="button" id="bulk-remote-results-modal-dismiss-btn" class="service-btn">닫기</button>
+      </div>
+    </div>
+  </div>
   <div id="config-editor-modal" class="config-editor-modal" hidden aria-hidden="true">
     <div class="config-editor-modal-backdrop"></div>
     <div class="config-editor-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="config-editor-modal-title">

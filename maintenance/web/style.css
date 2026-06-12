@@ -328,6 +328,12 @@ h3 {
   cursor: not-allowed;
 }
 .service-btn.service-start:disabled:hover { background: #22c55e; }
+.discovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
 .discovery-btn {
   padding: 0.5rem 1rem;
   font-size: 0.9rem;
@@ -348,6 +354,55 @@ h3 {
   margin: 0.5rem 0 0;
   font-size: 0.85rem;
   color: #a1a1aa;
+}
+.bulk-remote-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.bulk-remote-status-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.bulk-remote-status-row .discovery-status {
+  margin: 0;
+}
+.bulk-remote-status-dismiss {
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.bulk-remote-status-dismiss:hover {
+  background: #3f3f46;
+  color: #f4f4f5;
+}
+.bulk-remote-results-body {
+  margin: 0;
+  padding: 0.75rem;
+  max-height: min(60vh, 28rem);
+  overflow: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  border-radius: 6px;
+  color: #e4e4e7;
 }
 /* 호스트 아코디언: 한 줄 요약 + 클릭 시 카드 펼침 */
 .host-row {

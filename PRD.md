@@ -262,6 +262,19 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
   - **원격 start/stop**: 요청을 받은 서버가 대상 호스트로 **SSH** 접속(`SSHPort`·`SSHUser` 설정 사용, 미지정 시 22·root)하여 `systemctl start` 또는 `stop <서비스명>`을 실행한다. 원격 에이전트가 중지된 상태여도 SSH로 시작할 수 있다.  
   - **원격 restart**: SSH를 사용하지 않고, 요청을 받은 서버가 **원격 `Server.HTTPPort`(Gin)** 로 `POST .../service-control` (Body: `{ "ip": "self", "action": "restart" }`)를 호출한다. 원격 에이전트는 자기 서버에서 `systemctl restart` 를 실행한 뒤 응답을 반환한다. SSH 공개키 등록 없이 재시작 가능하다.  
   - 성공 시 `{ "status": "success", "data": null }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
+- **원격 일괄 재시작**: `POST {serverUrl}/api/v1/service-control/restart-all`  
+  - **Body**(선택): `{ "hosts": [ { "primary_ip", "hostname", "cpu_uuid", "ips": [] }, … ] }` — **웹 UI 카드 1장 = 호스트 1대**(권장). `ips`는 해당 카드의 접속 후보 IP 목록이며, 호스트마다 순서대로 시도해 **첫 성공 시** 다음 호스트로 넘어간다. 레거시 `{ "ips": [] }` 도 지원.  
+  - **동작**: 호스트별로 위 **원격 restart** 프록시(`POST …/service-control`, `ip: self`, `action: restart`)를 호출한 뒤, **2초 대기** 후 **최대 45초·2초 간격**으로 재기동을 확인한다 — `GET …/health`(JSON `success`) 또는 `GET …/service-status` 출력의 `Active: active (running)`. 연결 끊김(connection reset·EOF·broken pipe 등)은 **재시작 진행 중**으로 간주(단일 카드 「서비스 재시작」과 동일).  
+  - **응답**: `Content-Type: application/x-ndjson`. `start` → 호스트별 `progress`(`verify_ok`, `verify_detail`, `connect_ip`, `tried_ips`) → `done`. 완료 시 `{DeployBase}/update_history.log`에 **요약 1줄**만 append: `service restart-all finished succeeded=N failed=M`.  
+  - **웹 UI**: §6.6.
+
+### 5.4.1 설정(current-config) API·원격 레지스트리
+
+- **조회·저장**: `GET/POST {APIPrefix}/current-config` — Query/Body `ip`(선택). 로컬은 `current` 심볼릭 대상의 config YAML; 원격은 `Server.HTTPPort`로 프록시. POST 시 **`backup_before_write`: true** 이면 덮어쓰기 전 `{DeployBase}/current/` 아래 **`agent.local.yml.backup`**(또는 manifest config basename + `.backup`)으로 백업.  
+- **로컬 → 원격 1대 복사**: `POST {APIPrefix}/current-config/push-local` — Body `{ "ip": "<원격 IP>" }`. **이 서버(로컬) `current` config** 내용을 읽어 해당 원격 `POST …/current-config`로 전송(`backup_before_write`: true).  
+- **로컬 → 원격 일괄 복사**: `POST {APIPrefix}/current-config/push-local-all` — Body는 **§5.4 restart-all**과 동일한 `hosts`/`ips` 형식. 호스트별 NDJSON `progress` 스트림; 완료 시 `update_history.log`에 **요약 1줄**: `config push-all finished succeeded=N failed=M`. per-host 상세는 스트림·웹 「결과 보기」에만 표시.  
+- **발견 원격 스냅샷**: `GET {APIPrefix}/discovered-remotes` — 서버 메모리 **`remoteregistry`**(Discovery 스트림·host-info·update-status 등으로 채움, **프로세스 수명** 동안 유지, 헬스 실패 `health_dead` 포함)의 스냅샷. 일괄 API의 `hosts` body가 없을 때 fallback으로 쓸 수 있으나, **웹 UI는 화면 DOM 카드 목록을 body로 보내는 것을 권장**(에이전트 재시작 후 레지스트리가 비어도 DOM은 유지될 수 있음).  
+- **일괄 작업 기록**: config push-all·restart-all 요약 줄은 **`appendDeployHistory`**(`update_history.log`, embedded `update.sh`와 동일 **`flock`**)로 append한다. **`update …` / `rollback …` 줄과 구분**되며, `GET …/update-log`의 **`recent_rollback`** 판별(§5.5.4)에서는 **업데이트 실패로 취급하지 않는다**.
 
 ### 5.5 업데이트 API
 
@@ -512,8 +525,8 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **`can_apply` / `apply_version`**: 스테이징에 올라온 버전 키 중, **비교 기준 버전**(로컬이면 `current_version`, 원격이면 `remote_current_version`) 대비 **업데이트로 적용할 가치가 있는지** 판단한다 — 규칙은 동일(시맨틱·패치 비교, `StagingUpdateAvailable`). 원격 모드에서는 “**이 서버 스테이징을 그 원격에 적용할 수 있는지**”를 나타낸다.  
   - `remove_version`: 스테이징 정렬 후 **가장 오래된(맨 끝)** 항목 등 UI 삭제용으로 쓸 수 있다.  
   - `update_in_progress`: **요청을 처리하는 이 서버**에서 `systemctl is-active contrabass-mole-update.service` 가 active 이면 true(원격 호스트의 진행 여부는 이 필드로 알 수 없음).
-- **업데이트 기록** `GET .../update-log` — `{DeployBase}/update_history.log` **맨 아래 최근 10줄**(tail, 파일 순서는 **오래된 줄→새 줄**). 응답 `data.output`(문자열), `data.recent_rollback`(bool, **파일 맨 아래 줄** 기준). **`Cache-Control: no-store`**. `contrabass-mole-update.service`가 active이면 `recent_rollback`을 false로 내려 새 적용과 이전 실패 기록이 섞이지 않게 한다. 원격 `ip`는 `Server.HTTPPort`로 프록시하며, 프록시 응답도 **동일 tail 10·`no-store`** 로 정규화한다. 웹 UI(로컬·원격 카드 공통)는 `output` 줄을 **최신이 위**가 되도록 **역순 표시**한다.
-- **current-cfg** `GET/POST .../current-cfg` — `current` 심볼릭 대상의 config YAML 조회·저장.
+- **업데이트 기록** `GET .../update-log` — `{DeployBase}/update_history.log` **맨 아래 최근 10줄**(tail, 파일 순서는 **오래된 줄→새 줄**). 응답 `data.output`(문자열), `data.recent_rollback`(bool, **파일 맨 아래 줄** 기준). **`recent_rollback`은 실제 업데이트/롤백 실패**(`update … failed`, `rollback failed`, `rollback completed after update failure` 등)일 때만 true — **`config push-all finished … failed=N`**·**`service restart-all finished … failed=N`** 요약의 `failed=N` 카운트는 **무시**한다. **`Cache-Control: no-store`**. `contrabass-mole-update.service`가 active이면 `recent_rollback`을 false로 내려 새 적용과 이전 실패 기록이 섞이지 않게 한다. 원격 `ip`는 `Server.HTTPPort`로 프록시하며, 프록시 응답도 **동일 tail 10·`no-store`** 로 정규화한다. 웹 UI(로컬·원격 카드 공통)는 `output` 줄을 **최신이 위**가 되도록 **역순 표시**한다. 롤백 경고(「⚠ 최근 업데이트 실패·롤백」)는 `recent_rollback`이 true일 때만 표시한다.
+- **current-cfg** `GET/POST .../current-cfg` — `current` 심볼릭 대상의 config YAML 조회·저장. (REST 경로명은 구현·문서에서 `current-config`와 동일 계열.)
 - **헬스** `GET /version` — **`<BinaryName> <버전 키>`** 한 줄(버전 키는 describe 전체일 수 있음, 예: `contrabass-moleU 0.4.4-4-gc44d420`), text/plain, 항상 200. update.sh 의 curl 이 사용한다.
 - **에이전트 HTTP 헬스(JSON)** `GET {APIPrefix}/health` — JSON `success`, `data`에 `{ "ok": true }` 수준의 최소 응답. **원격 가용성 모니터링** 시 로컬 에이전트가 같은 경로로 노출하며(Gin이 `Server.HTTPPort`로 프록시), 웹 UI의 원격 헬스 확인은 **이 경로**를 대상으로 한다(UDP 미사용).
 - **원격 헬스 프록시** `GET {APIPrefix}/remote-health-check?ip=<원격 IP>` — 요청을 받은 에이전트가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`, §7.1)을 수행하고 성공·실패를 JSON으로 반환한다.
@@ -546,6 +559,9 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **내 정보**: 현재 에이전트 인스턴스의 버전, **IP(또는 응답으로 사용하는 모든 IP `host_ips`)** , 호스트명, CPU UUID, CPU, MEMORY 등을 표시 (자기 정보 API 사용). 자기 정보 API는 각 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하여 Discovery 응답으로 사용하는 IP들을 모두 보여준다.
 - **Discovery 버튼**
   - 클릭 시 **EventSource** 로 `GET /api/v1/discovery/stream` 에 연결하여 **실시간 Discovery**를 수행한다. **기존 발견된 호스트 목록은 비우지 않고** 유지하며, 진행 중에도 해당 카드들의 제어(시작/중지·업데이트 적용·상태 새로고침)가 가능하다. SSE로 호스트가 도착할 때 **같은 CPU UUID**가 있으면 해당 카드에 IP만 병합·갱신하고, 없으면 같은 IP 카드 갱신 또는 새 카드 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다.
+- **Discovery 옆 일괄 작업 버튼**(§6.6)
+  - **「로컬 설정을 리모트 호스트에 일괄 복사」** — 발견된 **원격 호스트 카드가 1대 이상**일 때만 활성. Discovery 미실행·원격 없음이면 비활성·툴팁 안내.
+  - **「리모트 호스트 일괄 재시작」** — 동일 활성 조건. 설정 복사만으로는 서비스에 반영되지 않으므로, config 변경 후 **재시작**을 별도로 수행할 수 있다.
 - **호스트 목록 구조 (아코디언·상태 점)**
   - 호스트(로컬·발견된 원격)는 **세로 목록**으로 표시한다. 기본은 **한 줄 요약**만 보이고, 해당 행을 클릭하면 그 호스트의 **상세 카드**가 펼쳐진다(아코디언). 여러 호스트를 동시에 펼쳐 둘 수 있다.
   - **한 줄 요약**: **상태 점**(동작 중 = 파란색, 중지 = 빨간색, 미확인 = 회색) + **구분자**. 로컬 구분자: hostname 또는 "로컬" + " · " + IP. 원격 구분자: hostname + " · " + IP(또는 CPU UUID 앞 8자).
@@ -599,7 +615,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **업데이트 인디케이터**: 로컬·원격 카드 모두, 업데이트 적용이 진행 중일 때 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. **로컬**은 `/self` 폴링 성공(또는 폴링 종료) 후 숨긴다. **원격**은 host-info 폴링·패널 갱신 완료 후 숨긴다. 요청 실패 시 즉시 숨긴다.
 - **파일 선택 초기화**: 번들 파일 선택만 초기화. 스테이징/versions 에 올라간 버전은 유지.
 - **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제. 삭제 성공 시 스테이징 표시·적용 버튼·**환경설정 재사용 체크박스**를 즉시 갱신한다.
-- **업데이트 기록(로그)**: 호스트 카드 오른쪽 컬럼 **「업데이트 기록 (최근 10건)」** 블록(로컬·원격 동일). 수동 갱신 버튼 문구는 **「로그 새로고침」**(설치된 버전 목록 블록의 **「목록 새로고침」** 과 구분). `GET /api/v1/update-log`(`?ip=` 원격)로 표시하며, 요청마다 쿼리 `&_=<타임스탬프>`·`fetch` `cache: 'no-store'` 로 캐시를 쓰지 않는다. API tail 10줄을 **역순 표시**(최신이 위). **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다.
+- **업데이트 기록(로그)**: 호스트 카드 오른쪽 컬럼 **「업데이트 기록 (최근 10건)」** 블록(로컬·원격 동일). 수동 갱신 버튼 문구는 **「로그 새로고침」**(설치된 버전 목록 블록의 **「목록 새로고침」** 과 구분). `GET /api/v1/update-log`(`?ip=` 원격)로 표시하며, 요청마다 쿼리 `&_=<타임스탬프>`·`fetch` `cache: 'no-store'` 로 캐시를 쓰지 않는다. API tail 10줄을 **역순 표시**(최신이 위). **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다. **일괄 config push·restart-all** 요약 줄(`… finished succeeded=N failed=M`)만 맨 아래에 있을 때는 **`recent_rollback` false** — 롤백 경고를 띄우지 않는다.
 
 #### 6.3.1 업데이트 기록 자동 갱신 (로컬·원격 적용·switch-current)
 
@@ -625,6 +641,24 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **실행 조건**: **브라우저 탭이 열려 있고** `document.visibilityState`가 visible인 동안만 타이머로 폴링한다. 백그라운드 탭·에이전트 프로세스 단독에서는 수행하지 않는다.
 - **클라이언트 동작**: `GET {APIPrefix}/remote-health-check?ip=` 를 호출한다(동일 출처·프록시). 간격·지터·실패 임계는 `Maintenance.RemoteHealth`(§7.1)와 `client-runtime.js`에 실린 값을 따른다. 연속 실패가 임계 이상이면 원격 카드에 경고·**「헬스 수동 확인」** 버튼을 표시하고, 한 줄 요약 행의 상태 점 스타일을 실패에 맞게 조정할 수 있다. 수동 확인 성공 시 `GET .../host-info?ip=`(UDP 유니캐스트 Discovery)로 호스트 정보를 다시 받아 카드·관련 패널을 갱신한다.
 - **신규 Discovery**: 스트림으로 새 원격 카드가 추가되면 **동일 규칙**으로 해당 IP에 대한 헬스 모니터링을 시작한다.
+
+### 6.6 Discovery 일괄 config 복사·원격 재시작
+
+- **위치**: Discovery 섹션 — **Discovery** 버튼 오른쪽에 두 버튼을 나란히 둔다. 각 작업마다 **별도 상태 줄**(요약 메시지 + **「결과 보기」** + **×** 닫기)을 아래에 표시한다.
+- **대상 호스트 목록**: 화면 **원격 호스트 카드**(`.host-card`, self 제외)에서 **카드 1장 = 물리 호스트 1대**로 수집한다(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). 동일 CPU UUID·공유 IP 중복은 서버 **`remotesForConfigPush`** 와 맞춘다. 요청 body `{ hosts: [...] }` 로 전송(레지스트리만 의존하지 않음).
+- **로컬 설정 일괄 복사**
+  - **`POST /api/v1/current-config/push-local-all`**, NDJSON 스트림.
+  - 진행 중 버튼 라벨을 **`N/M`**(현재/전체)로 표시하고 비활성.
+  - 완료 요약 예: `1대 모두 복사했습니다.` / `완료: 성공 N대, 실패 M대.`
+  - **「결과 보기」**: 공용 모달에 호스트별 `성공` / `실패 — …` 및 `(IP 로 연결)` 접미사.
+  - 완료 후 원격 카드 **config 편집기**·**service-status**를 갱신; **`update_history.log`**·카드 **업데이트 기록** 영역은 **「로그 새로고침」**·일괄 작업 완료 시 자동 fetch로 반영.
+- **리모트 일괄 재시작**
+  - **`POST /api/v1/service-control/restart-all`**, NDJSON 스트림(§5.4).
+  - 진행·요약·결과 모달 형식은 config 복사와 동일. 성공 줄 예: `호스트명 (IP): 재시작 확인됨 — HTTP health check ok`.
+  - 완료 후 각 원격 카드 **service-status**·**원격 HTTP 헬스 모니터링**(§6.5) 재등록.
+- **결과 모달**: config 복사·재시작 **각각** 마지막 결과를 따로 보관; 「결과 보기」는 해당 작업의 목록만 연다.
+- **상태 줄 닫기(×)**: 줄 오른쪽 **×** 클릭 시 **요약 메시지**와 **「결과 보기」** 버튼을 함께 숨긴다(모달에 남은 결과 데이터는 유지하지 않아도 됨 — 다음 실행 시 덮어씀).
+- **업데이트 기록**: 두 API 모두 완료 시 로그 파일에 **요약 1줄**만 append(§5.4.1). per-host 상세는 **「결과 보기」** 전용.
 
 ---
 
@@ -710,7 +744,7 @@ Maintenance:
 - **원격 헬스 프록시**: GET {APIPrefix}/remote-health-check?ip= — 로컬 에이전트가 원격 `Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃 `Maintenance.RemoteHealth.TimeoutSeconds`).
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, `DoDiscoveryUnicast`; 응답은 **`request_id`로 요청과만 매칭**한다. **멀티홈 호스트**에서는 유니캐스트 목적지 IP와 DISCOVERY_RESPONSE의 `host_ip`(또는 UDP 출발지)가 다를 수 있으므로, **`host_ip` 문자열이 목적지와 일치하지 않아도** 동일 응답으로 처리한다. 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
 - **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
-- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
+- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행. **일괄 재시작**은 POST `/service-control/restart-all`(§5.4·§6.6).
 - **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리에 대해 §5.5.3과 동일한 **`--version`→`agent --version`** 폴백으로 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + 버전 한 줄, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 는 원격 IP 지정 시 해당 호스트로 프록시한다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
 - **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
@@ -742,16 +776,18 @@ Maintenance:
 - [ ] 내 정보 카드: 시작/중지 버튼 없음; 오른쪽 컬럼(업데이트 기록·agent.local.yml·설치된 버전)·하단(상태 새로고침·서비스 재시작)
 - [ ] 발견된 호스트 카드: **로컬과 동일 레이아웃**(오른쪽 컬럼 + 하단 상태 행). 시작·중지 버튼 비노출; 상태 새로고침·서비스 재시작·업데이트 적용. 카드 열릴 때 업데이트 기록·config·버전 목록 자동 로드
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`). 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 에이전트 API 호출**(SSH 키 불필요)
-- [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
+- [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·**current-config/push-local**·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
+- [ ] **일괄 원격 작업**: **push-local-all**·**restart-all** NDJSON(호스트별 progress, `hosts` body = UI 카드 1장=1대); **remoteregistry**·**discovered-remotes**; `update_history.log` 요약 1줄; **`recent_rollback`** 이 bulk `failed=N`에 반응하지 않음
+- [ ] **Discovery UI**: 「로컬 설정을 리모트 호스트에 일괄 복사」·「리모트 호스트 일괄 재시작」; 상태 줄·「결과 보기」·**×** 닫기(메시지+결과 보기 동시 숨김); restart-all 재기동 확인(health·service-status)
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
 - [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
 - [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; **`--host-info` / `--apply-update` / `--versions-list` / `--versions-switch`** 는 **`-apiprefix`**(기본 `/maintenance/api/v1`)·대상 Gin REST·**서비스 필수**(`clirest`); `agent --nic-brd`; **`agent --discovery`**(UDP만); 번들·ELF 검증은 서버 `POST /upload` 시 **`--version` → `agent --version`** 폴백
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] **최초 설치**: `bin/ubuntu/contrabass-agent-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
 - [ ] **완전 제거**: `bin/ubuntu/contrabass-agent-uninstall.sh` — root·인자 없음·service stop/disable·유닛 삭제·`DeployBase`·`/var/log/contrabass/mole` 삭제
-- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; **`reuse_previous_config`**(적용 전 **`current` config** → `versions/<키>/`, 원격은 orchestrator가 current-config 주입+원격 apply); 웹 **환경설정 재사용** 체크박스(스테이징 있을 때만, 로컬 패널·원격 카드 각각); `update_history.log` **append**·**flock**(`update_history.log.lock` 잔존은 정상); 로컬·원격 적용·switch-current 후 **페이지 전체 새로고침 없이** host-info/`/self` 폴링과 **별도** update-log 폴링(2초·started→**마지막 줄** success/failed, tail 10·캐시 무효화·**역순 표시**); 원격 `update-log` 프록시 tail·`no-store` 정규화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; recent_rollback·update_in_progress
+- [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; **`reuse_previous_config`**(적용 전 **`current` config** → `versions/<키>/`, 원격은 orchestrator가 current-config 주입+원격 apply); 웹 **환경설정 재사용** 체크박스(스테이징 있을 때만, 로컬 패널·원격 카드 각각); `update_history.log` **append**·**flock**(`update_history.log.lock` 잔존은 정상); **일괄 config push·restart-all** 요약 append; 로컬·원격 적용·switch-current 후 **페이지 전체 새로고침 없이** host-info/`/self` 폴링과 **별도** update-log 폴링(2초·started→**마지막 줄** success/failed, tail 10·캐시 무효화·**역순 표시**); 원격 `update-log` 프록시 tail·`no-store` 정규화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; **`recent_rollback`**(실제 update/rollback 실패만, bulk `failed=N` 제외)·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(실행 파일+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 실행 파일·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
-- [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답
+- [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; **일괄 config·restart** 버튼(§6.6); 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답
 - [ ] 원격 적용: 호스트별 **`GET …/update-status?ip=`** 의 **`can_apply`·`apply_version`** 으로 버튼·툴팁(스테이징 최신 문자열만과 카드 버전 문자열 비교에만 의존하지 않음), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신
 - [ ] 호스트 정보 API: GET /api/v1/host-info?ip= (self=로컬, 지정=유니캐스트 Discovery)
 - [ ] Discovery 유니캐스트: DoDiscoveryUnicast(ip), 타임아웃 최대 5초; 멀티홈 시 `host_ip`≠목적지 IP여도 수락(request_id로 상관)

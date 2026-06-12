@@ -352,6 +352,18 @@ func (d *Discovery) discoveryTimeout() time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
+// DefaultTimeoutSeconds returns configured discovery wait time in seconds (minimum 10 when unset).
+func (d *Discovery) DefaultTimeoutSeconds() int {
+	if d == nil {
+		return 10
+	}
+	sec := d.cfg.DiscoveryTimeoutSeconds
+	if sec <= 0 {
+		return 10
+	}
+	return sec
+}
+
 // effectiveTimeout returns opts.Timeout if positive, otherwise config-based discoveryTimeout().
 func (d *Discovery) effectiveTimeout(opts DiscoveryRunOptions) time.Duration {
 	if opts.Timeout > 0 {

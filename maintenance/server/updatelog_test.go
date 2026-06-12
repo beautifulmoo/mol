@@ -33,6 +33,8 @@ func TestAppendDeployHistory(t *testing.T) {
 func TestHistoryLineIndicatesRecentRollback(t *testing.T) {
 	noWarn := []string{
 		"[2026-06-11 18:29:57] service restart-all finished succeeded=1 failed=0",
+		"[2026-06-11 19:00:00] apply-update-all finished succeeded=2 failed=0 skipped=1",
+		"[2026-06-11 19:01:00] rollback-all finished succeeded=1 failed=0 skipped=2",
 		"[2026-06-11 16:33:04] config push-all finished succeeded=1 failed=0",
 		"[2026-06-11 16:21:17] config push-all finished succeeded=2 failed=0",
 		"[2026-06-11 12:00:00] update 1.2.3 success",

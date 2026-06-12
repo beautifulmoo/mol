@@ -22,28 +22,13 @@
         <h2>Discovery</h2>
         <div class="discovery-actions">
           <button type="button" id="discovery-btn" class="discovery-btn">Discovery</button>
-          <button type="button" id="push-config-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">로컬 설정을 리모트 호스트에 일괄 복사</button>
-          <button type="button" id="restart-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">리모트 호스트 일괄 재시작</button>
         </div>
         <p id="discovery-status" class="discovery-status"></p>
-        <div class="bulk-remote-status-row">
-          <div class="bulk-remote-status-main">
-            <p id="push-config-all-status" class="discovery-status" aria-live="polite"></p>
-            <button type="button" id="push-config-all-results-btn" class="service-btn" hidden>결과 보기</button>
-          </div>
-          <button type="button" id="push-config-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
-        </div>
-        <div class="bulk-remote-status-row">
-          <div class="bulk-remote-status-main">
-            <p id="restart-all-status" class="discovery-status" aria-live="polite"></p>
-            <button type="button" id="restart-all-results-btn" class="service-btn" hidden>결과 보기</button>
-          </div>
-          <button type="button" id="restart-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
-        </div>
         <h3>발견된 호스트</h3>
         <div id="discovered-hosts" class="host-list"></div>
       </section>
     </div>
+    <div class="sidebar-column">
     <aside class="update-section">
       <h2>업데이트</h2>
       <p class="update-desc">배포 번들(<strong>tar.gz</strong>: <code>contrabass.manifest.yaml</code> + <code>contrabass-moleU-control</code> + <code>contrabass-moleU-compute</code> + config)을 업로드합니다. 「업데이트 적용」 시 선택한 바이너리가 <code>contrabass-moleU</code> 로 복사된 뒤 <code>update.sh</code>가 실행됩니다. 패키징: <code>maintenance/scripts/pack-agent-tarball.sh</code>.</p>
@@ -80,6 +65,45 @@
         <p id="apply-update-status" class="discovery-status"></p>
       </div>
     </aside>
+    <section class="bulk-remote-section">
+      <h2>모든 리모트 호스트 일괄 작업</h2>
+      <p class="bulk-remote-desc">Discovery로 등록된 원격 호스트를 대상으로 합니다. 호스트별 결과는 「결과 보기」에서 확인할 수 있습니다.</p>
+      <div class="bulk-remote-actions">
+        <button type="button" id="push-config-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">로컬 설정을 리모트 호스트에 일괄 복사</button>
+        <button type="button" id="restart-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">리모트 호스트 일괄 재시작</button>
+        <button type="button" id="apply-update-all-remotes-btn" class="service-btn service-start" disabled title="스테이징에 적용 가능한 버전이 없습니다.">리모트 호스트에 일괄 업데이트 적용</button>
+        <button type="button" id="rollback-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">리모트 호스트 일괄 롤백</button>
+      </div>
+      <div class="bulk-remote-status-row">
+        <div class="bulk-remote-status-main">
+          <p id="push-config-all-status" class="discovery-status" aria-live="polite"></p>
+          <button type="button" id="push-config-all-results-btn" class="service-btn" hidden>결과 보기</button>
+        </div>
+        <button type="button" id="push-config-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
+      </div>
+      <div class="bulk-remote-status-row">
+        <div class="bulk-remote-status-main">
+          <p id="restart-all-status" class="discovery-status" aria-live="polite"></p>
+          <button type="button" id="restart-all-results-btn" class="service-btn" hidden>결과 보기</button>
+        </div>
+        <button type="button" id="restart-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
+      </div>
+      <div class="bulk-remote-status-row">
+        <div class="bulk-remote-status-main">
+          <p id="apply-update-all-status" class="discovery-status" aria-live="polite"></p>
+          <button type="button" id="apply-update-all-results-btn" class="service-btn" hidden>결과 보기</button>
+        </div>
+        <button type="button" id="apply-update-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
+      </div>
+      <div class="bulk-remote-status-row">
+        <div class="bulk-remote-status-main">
+          <p id="rollback-all-status" class="discovery-status" aria-live="polite"></p>
+          <button type="button" id="rollback-all-results-btn" class="service-btn" hidden>결과 보기</button>
+        </div>
+        <button type="button" id="rollback-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
+      </div>
+    </section>
+    </div>
   </main>
   <div id="bulk-remote-results-modal" class="config-editor-modal" hidden aria-hidden="true">
     <div class="config-editor-modal-backdrop"></div>

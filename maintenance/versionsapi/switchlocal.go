@@ -146,6 +146,40 @@ func prepareVersionForUpdate(deployRoot, installPrefix, deployBaseRaw, version, 
 	return nil
 }
 
+// RunEmbeddedRollback starts embedded rollback.sh via systemd-run (previous → current, service restart).
+func RunEmbeddedRollback(deployRoot string) error {
+	deployRoot = strings.TrimSuffix(strings.TrimSpace(deployRoot), "/")
+	if deployRoot == "" {
+		deployRoot = "/var/lib/contrabass/mole"
+	}
+	previousLink := filepath.Join(deployRoot, "previous")
+	if _, err := os.Lstat(previousLink); err != nil {
+		return fmt.Errorf("no previous version")
+	}
+	currentPath := filepath.Join(deployRoot, "current")
+	if _, err := os.Stat(currentPath); err != nil {
+		return fmt.Errorf("DeployBase/current missing; cannot rollback: %s", currentPath)
+	}
+	rollbackScript := filepath.Join(currentPath, "rollback.sh")
+	if err := os.WriteFile(rollbackScript, []byte(updatescripts.RollbackSh), 0755); err != nil {
+		return fmt.Errorf("rollback.sh: %w%s", err, hintIfPermissionDenied(err))
+	}
+	exec.Command("systemctl", "reset-failed", appmeta.UpdateTransientUnit).Run()
+	exec.Command("systemctl", "stop", appmeta.UpdateTransientUnit).Run()
+	cmd := exec.Command("systemd-run",
+		"--unit="+appmeta.UpdateTransientUnitStem,
+		"--property=RemainAfterExit=yes",
+		"/bin/bash", rollbackScript)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(rollbackScript)
+		return fmt.Errorf("systemd-run(rollback.sh) failed: %w", err)
+	}
+	log.Printf("RunEmbeddedRollback: systemd-run --unit=%s /bin/bash %s", appmeta.UpdateTransientUnitStem, rollbackScript)
+	return nil
+}
+
 func runEmbeddedUpdate(deployRoot, version string) error {
 	deployRoot = strings.TrimSuffix(strings.TrimSpace(deployRoot), "/")
 	if deployRoot == "" {

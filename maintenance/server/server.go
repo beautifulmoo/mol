@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -322,8 +321,19 @@ func (s *Server) handleClientRuntime(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	discoveryTimeoutSec := 10
+	if s.discovery != nil {
+		discoveryTimeoutSec = s.discovery.DefaultTimeoutSeconds()
+	}
+	discoveryCfg := map[string]int{"timeoutSec": discoveryTimeoutSec}
+	discoveryJSON, err := json.Marshal(discoveryCfg)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	fmt.Fprintf(w, "window.__CONTRABASS_API_PREFIX__=%s;\n", quoted)
 	fmt.Fprintf(w, "window.__CONTRABASS_REMOTE_HEALTH__=%s;\n", string(healthJSON))
+	fmt.Fprintf(w, "window.__CONTRABASS_DISCOVERY__=%s;\n", string(discoveryJSON))
 }
 
 // handleHealth returns a minimal JSON liveness payload for GET {APIPrefix}/health (remote agents use the same path via Gin proxy).
@@ -405,6 +415,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/discovery/stream", s.handleDiscoveryStream)
 	mux.HandleFunc(s.apiPrefix+"/service-status", s.handleServiceStatus)
 	mux.HandleFunc(s.apiPrefix+"/service-control/restart-all", s.handleServiceRestartAll)
+	mux.HandleFunc(s.apiPrefix+"/apply-update-all", s.handleApplyUpdateAll)
+	mux.HandleFunc(s.apiPrefix+"/versions/rollback-all", s.handleRollbackAll)
 	mux.HandleFunc(s.apiPrefix+"/service-control", s.handleServiceControl)
 	mux.HandleFunc(s.apiPrefix+"/upload", s.handleUpload)
 	mux.HandleFunc(s.apiPrefix+"/upload/remove", s.handleRemoveUpload)
@@ -418,6 +430,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(s.apiPrefix+"/versions/list", s.handleVersionsList)
 	mux.HandleFunc(s.apiPrefix+"/versions/remove", s.handleVersionsRemove)
 	mux.HandleFunc(s.apiPrefix+"/versions/switch-current", s.handleVersionsSwitchCurrent)
+	mux.HandleFunc(s.apiPrefix+"/versions/rollback", s.handleVersionsRollback)
 	// Web (static) — register client-runtime before the strip-prefix file server so it is not shadowed.
 	mux.HandleFunc(s.webPrefix+"/client-runtime.js", s.handleClientRuntime)
 	webHandler := http.StripPrefix(s.webPrefix, http.FileServer(http.FS(s.webFS)))
@@ -1277,39 +1290,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 
 // doRemoteUpdate sends files to the remote upload API (staging), then calls the remote apply-update API (no SSH/SCP).
 func (s *Server) doRemoteUpdate(w http.ResponseWriter, ip, version, versionDir, agentVariant string, reusePreviousConfig bool) {
-	baseURL, err := s.remoteBaseURL(ip)
-	if err != nil {
-		s.send(w, "fail", "remote apply failed: "+err.Error(), http.StatusOK)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
-	defer cancel()
-
-	if !dirHasAgentBinary(versionDir) && !versionsapi.StagingHasDualAgents(versionDir) {
-		s.send(w, "fail", "version directory missing "+appmeta.BinaryName+" or "+appmeta.BundleAgentControlName+"/"+appmeta.BundleAgentComputeName+": "+versionDir, http.StatusOK)
-		return
-	}
-	if reusePreviousConfig {
-		if err := s.injectRemoteReuseConfigIntoVersionDir(ctx, baseURL, s.apiPrefix, versionDir); err != nil {
-			s.send(w, "fail", "reuse remote config: "+err.Error(), http.StatusOK)
-			return
-		}
-	}
-	if err := s.postUploadToTarget(ctx, baseURL, s.apiPrefix, versionDir); err != nil {
+	if err := s.applyUpdateOnRemote(ip, version, versionDir, agentVariant, reusePreviousConfig); err != nil {
 		s.send(w, "fail", err.Error(), http.StatusOK)
-		return
-	}
-	status, data, err := s.postApplyUpdateToTarget(ctx, baseURL, s.apiPrefix, version, agentVariant, reusePreviousConfig)
-	if err != nil {
-		s.send(w, "fail", err.Error(), http.StatusOK)
-		return
-	}
-	if status != "success" {
-		msg := "remote apply failed"
-		if msgStr, ok := data.(string); ok && msgStr != "" {
-			msg = msgStr
-		}
-		s.send(w, "fail", msg, http.StatusOK)
 		return
 	}
 	log.Printf("apply-update: remote %s version %s applied (upload API, agent_variant=%s, reuse_previous_config=%v)", ip, version, agentVariant, reusePreviousConfig)
@@ -1321,29 +1303,12 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 	// Symlink target name under versions/ (EvalSymlinks + Rel); may differ from running process if link moved before restart.
 	symlinkVersion := strings.TrimSpace(s.resolveSymlinkVersion(base, "current"))
 
+	stagingVersions := s.localStagingVersions()
 	stagingParent := filepath.Join(base, "staging")
-	stagingVersions := []string{}
-	if entries, err := os.ReadDir(stagingParent); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			v := e.Name()
-			if versionsapi.DirHasStagedAgents(filepath.Join(stagingParent, v)) {
-				stagingVersions = append(stagingVersions, v)
-			}
-		}
-	}
-	sort.Slice(stagingVersions, func(i, j int) bool {
-		return agentcfg.CompareVersionKeys(stagingVersions[i], stagingVersions[j]) > 0
-	})
 
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	var compareKey string

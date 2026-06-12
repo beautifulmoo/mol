@@ -84,7 +84,9 @@ func historyLineIndicatesRecentRollback(line string) bool {
 	}
 	switch {
 	case strings.HasPrefix(msg, "config push-all finished "),
-		strings.HasPrefix(msg, "service restart-all finished "):
+		strings.HasPrefix(msg, "service restart-all finished "),
+		strings.HasPrefix(msg, "apply-update-all finished "),
+		strings.HasPrefix(msg, "rollback-all finished "):
 		return false
 	case strings.HasPrefix(msg, "update ") && strings.Contains(msg, " success"):
 		return false

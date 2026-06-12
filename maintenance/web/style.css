@@ -47,19 +47,30 @@ main section {
 .host-column .discovery-section {
   margin-bottom: 2rem;
 }
-/* 오른쪽: 업데이트 영역 (스크롤해도 고정) */
-.update-section {
+/* 오른쪽: 업데이트 + 일괄 작업 (스크롤해도 고정) */
+.sidebar-column {
   flex-shrink: 0;
   width: 340px;
   position: sticky;
   top: 1rem;
   align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.sidebar-column .update-section,
+.sidebar-column .bulk-remote-section {
+  width: 100%;
+  margin-bottom: 0;
+}
+.update-section {
+  flex-shrink: 0;
 }
 @media (max-width: 900px) {
   main {
     flex-direction: column;
   }
-  .update-section {
+  .sidebar-column {
     position: static;
     width: 100%;
     order: 2;
@@ -194,32 +205,58 @@ h3 {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid #3f3f46;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
 }
 .host-card.self-card .self-status-row {
   border-top-color: rgba(59, 130, 246, 0.2);
 }
-/* systemctl status 라인 오른쪽 끝에 상태 새로고침 버튼 */
+/* systemctl status 라인 오른쪽 끝에 상태 새로고침·재시작 */
 .service-status-header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 .service-status-header-row .service-status-header {
   flex: 1;
   min-width: 0;
 }
-.service-status-header-row .service-status-buttons {
+.service-status-header-row .service-status-actions {
   display: flex;
   gap: 0.5rem;
   flex-shrink: 0;
-  flex-wrap: wrap;
   align-items: center;
 }
 .service-status-header-row .status-refresh-btn,
 .service-status-header-row .service-restart-btn {
   flex-shrink: 0;
+}
+.card-remote-update-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+.card-update-apply-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.card-update-apply-options:not(:has(:not([hidden]))) {
+  display: none;
+}
+.card-update-apply-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.card-remote-update-bar:has(.card-update-apply-options:not(:has(:not([hidden])))) .card-update-apply-actions {
+  margin-left: 0;
 }
 
 /* 로컬 카드: 업데이트 기록·설치된 버전을 고정 너비 오른쪽 컬럼에 세로 배치 (왼쪽 CPU UUID와 상단 정렬) */
@@ -334,6 +371,34 @@ h3 {
   gap: 0.5rem;
   align-items: center;
 }
+.bulk-remote-section {
+  margin-top: 1.75rem;
+  padding: 1rem 0 0;
+  border-top: 1px solid #52525b;
+}
+.bulk-remote-section h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #d4d4d8;
+}
+.bulk-remote-desc {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #71717a;
+}
+.bulk-remote-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  align-items: stretch;
+  margin-bottom: 0.35rem;
+}
+.bulk-remote-actions .service-btn {
+  width: 100%;
+  text-align: center;
+}
 .discovery-btn {
   padding: 0.5rem 1rem;
   font-size: 0.9rem;
@@ -411,6 +476,30 @@ h3 {
   overflow: hidden;
   background: #25262b;
 }
+.host-row:not(.host-row--local) .host-card {
+  background: transparent;
+  border: none;
+}
+.host-row.host-row--tint-0 { background: #272a33; border-color: #383d48; }
+.host-row.host-row--tint-0 .host-row__body { border-top-color: #383d48; }
+.host-row.host-row--tint-1 { background: #252c2e; border-color: #364442; }
+.host-row.host-row--tint-1 .host-row__body { border-top-color: #364442; }
+.host-row.host-row--tint-2 { background: #272c28; border-color: #3a4438; }
+.host-row.host-row--tint-2 .host-row__body { border-top-color: #3a4438; }
+.host-row.host-row--tint-3 { background: #2c2b25; border-color: #444038; }
+.host-row.host-row--tint-3 .host-row__body { border-top-color: #444038; }
+.host-row.host-row--tint-4 { background: #2d2825; border-color: #453c38; }
+.host-row.host-row--tint-4 .host-row__body { border-top-color: #453c38; }
+.host-row.host-row--tint-5 { background: #2d2528; border-color: #453840; }
+.host-row.host-row--tint-5 .host-row__body { border-top-color: #453840; }
+.host-row.host-row--tint-6 { background: #2a252f; border-color: #403848; }
+.host-row.host-row--tint-6 .host-row__body { border-top-color: #403848; }
+.host-row.host-row--tint-7 { background: #252528; border-color: #383848; }
+.host-row.host-row--tint-7 .host-row__body { border-top-color: #383848; }
+.host-row.host-row--tint-8 { background: #252830; border-color: #384048; }
+.host-row.host-row--tint-8 .host-row__body { border-top-color: #384048; }
+.host-row.host-row--tint-9 { background: #2a2a28; border-color: #424038; }
+.host-row.host-row--tint-9 .host-row__body { border-top-color: #424038; }
 .host-row--local {
   background: #1e2a3a;
   border-color: #2d3d52;
@@ -452,6 +541,42 @@ h3 {
   font-size: 0.9rem;
   font-weight: 500;
 }
+.host-row__discovery-miss-badge {
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #d4d4d8;
+  background: #3f3f46;
+  border: 1px solid #52525b;
+  white-space: nowrap;
+}
+.host-row__discovery-miss-badge[hidden] {
+  display: none !important;
+}
+.host-row--discovery-missed .host-row__label {
+  color: #a1a1aa;
+}
+.discovery-miss-banner {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #52525b;
+  background: #27272a;
+  color: #a1a1aa;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.discovery-miss-banner[hidden] {
+  display: none !important;
+}
+.remote-health-row .discovery-miss-banner:not([hidden]) {
+  flex: 1 1 100%;
+  min-width: 10rem;
+}
 .host-row__expand-icon {
   flex-shrink: 0;
   font-size: 0.7rem;
@@ -482,6 +607,10 @@ h3 {
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.5rem;
+}
+.remote-health-row:not(:has(:not([hidden]))) {
+  display: none;
+  margin: 0;
 }
 .remote-health-warn:not([hidden]) {
   flex: 1;
@@ -580,23 +709,32 @@ h3 {
 }
 .reuse-config-option input {
   margin-top: 0.15rem;
+  flex-shrink: 0;
 }
 .update-reuse-config {
   margin-top: 0.35rem;
 }
 .card-reuse-config-option {
-  flex-basis: 100%;
-  max-width: 18em;
+  margin: 0;
 }
 .card-variant-selector {
   display: inline-flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
   align-items: center;
   font-size: 0.8rem;
-  margin-right: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  background: #1c1c1f;
 }
 .card-variant-selector[hidden] {
   display: none !important;
+}
+.card-variant-label {
+  color: #71717a;
+  font-size: 0.75rem;
+  margin-right: 0.15rem;
 }
 .card-variant-option {
   display: inline-flex;

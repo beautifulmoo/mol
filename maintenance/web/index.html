@@ -71,37 +71,10 @@
       <div class="bulk-remote-actions">
         <button type="button" id="push-config-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">로컬 설정을 리모트 호스트에 일괄 복사</button>
         <button type="button" id="restart-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">리모트 호스트 일괄 재시작</button>
-        <button type="button" id="apply-update-all-remotes-btn" class="service-btn service-start" disabled title="스테이징에 적용 가능한 버전이 없습니다.">리모트 호스트에 일괄 업데이트 적용</button>
+          <button type="button" id="apply-update-all-remotes-btn" class="service-btn service-start" disabled title="스테이징에 업로드된 버전이 없거나 적용 가능한 원격 호스트가 없습니다.">리모트 호스트에 일괄 업데이트 적용</button>
         <button type="button" id="rollback-all-remotes-btn" class="service-btn" disabled title="Discovery로 원격 호스트를 먼저 찾으세요.">리모트 호스트 일괄 롤백</button>
       </div>
-      <div class="bulk-remote-status-row">
-        <div class="bulk-remote-status-main">
-          <p id="push-config-all-status" class="discovery-status" aria-live="polite"></p>
-          <button type="button" id="push-config-all-results-btn" class="service-btn" hidden>결과 보기</button>
-        </div>
-        <button type="button" id="push-config-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
-      </div>
-      <div class="bulk-remote-status-row">
-        <div class="bulk-remote-status-main">
-          <p id="restart-all-status" class="discovery-status" aria-live="polite"></p>
-          <button type="button" id="restart-all-results-btn" class="service-btn" hidden>결과 보기</button>
-        </div>
-        <button type="button" id="restart-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
-      </div>
-      <div class="bulk-remote-status-row">
-        <div class="bulk-remote-status-main">
-          <p id="apply-update-all-status" class="discovery-status" aria-live="polite"></p>
-          <button type="button" id="apply-update-all-results-btn" class="service-btn" hidden>결과 보기</button>
-        </div>
-        <button type="button" id="apply-update-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
-      </div>
-      <div class="bulk-remote-status-row">
-        <div class="bulk-remote-status-main">
-          <p id="rollback-all-status" class="discovery-status" aria-live="polite"></p>
-          <button type="button" id="rollback-all-results-btn" class="service-btn" hidden>결과 보기</button>
-        </div>
-        <button type="button" id="rollback-all-status-dismiss-btn" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>
-      </div>
+      <div id="bulk-remote-status-list" class="bulk-remote-status-list" aria-live="polite"></div>
     </section>
     </div>
   </main>
@@ -131,6 +104,20 @@
         <button type="button" id="config-editor-modal-save-btn" class="service-btn">저장</button>
         <button type="button" id="config-editor-modal-dismiss-btn" class="service-btn">닫기</button>
         <span id="config-editor-modal-status" class="discovery-status" aria-live="polite"></span>
+      </div>
+    </div>
+  </div>
+  <div id="bulk-apply-update-confirm-modal" class="config-editor-modal" hidden aria-hidden="true">
+    <div class="config-editor-modal-backdrop"></div>
+    <div class="config-editor-modal-dialog confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-apply-update-confirm-modal-title">
+      <div class="config-editor-modal-header">
+        <h3 id="bulk-apply-update-confirm-modal-title" class="config-editor-modal-title">리모트 일괄 업데이트</h3>
+        <button type="button" id="bulk-apply-update-confirm-modal-close-btn" class="config-editor-modal-close" title="닫기" aria-label="닫기">&times;</button>
+      </div>
+      <div id="bulk-apply-update-confirm-modal-body" class="confirm-modal-body"></div>
+      <div class="config-editor-modal-actions confirm-modal-actions">
+        <button type="button" id="bulk-apply-update-confirm-proceed-btn" class="service-btn service-start">계속</button>
+        <button type="button" id="bulk-apply-update-confirm-cancel-btn" class="service-btn">취소</button>
       </div>
     </div>
   </div>

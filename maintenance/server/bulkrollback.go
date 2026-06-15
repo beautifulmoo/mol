@@ -45,18 +45,18 @@ func (s *Server) handleRollbackAll(w http.ResponseWriter, r *http.Request) {
 			"cpu_uuid": remote.CPUUUID,
 		}
 
-		hasPrevious, prevErr := s.remoteHostHasPrevious(remote)
-		if prevErr != nil {
+		canRollback, rbCheckErr := s.remoteHostCanRollback(remote)
+		if rbCheckErr != nil {
 			failed++
 			evt["status"] = "fail"
-			evt["message"] = "previous version check failed: " + prevErr.Error()
+			evt["message"] = "rollback eligibility check failed: " + rbCheckErr.Error()
 			_ = writeNDJSONLine(w, flusher, evt)
 			continue
 		}
-		if !hasPrevious {
+		if !canRollback {
 			skipped++
 			evt["status"] = "skipped"
-			evt["message"] = "이전(previous) 버전 없음"
+			evt["message"] = "롤백 불가 (current·previous 동일 또는 previous 없음)"
 			_ = writeNDJSONLine(w, flusher, evt)
 			continue
 		}

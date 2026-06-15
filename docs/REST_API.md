@@ -68,7 +68,7 @@
 | **POST** | `{API}/upload` | **multipart/form-data**: 필드 **`bundle`** — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + 에이전트 + config 등, `maintenance/scripts/pack-agent-tarball.sh` 참고). 본문 상한은 설정 `Maintenance.MaxUploadBytes`(기본 64MiB). | **200** `success`, `data`: `{ "version": "<버전 키>" }`. 검증 실패 **400** `fail`. |
 | **POST** | `{API}/upload/remove` | **Body JSON**: `{ "version": "<버전 키>" }` — 스테이징 디렉터리만 삭제. | **200** `success` / `fail`. |
 | **GET** | `{API}/update-status` | **Query**: `ip` (선택). 비어 있거나 `self`면 **이 서버**의 `current`와 로컬 스테이징을 비교. **원격 IP**면 해당 호스트 `GET .../self`의 `version`과 **이 서버의 로컬 스테이징**을 비교해 원격에 적용 가능한지 판단(`StagingUpdateAvailable`, 설정 `AllowSameVersionUpdate` 반영). | **200** `success`, `data`: 로컬만일 때 `current_version`, 스테이징 `staging_versions`, `can_apply`, `apply_version`, `remove_version`, `update_in_progress`, `staging_dual_agents`. 원격 `ip`일 때 추가로 `remote_ip`, `remote_current_version`, `can_apply`/`apply_version`은 **원격 기준**. 웹 UI는 원격 카드마다 이 API를 호출해 적용 버튼·variant 표시를 맞춘다(적용 후 해당 `ip` 재조회). 원격 조회 실패 시 `fail`. |
-| **POST** | `{API}/apply-update-all` | **Body JSON**(선택): `{ "hosts": […], "version": "<키>" (생략 시 로컬 스테이징 최신), "agent_variant": "control"\|"compute", "reuse_previous_config": true\|false }` — 호스트별로 원격 `version` 조회 후 `StagingUpdateAvailable`이면 `apply-update`와 동일 경로(업로드+적용). 미충족 호스트는 **`skipped`**. 완료 시 `update_history.log`에 `apply-update-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. 적용 완료 자동 확인은 없음(요청 전송까지만). | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
+| **POST** | `{API}/apply-update-all` | **Body JSON**(선택): `{ "hosts": […], "version": "<키>" (생략 시 로컬 스테이징 최신), "agent_variant": "control"\|"compute", "reuse_previous_config": true\|false }` — 호스트별로 원격 `GET …/self` 버전 조회 후 `StagingUpdateAvailable`이면 `apply-update`와 동일 경로(업로드+적용). 미충족 호스트는 **`skipped`**. 완료 시 `update_history.log`에 `apply-update-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. 웹 UI는 성공 호스트 카드를 적용 후 자동 갱신; 버튼 활성은 **호스트별** `GET …/update-status?ip=` 의 `can_apply`(로컬 `can_apply` 아님). | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
 | **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>", "agent_variant":"control"\|"compute" (선택), "reuse_previous_config":true\|false (선택)}` — 로컬이면 스테이징/versions에서 적용·`MaterializeCanonicalAgent`·(재사용 시 **적용 전 `current` config** 복사)·`systemd-run` 비동기, 원격이면 **`reuse_previous_config`가 true**일 때 원격 `GET …/current-config`로 config를 주입한 뒤 업로드 API·apply(self). JSON에서 **`agent_variant` 생략·빈 문자열**이면 서버는 **`compute`** 로 처리(CLI `--apply-update` 생략 시는 설치 `build_variant` 따름). **`reuse_previous_config` 생략**이면 false. (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz), **`agent_variant`**(선택), **`reuse_previous_config`**(선택, 기본 true) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
 
 적용·롤백 기록은 `{DeployBase}/update_history.log`(append, API는 **tail 10**). 동시 기록은 **`flock`**(`update_history.log.lock`, 0바이트로 잔존 가능, 다음 적용 차단 아님).
@@ -91,7 +91,7 @@
 | **POST** | `{API}/versions/remove` | **Body JSON**: `{ "versions": ["<키>",...], "ip": "<선택>" }` | **200** `success`, `data`: 결과 메시지 문자열(삭제·제외 요약). current/previous 가리키는 버전은 삭제 안 함. |
 | **POST** | `{API}/versions/switch-current` | **Body JSON**: `{ "version": "<버전 키>", "ip": "<선택>" }` — 로컬에서 `versions/`(또는 스테이징)에 있는 버전을 **current**로 두기 위해 내장 `update.sh`를 `systemd-run`으로 실행(`apply-update` 로컬과 동일). `ip`가 원격이면 해당 호스트 API로 프록시. | **200** `success`, `data`: 안내 문자열 / `fail`. |
 | **POST** | `{API}/versions/rollback` | **Body JSON**(선택): `{ "ip": "<선택>" }` — 로컬(또는 원격 프록시)에서 embedded **`rollback.sh`** 실행: `previous` → `current` 심링크 전환·서비스 재시작. `previous` 없으면 `fail`. | **200** `success` / `fail`. |
-| **POST** | `{API}/versions/rollback-all` | **Body JSON**(선택): `{ "hosts": […] }` — 호스트별 `versions/rollback` 프록시. `previous` 없으면 **`skipped`**. 완료 시 `rollback-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
+| **POST** | `{API}/versions/rollback-all` | **Body JSON**(선택): `{ "hosts": […] }` — 호스트별 원격 `versions/list`로 `is_current`·`is_previous` 버전 키를 비교. **`previous` 없음** 또는 **`current`·`previous` 동일**(이미 롤백됨)이면 **`skipped`**. 그 외 `POST …/versions/rollback` 프록시(embedded `rollback.sh`: `previous`→`current`·서비스 재시작). 완료 시 `rollback-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. 웹 UI는 호스트별 `GET …/versions/list?ip=` 로 롤백 가능 여부를 캐시해 버튼 활성을 제어한다. | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
 
 ---
 
@@ -262,6 +262,35 @@ curl -sS -N -X POST "${BASE}${API}/current-config/push-local-all" \
 ```
 
 완료 시 `update_history.log`에 `config push-all finished succeeded=N failed=M` 한 줄.
+
+---
+
+### 일괄 업데이트 적용 `POST .../apply-update-all` (NDJSON)
+
+```bash
+curl -sS -N -X POST "${BASE}${API}/apply-update-all" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "hosts":[{"primary_ip":"10.0.0.2","hostname":"node-b","cpu_uuid":"…","ips":["10.0.0.2"]}],
+    "version":"0.4.4-10",
+    "agent_variant":"compute",
+    "reuse_previous_config":true
+  }'
+```
+
+`version` 생략 시 로컬 스테이징 최신. `StagingUpdateAvailable` 미충족 호스트는 스트림에서 `skipped`. 완료 시 `apply-update-all finished succeeded=N failed=M skipped=K` 한 줄.
+
+---
+
+### 일괄 롤백 `POST .../versions/rollback-all` (NDJSON)
+
+```bash
+curl -sS -N -X POST "${BASE}${API}/versions/rollback-all" \
+  -H 'Content-Type: application/json' \
+  -d '{"hosts":[{"primary_ip":"10.0.0.2","hostname":"node-b","cpu_uuid":"…","ips":["10.0.0.2"]}]}'
+```
+
+원격에서 `previous` 없음 또는 `current`·`previous`가 같은 버전이면 `skipped`. 완료 시 `rollback-all finished succeeded=N failed=M skipped=K` 한 줄.
 
 ---
 

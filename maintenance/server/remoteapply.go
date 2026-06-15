@@ -125,6 +125,74 @@ func (s *Server) rollbackOnRemoteHost(remote remoteregistry.Remote) (connectIP s
 	return "", tried, lastErr
 }
 
+func (s *Server) remoteSymlinkVersionKeysAtIP(ip string) (currentKey, previousKey string, err error) {
+	baseURL, err := s.remoteBaseURL(ip)
+	if err != nil {
+		return "", "", err
+	}
+	u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(s.apiPrefix, "/") + "/versions/list"
+	resp, err := remoteHTTPClient.Get(u)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out APIResponse
+	if json.Unmarshal(body, &out) != nil || out.Status != "success" {
+		return "", "", fmt.Errorf("remote versions list failed")
+	}
+	dataMap, ok := out.Data.(map[string]interface{})
+	if !ok {
+		return "", "", fmt.Errorf("unexpected versions list payload")
+	}
+	versions, ok := dataMap["versions"].([]interface{})
+	if !ok {
+		return "", "", nil
+	}
+	for _, item := range versions {
+		row, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ver, _ := row["version"].(string)
+		if cur, ok := row["is_current"].(bool); ok && cur {
+			currentKey = strings.TrimSpace(ver)
+		}
+		if prev, ok := row["is_previous"].(bool); ok && prev {
+			previousKey = strings.TrimSpace(ver)
+		}
+	}
+	return currentKey, previousKey, nil
+}
+
+// remoteCanRollbackAtIP is true when previous exists and resolves to a different version than current.
+func (s *Server) remoteCanRollbackAtIP(ip string) (bool, error) {
+	currentKey, previousKey, err := s.remoteSymlinkVersionKeysAtIP(ip)
+	if err != nil {
+		return false, err
+	}
+	if previousKey == "" {
+		return false, nil
+	}
+	return currentKey != previousKey, nil
+}
+
+func (s *Server) remoteHostCanRollback(remote remoteregistry.Remote) (bool, error) {
+	ips := remoteregistry.ConnectIPs(remote)
+	var lastErr error
+	for _, ip := range ips {
+		ok, err := s.remoteCanRollbackAtIP(ip)
+		if err == nil {
+			return ok, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return false, lastErr
+	}
+	return false, nil
+}
+
 func (s *Server) remoteHasPreviousAtIP(ip string) (bool, error) {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {

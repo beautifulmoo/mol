@@ -968,6 +968,7 @@
       fetchVersionsListForCard(cardEl, ip);
       fetchServiceStatus(cardEl, ip);
       fetchUpdateStatusForRemote(ip);
+      fetchRollbackStatusForRemote(ip);
     } else {
       if (!activeLogPollVersion) fetchUpdateLog(true);
       fetchCurrentConfig();
@@ -1143,6 +1144,7 @@
     }
     updateReuseConfigVisibility();
     updateAllRemoteServiceControlButtons();
+    refreshRemoteBulkButtonsState();
   }
 
   function toggleCardVariantSelector(card, show) {
@@ -1485,6 +1487,47 @@
     return null;
   }
 
+  function findHostCardForBulkProgressResult(list, r) {
+    if (!list || !r) return null;
+    var tryIps = [];
+    if (r.connect_ip) tryIps.push(r.connect_ip);
+    if (r.ip) tryIps.push(r.ip);
+    for (var i = 0; i < tryIps.length; i++) {
+      var byIp = findHostCardByIp(list, tryIps[i]);
+      if (byIp) return byIp;
+    }
+    if (r.cpu_uuid) return findHostCardByCpuUuid(list, r.cpu_uuid);
+    return null;
+  }
+
+  /** After bulk apply-update: poll host-info like per-card apply (version, log, panels). */
+  function refreshRemoteCardsAfterBulkApplyUpdate(progressResults, appliedVersion) {
+    var list = el('discovered-hosts');
+    if (!list || !progressResults || !progressResults.length) return;
+    var refreshed = {};
+    for (var i = 0; i < progressResults.length; i++) {
+      var r = progressResults[i];
+      if (r.status !== 'success') continue;
+      var card = findHostCardForBulkProgressResult(list, r);
+      if (!card) continue;
+      var ip = card.getAttribute('data-host-ip') || r.connect_ip || r.ip || '';
+      if (!ip || refreshed[ip]) continue;
+      refreshed[ip] = true;
+      showCardUpdating(card, true);
+      scheduleRefreshAfterApply(
+        card,
+        ip,
+        card.querySelector('.service-status-summary'),
+        '업데이트 반영됨.',
+        r.version || appliedVersion,
+        function () {
+          refreshRemoteBulkButtonsState();
+        },
+        { skipInitialSummary: true }
+      );
+    }
+  }
+
   function mergeHostIpsIntoCard(cardEl, newIp) {
     if (!cardEl || !newIp) return;
     var ips = (cardEl.getAttribute('data-host-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
@@ -1516,6 +1559,10 @@
   var RESTART_ALL_LABEL = '리모트 호스트 일괄 재시작';
   var APPLY_UPDATE_ALL_LABEL = '리모트 호스트에 일괄 업데이트 적용';
   var ROLLBACK_ALL_LABEL = '리모트 호스트 일괄 롤백';
+  var PUSH_CONFIG_ALL_STATUS_LABEL = '설정 복사';
+  var RESTART_ALL_STATUS_LABEL = '서비스 재시작';
+  var APPLY_UPDATE_ALL_STATUS_LABEL = '업데이트 적용';
+  var ROLLBACK_ALL_STATUS_LABEL = '롤백';
 
   function countRemoteHostCards() {
     var list = el('discovered-hosts');
@@ -1555,10 +1602,44 @@
     return hosts;
   }
 
-  var lastPushBulkResults = { lines: [], title: '' };
-  var lastRestartBulkResults = { lines: [], title: '' };
-  var lastApplyUpdateBulkResults = { lines: [], title: '' };
-  var lastRollbackBulkResults = { lines: [], title: '' };
+  function prefixBulkStatusMessage(operationLabel, message) {
+    var prefix = '「' + (operationLabel || '일괄 작업') + '」 ';
+    if (!message) return prefix.trim();
+    return prefix + message;
+  }
+
+  function createBulkRemoteStatusEntry(operationLabel, resultsTitle) {
+    var list = el('bulk-remote-status-list');
+    if (!list) return null;
+    var resultsStore = { lines: [], title: resultsTitle || '결과' };
+    var row = document.createElement('div');
+    row.className = 'bulk-remote-status-row';
+    row.innerHTML =
+      '<p class="discovery-status bulk-remote-status-text" aria-live="polite"></p>' +
+      '<div class="bulk-remote-status-actions">' +
+      '<button type="button" class="service-btn bulk-remote-entry-results-btn" hidden>결과 보기</button>' +
+      '<button type="button" class="bulk-remote-status-dismiss" hidden title="메시지 닫기" aria-label="메시지 닫기">&times;</button>' +
+      '</div>';
+    var statusEl = row.querySelector('.bulk-remote-status-text');
+    var resultsBtn = row.querySelector('.bulk-remote-entry-results-btn');
+    var dismissEl = row.querySelector('.bulk-remote-status-dismiss');
+    if (statusEl) statusEl.textContent = prefixBulkStatusMessage(operationLabel, '진행 중…');
+    if (dismissEl) dismissEl.hidden = false;
+    resultsBtn.addEventListener('click', function () {
+      openBulkResultsModal(resultsStore);
+    });
+    dismissEl.addEventListener('click', function () {
+      if (row.parentNode) row.parentNode.removeChild(row);
+    });
+    list.appendChild(row);
+    return {
+      statusEl: statusEl,
+      dismissEl: dismissEl,
+      resultsBtnEl: resultsBtn,
+      resultsStore: resultsStore,
+      operationLabel: operationLabel
+    };
+  }
 
   function formatBulkHostLabel(r) {
     var label = (r.hostname && String(r.hostname).trim()) || r.ip || '?';
@@ -1671,118 +1752,182 @@
     if (closeBtn) closeBtn.addEventListener('click', closeBulkResultsModal);
     if (dismissBtn) dismissBtn.addEventListener('click', closeBulkResultsModal);
     if (backdrop) backdrop.addEventListener('click', closeBulkResultsModal);
-    var pushResultsBtn = el('push-config-all-results-btn');
-    var restartResultsBtn = el('restart-all-results-btn');
-    if (pushResultsBtn) {
-      pushResultsBtn.addEventListener('click', function () {
-        openBulkResultsModal(lastPushBulkResults);
-      });
-    }
-    if (restartResultsBtn) {
-      restartResultsBtn.addEventListener('click', function () {
-        openBulkResultsModal(lastRestartBulkResults);
-      });
-    }
-    var applyUpdateResultsBtn = el('apply-update-all-results-btn');
-    var rollbackResultsBtn = el('rollback-all-results-btn');
-    if (applyUpdateResultsBtn) {
-      applyUpdateResultsBtn.addEventListener('click', function () {
-        openBulkResultsModal(lastApplyUpdateBulkResults);
-      });
-    }
-    if (rollbackResultsBtn) {
-      rollbackResultsBtn.addEventListener('click', function () {
-        openBulkResultsModal(lastRollbackBulkResults);
-      });
-    }
-  }
-
-  function syncBulkRemoteStatusDismiss(statusEl, dismissEl) {
-    if (!dismissEl) return;
-    var hasText = statusEl && String(statusEl.textContent || '').trim().length > 0;
-    dismissEl.hidden = !hasText;
-  }
-
-  function initBulkRemoteStatusDismiss() {
-    [
-      {
-        statusId: 'push-config-all-status',
-        dismissId: 'push-config-all-status-dismiss-btn',
-        resultsId: 'push-config-all-results-btn'
-      },
-      {
-        statusId: 'restart-all-status',
-        dismissId: 'restart-all-status-dismiss-btn',
-        resultsId: 'restart-all-results-btn'
-      },
-      {
-        statusId: 'apply-update-all-status',
-        dismissId: 'apply-update-all-status-dismiss-btn',
-        resultsId: 'apply-update-all-results-btn'
-      },
-      {
-        statusId: 'rollback-all-status',
-        dismissId: 'rollback-all-status-dismiss-btn',
-        resultsId: 'rollback-all-results-btn'
-      }
-    ].forEach(function (pair) {
-      var statusEl = el(pair.statusId);
-      var dismissBtn = el(pair.dismissId);
-      var resultsBtn = el(pair.resultsId);
-      if (!statusEl || !dismissBtn) return;
-      dismissBtn.addEventListener('click', function () {
-        statusEl.textContent = '';
-        dismissBtn.hidden = true;
-        if (resultsBtn) resultsBtn.hidden = true;
-      });
-    });
   }
 
   function refreshRemoteBulkButtonsState() {
     var domCount = countRemoteHostCards();
     var noHostsTitle = domCount === 0 ? 'Discovery로 원격 호스트를 먼저 찾으세요.' : '';
-    ['push-config-all-remotes-btn', 'restart-all-remotes-btn', 'rollback-all-remotes-btn'].forEach(function (id) {
-      var btn = el(id);
-      if (!btn || btn.getAttribute('data-busy') === '1') return;
-      btn.disabled = domCount === 0;
-      btn.title = noHostsTitle;
+    ['push-config-all-remotes-btn', 'restart-all-remotes-btn'].forEach(function (id) {
+      var bulkBtn = el(id);
+      if (!bulkBtn || bulkBtn.getAttribute('data-busy') === '1') return;
+      bulkBtn.disabled = domCount === 0;
+      bulkBtn.title = noHostsTitle;
     });
+    var rollbackAllBtn = el('rollback-all-remotes-btn');
+    if (rollbackAllBtn && rollbackAllBtn.getAttribute('data-busy') !== '1') {
+      rollbackAllBtn.disabled = !isBulkRollbackAllEnabled();
+      rollbackAllBtn.title = getBulkRollbackAllDisabledTitle();
+    }
     var applyAllBtn = el('apply-update-all-remotes-btn');
     if (applyAllBtn && applyAllBtn.getAttribute('data-busy') !== '1') {
-      var canApply = !!(lastUpdateStatus && lastUpdateStatus.can_apply && lastUpdateStatus.apply_version);
-      applyAllBtn.disabled = domCount === 0 || !canApply;
-      if (domCount === 0) {
-        applyAllBtn.title = noHostsTitle;
-      } else if (!canApply) {
-        applyAllBtn.title = '스테이징에 적용 가능한 버전이 없습니다.';
-      } else {
-        applyAllBtn.title = '';
+      var applyCounts = getBulkApplyUpdateCounts();
+      applyAllBtn.textContent = formatBulkApplyUpdateAllButtonLabel(applyCounts);
+      applyAllBtn.disabled = !isBulkApplyUpdateAllEnabled();
+      applyAllBtn.title = getBulkApplyUpdateAllDisabledTitle(applyCounts);
+    }
+  }
+
+  /** Per-card staging vs remote version counts for bulk apply label and confirm. */
+  function getBulkApplyUpdateCounts() {
+    var total = countRemoteHostCards();
+    var eligible = 0;
+    var eligibleReachable = 0;
+    var pending = false;
+    var cards = document.querySelectorAll('#discovered-hosts .host-card:not(.self-card)');
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var ip = card.getAttribute('data-host-ip') || '';
+      if (!ip) continue;
+      var st = remoteUpdateStatusByIP[ip];
+      if (!st || st.pending) {
+        pending = true;
+        continue;
+      }
+      if (st.ok && st.can_apply && st.apply_version) {
+        eligible++;
+        if (isRemoteHostReachableForControl(card)) eligibleReachable++;
       }
     }
+    return { total: total, eligible: eligible, eligibleReachable: eligibleReachable, pending: pending };
+  }
+
+  function formatBulkApplyUpdateAllButtonLabel(counts) {
+    if (!counts || counts.total <= 0 || !getBulkApplyStagingVersion()) {
+      return APPLY_UPDATE_ALL_LABEL;
+    }
+    if (counts.pending) {
+      return APPLY_UPDATE_ALL_LABEL + ' (…/' + counts.total + ')';
+    }
+    return APPLY_UPDATE_ALL_LABEL + ' (' + counts.eligible + '/' + counts.total + ')';
+  }
+
+  /** Staging version key for bulk remote apply (newest staged; independent of local can_apply). */
+  function getBulkApplyStagingVersion() {
+    if (!lastUpdateStatus || !lastUpdateStatus.staging_versions || !lastUpdateStatus.staging_versions.length) {
+      return '';
+    }
+    if (lastUpdateStatus.apply_version) return lastUpdateStatus.apply_version;
+    return lastUpdateStatus.staging_versions[0];
+  }
+
+  function forEachReachableRemoteHostCard(fn) {
+    var cards = document.querySelectorAll('#discovered-hosts .host-card:not(.self-card)');
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      if (!isRemoteHostReachableForControl(card)) continue;
+      var ip = card.getAttribute('data-host-ip') || '';
+      if (!ip) continue;
+      fn(card, ip);
+    }
+  }
+
+  /** Bulk apply: enable when ≥1 reachable remote can apply staged version (not all remotes). */
+  function isBulkApplyUpdateAllEnabled() {
+    var counts = getBulkApplyUpdateCounts();
+    if (counts.total === 0) return false;
+    if (!getBulkApplyStagingVersion()) return false;
+    if (counts.pending) return false;
+    return counts.eligibleReachable > 0;
+  }
+
+  function getBulkApplyUpdateAllDisabledTitle(counts) {
+    counts = counts || getBulkApplyUpdateCounts();
+    if (counts.total === 0) return 'Discovery로 원격 호스트를 먼저 찾으세요.';
+    if (!getBulkApplyStagingVersion()) return '스테이징에 업로드된 버전이 없습니다.';
+    if (counts.pending) return '원격 버전 확인 중…';
+    if (counts.eligible === 0) {
+      return '스테이징 버전과 비교해 업데이트 가능한 원격 호스트가 없습니다.';
+    }
+    if (counts.eligibleReachable === 0) {
+      return '업데이트 가능 호스트가 있으나 헬스 실패·Discovery 미응답으로 실행할 수 없습니다.';
+    }
+    var version = getBulkApplyStagingVersion();
+    return version ? ('스테이징 ' + version + ' — 적용 가능 ' + counts.eligible + '/' + counts.total + '대') : '';
+  }
+
+  function canRollbackFromVersionsList(versions) {
+    if (!versions || !versions.length) return false;
+    var currentVer = '';
+    var previousVer = '';
+    for (var i = 0; i < versions.length; i++) {
+      var v = versions[i];
+      if (v.is_current) currentVer = (v.version || '').trim();
+      if (v.is_previous) previousVer = (v.version || '').trim();
+    }
+    if (!previousVer) return false;
+    return currentVer !== previousVer;
+  }
+
+  function getBulkRollbackCounts() {
+    var total = countRemoteHostCards();
+    var eligible = 0;
+    var eligibleReachable = 0;
+    var pending = false;
+    var cards = document.querySelectorAll('#discovered-hosts .host-card:not(.self-card)');
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var ip = card.getAttribute('data-host-ip') || '';
+      if (!ip) continue;
+      var st = remoteRollbackStatusByIP[ip];
+      if (!st || st.pending) {
+        pending = true;
+        continue;
+      }
+      if (st.ok && st.can_rollback) {
+        eligible++;
+        if (isRemoteHostReachableForControl(card)) eligibleReachable++;
+      }
+    }
+    return { total: total, eligible: eligible, eligibleReachable: eligibleReachable, pending: pending };
+  }
+
+  function isBulkRollbackAllEnabled() {
+    var counts = getBulkRollbackCounts();
+    if (counts.total === 0) return false;
+    if (counts.pending) return false;
+    return counts.eligibleReachable > 0;
+  }
+
+  function getBulkRollbackAllDisabledTitle(counts) {
+    counts = counts || getBulkRollbackCounts();
+    if (counts.total === 0) return 'Discovery로 원격 호스트를 먼저 찾으세요.';
+    if (counts.pending) return '원격 롤백 가능 여부 확인 중…';
+    if (counts.eligible === 0) {
+      return '롤백 가능한 원격이 없습니다 (current·previous 동일 또는 previous 없음).';
+    }
+    if (counts.eligibleReachable === 0) {
+      return '롤백 가능 호스트가 있으나 헬스 실패·Discovery 미응답으로 실행할 수 없습니다.';
+    }
+    return '롤백 가능 ' + counts.eligible + '/' + counts.total + '대';
   }
 
   function runBulkHostsNDJSON(options) {
     var btn = options.buttonEl;
-    var statusEl = options.statusEl;
-    var dismissEl = options.dismissEl;
-    var resultsBtn = options.resultsBtnEl;
+    if (!btn || btn.disabled || btn.getAttribute('data-busy') === '1') return;
+    var operationLabel = options.operationLabel || options.label || '일괄 작업';
+    var entry = createBulkRemoteStatusEntry(operationLabel, options.resultsTitle);
+    if (!entry) return;
+    var statusEl = entry.statusEl;
+    var dismissEl = entry.dismissEl;
+    var resultsBtn = entry.resultsBtnEl;
+    var resultsStore = entry.resultsStore;
     var label = options.label;
     var apiPath = options.apiPath;
     var formatLine = options.formatLine;
     var formatSummary = options.formatSummary;
-    var resultsTitle = options.resultsTitle;
     var onDone = options.onDone || function () {};
-    var resultsStore = options.resultsStore;
-    if (!btn || btn.disabled || btn.getAttribute('data-busy') === '1') return;
     btn.setAttribute('data-busy', '1');
     btn.disabled = true;
-    if (statusEl) statusEl.textContent = '';
-    if (dismissEl) dismissEl.hidden = true;
-    if (resultsBtn) resultsBtn.hidden = true;
-    if (resultsStore) {
-      resultsStore.lines = [];
-      resultsStore.title = resultsTitle;
-    }
 
     var hosts = collectRemoteHostsFromDOM();
     var requestBody = options.buildRequestBody
@@ -1808,22 +1953,23 @@
           doneHandled = true;
           btn.textContent = label;
           btn.removeAttribute('data-busy');
-          if (resultsStore) {
-            resultsStore.lines = progressResults.map(formatLine);
-          }
+          resultsStore.lines = progressResults.map(formatLine);
+          resultsStore.title = options.resultsTitle || '결과';
           if (resultsBtn) resultsBtn.hidden = progressResults.length === 0;
           if (statusEl) {
+            var detail;
             if (evt && evt.total === 0) {
-              statusEl.textContent = hosts.length
+              detail = hosts.length
                 ? '원격 호스트에 연결할 수 없습니다. Discovery를 다시 실행해 보세요.'
                 : (options.emptyText || '대상 호스트가 없습니다. Discovery를 실행하세요.');
             } else if (evt) {
-              statusEl.textContent = formatSummary(evt) || '요청이 중단되었습니다.';
+              detail = formatSummary(evt) || '요청이 중단되었습니다.';
             } else {
-              statusEl.textContent = '요청이 중단되었습니다.';
+              detail = '요청이 중단되었습니다.';
             }
-            syncBulkRemoteStatusDismiss(statusEl, dismissEl);
+            statusEl.textContent = prefixBulkStatusMessage(operationLabel, detail);
           }
+          if (dismissEl) dismissEl.hidden = false;
           refreshRemoteBulkButtonsState();
           onDone(evt, progressResults);
           fetchUpdateLog(true);
@@ -1867,8 +2013,8 @@
       .catch(function () {
         btn.textContent = label;
         btn.removeAttribute('data-busy');
-        if (statusEl) statusEl.textContent = '요청 실패.';
-        syncBulkRemoteStatusDismiss(statusEl, dismissEl);
+        if (statusEl) statusEl.textContent = prefixBulkStatusMessage(operationLabel, '요청 실패.');
+        if (dismissEl) dismissEl.hidden = false;
         refreshRemoteBulkButtonsState();
       });
   }
@@ -1887,10 +2033,7 @@
   function runPushConfigToAllRemotes() {
     runBulkHostsNDJSON({
       buttonEl: el('push-config-all-remotes-btn'),
-      statusEl: el('push-config-all-status'),
-      dismissEl: el('push-config-all-status-dismiss-btn'),
-      resultsBtnEl: el('push-config-all-results-btn'),
-      resultsStore: lastPushBulkResults,
+      operationLabel: PUSH_CONFIG_ALL_STATUS_LABEL,
       label: PUSH_CONFIG_ALL_LABEL,
       apiPath: '/current-config/push-local-all',
       formatLine: formatPushConfigResultLine,
@@ -1912,10 +2055,7 @@
   function runRestartAllRemotes() {
     runBulkHostsNDJSON({
       buttonEl: el('restart-all-remotes-btn'),
-      statusEl: el('restart-all-status'),
-      dismissEl: el('restart-all-status-dismiss-btn'),
-      resultsBtnEl: el('restart-all-results-btn'),
-      resultsStore: lastRestartBulkResults,
+      operationLabel: RESTART_ALL_STATUS_LABEL,
       label: RESTART_ALL_LABEL,
       apiPath: '/service-control/restart-all',
       formatLine: formatRestartResultLine,
@@ -1938,55 +2078,120 @@
     });
   }
 
+  var bulkApplyUpdateConfirmProceed = null;
+
+  function closeBulkApplyUpdateConfirmModal() {
+    var modal = el('bulk-apply-update-confirm-modal');
+    if (modal) {
+      modal.hidden = true;
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    document.body.classList.remove('config-modal-open');
+    bulkApplyUpdateConfirmProceed = null;
+  }
+
+  function openBulkApplyUpdateConfirmModal(message, onProceed) {
+    var modal = el('bulk-apply-update-confirm-modal');
+    var body = el('bulk-apply-update-confirm-modal-body');
+    if (!modal || !body) {
+      if (onProceed && window.confirm(message)) onProceed();
+      return;
+    }
+    body.textContent = message;
+    bulkApplyUpdateConfirmProceed = onProceed || null;
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('config-modal-open');
+    var proceedBtn = el('bulk-apply-update-confirm-proceed-btn');
+    if (proceedBtn) proceedBtn.focus();
+  }
+
+  function initBulkApplyUpdateConfirmModal() {
+    var modal = el('bulk-apply-update-confirm-modal');
+    if (!modal || modal.getAttribute('data-bound')) return;
+    modal.setAttribute('data-bound', '1');
+    var backdrop = modal.querySelector('.config-editor-modal-backdrop');
+    var closeBtn = el('bulk-apply-update-confirm-modal-close-btn');
+    var cancelBtn = el('bulk-apply-update-confirm-cancel-btn');
+    var proceedBtn = el('bulk-apply-update-confirm-proceed-btn');
+    function cancel() {
+      closeBulkApplyUpdateConfirmModal();
+    }
+    function proceed() {
+      var fn = bulkApplyUpdateConfirmProceed;
+      closeBulkApplyUpdateConfirmModal();
+      if (fn) fn();
+    }
+    if (backdrop) backdrop.addEventListener('click', cancel);
+    if (closeBtn) closeBtn.addEventListener('click', cancel);
+    if (cancelBtn) cancelBtn.addEventListener('click', cancel);
+    if (proceedBtn) proceedBtn.addEventListener('click', proceed);
+  }
+
+  function formatBulkApplyUpdateConfirmMessage(counts, bulkVersion) {
+    var lines = [
+      '리모트 ' + counts.total + '대 중 ' + counts.eligible + '대가 스테이징 버전 ' +
+        bulkVersion + '(으)로 업데이트 가능합니다.',
+      '',
+      '환경설정: 오른쪽 「업데이트」 패널의 「이전버전의 환경설정 파일 재사용」 설정을 모든 원격에 동일하게 적용합니다.',
+      '(리모트 카드별 체크박스는 따르지 않습니다.)'
+    ];
+    if (getReusePreviousConfig()) {
+      lines.push('· 체크됨 — 각 원격 호스트의 current config(agent.local.yml)를 유지합니다.');
+    } else if (isLocalReuseConfigVisible()) {
+      lines.push('· 체크 해제 — 스테이징 번들에 포함된 config를 각 원격에 적용합니다.');
+    } else {
+      lines.push('· 스테이징 번들에 포함된 config를 각 원격에 적용합니다.');
+    }
+    lines.push('', '계속하시겠습니까?');
+    return lines.join('\n');
+  }
+
   function runApplyUpdateAllRemotes() {
-    if (!lastUpdateStatus.can_apply || !lastUpdateStatus.apply_version) return;
-    runBulkHostsNDJSON({
-      buttonEl: el('apply-update-all-remotes-btn'),
-      statusEl: el('apply-update-all-status'),
-      dismissEl: el('apply-update-all-status-dismiss-btn'),
-      resultsBtnEl: el('apply-update-all-results-btn'),
-      resultsStore: lastApplyUpdateBulkResults,
-      label: APPLY_UPDATE_ALL_LABEL,
-      apiPath: '/apply-update-all',
-      buildRequestBody: function (hosts) {
-        return {
-          hosts: hosts,
-          version: lastUpdateStatus.apply_version || '',
-          agent_variant: getSelectedAgentVariant(),
-          reuse_previous_config: getReusePreviousConfig()
-        };
-      },
-      formatLine: formatApplyUpdateResultLine,
-      formatSummary: function (evt) {
-        return formatBulkDoneSummary(evt, '대 모두에 업데이트를 적용했습니다.');
-      },
-      resultsTitle: '리모트 일괄 업데이트 적용 결과',
-      emptyText: '적용할 원격 호스트가 없습니다. Discovery를 실행하세요.',
-      onDone: function () {
-        fetchUpdateStatus();
-        var list = el('discovered-hosts');
-        if (!list) return;
-        var cards = list.querySelectorAll('.host-card:not(.self-card)');
-        for (var i = 0; i < cards.length; i++) {
-          var card = cards[i];
-          var ip = card.getAttribute('data-host-ip') || '';
-          if (ip) {
-            fetchServiceStatus(card, ip);
-            fetchUpdateLogForCard(card, ip);
-            registerRemoteHealthMonitoring(card);
+    if (!isBulkApplyUpdateAllEnabled()) return;
+    var counts = getBulkApplyUpdateCounts();
+    var bulkVersion = getBulkApplyStagingVersion();
+    openBulkApplyUpdateConfirmModal(formatBulkApplyUpdateConfirmMessage(counts, bulkVersion), function () {
+      runBulkHostsNDJSON({
+        buttonEl: el('apply-update-all-remotes-btn'),
+        operationLabel: APPLY_UPDATE_ALL_STATUS_LABEL,
+        label: formatBulkApplyUpdateAllButtonLabel(getBulkApplyUpdateCounts()),
+        apiPath: '/apply-update-all',
+        buildRequestBody: function (hosts) {
+          return {
+            hosts: hosts,
+            version: bulkVersion,
+            agent_variant: getSelectedAgentVariant(),
+            reuse_previous_config: getReusePreviousConfig()
+          };
+        },
+        formatLine: formatApplyUpdateResultLine,
+        formatSummary: function (evt) {
+          return formatBulkDoneSummary(evt, '대 모두에 업데이트를 적용했습니다.');
+        },
+        resultsTitle: '리모트 일괄 업데이트 적용 결과',
+        emptyText: '적용할 원격 호스트가 없습니다. Discovery를 실행하세요.',
+        onDone: function (evt, progressResults) {
+          refreshRemoteCardsAfterBulkApplyUpdate(progressResults, bulkVersion);
+          fetchUpdateStatus();
+          var list = el('discovered-hosts');
+          if (!list) return;
+          var cards = list.querySelectorAll('.host-card:not(.self-card)');
+          for (var i = 0; i < cards.length; i++) {
+            var card = cards[i];
+            var ip = card.getAttribute('data-host-ip') || '';
+            if (ip) registerRemoteHealthMonitoring(card);
           }
         }
-      }
+      });
     });
   }
 
   function runRollbackAllRemotes() {
+    if (!isBulkRollbackAllEnabled()) return;
     runBulkHostsNDJSON({
       buttonEl: el('rollback-all-remotes-btn'),
-      statusEl: el('rollback-all-status'),
-      dismissEl: el('rollback-all-status-dismiss-btn'),
-      resultsBtnEl: el('rollback-all-results-btn'),
-      resultsStore: lastRollbackBulkResults,
+      operationLabel: ROLLBACK_ALL_STATUS_LABEL,
       label: ROLLBACK_ALL_LABEL,
       apiPath: '/versions/rollback-all',
       formatLine: formatRollbackResultLine,
@@ -1997,6 +2202,7 @@
       emptyText: '롤백할 원격 호스트가 없습니다. Discovery를 실행하세요.',
       onDone: function () {
         fetchUpdateStatus();
+        fetchRollbackStatusForAllRemoteHosts();
         var list = el('discovered-hosts');
         if (!list) return;
         var cards = list.querySelectorAll('.host-card:not(.self-card)');
@@ -2070,6 +2276,7 @@
           var primaryIp = existing.getAttribute('data-host-ip') || ip;
           fetchServiceStatus(existing, primaryIp);
           fetchUpdateStatusForRemote(primaryIp);
+          fetchRollbackStatusForRemote(primaryIp);
           updateAllHostApplyButtons();
           registerRemoteHealthMonitoring(existing);
           setDiscoveryMissUI(row, false);
@@ -2081,6 +2288,7 @@
           bindServiceControlButtons(card);
           fetchServiceStatus(card, ip);
           fetchUpdateStatusForRemote(ip);
+          fetchRollbackStatusForRemote(ip);
           registerRemoteHealthMonitoring(card);
           setDiscoveryMissUI(row, false);
         }
@@ -2101,6 +2309,7 @@
       status.textContent = formatDiscoveryDoneStatus(count, respondedCount, missedCount);
       refreshRemoteHostRowTints();
       fetchUpdateStatusForAllRemoteHosts();
+      fetchRollbackStatusForAllRemoteHosts();
       updateAllHostApplyButtons();
       refreshRemoteBulkButtonsState();
     });
@@ -2133,6 +2342,8 @@
 
   /** Per remote host: GET /update-status?ip= — same StagingUpdateAvailable logic as server (local staging vs that host's running version). */
   var remoteUpdateStatusByIP = {};
+  /** Per remote host: GET /versions/list?ip= — can_rollback when current and previous symlink targets differ. */
+  var remoteRollbackStatusByIP = {};
 
   function fetchUpdateStatusForRemote(ip) {
     if (!ip) return;
@@ -2173,6 +2384,42 @@
     }
   }
 
+  function fetchRollbackStatusForRemote(ip) {
+    if (!ip) return;
+    remoteRollbackStatusByIP[ip] = { pending: true, ok: false };
+    fetch(API_BASE + '/versions/list?ip=' + encodeURIComponent(ip))
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        if (body.status !== 'success' || !body.data || !body.data.versions) {
+          remoteRollbackStatusByIP[ip] = { pending: false, ok: false, err: true, can_rollback: false };
+          refreshRemoteBulkButtonsState();
+          return;
+        }
+        remoteRollbackStatusByIP[ip] = {
+          pending: false,
+          ok: true,
+          can_rollback: canRollbackFromVersionsList(body.data.versions)
+        };
+        refreshRemoteBulkButtonsState();
+      })
+      .catch(function () {
+        remoteRollbackStatusByIP[ip] = { pending: false, ok: false, err: true, can_rollback: false };
+        refreshRemoteBulkButtonsState();
+      });
+  }
+
+  function fetchRollbackStatusForAllRemoteHosts() {
+    var cards = document.querySelectorAll('#discovered-hosts .host-card:not(.self-card)');
+    var seen = {};
+    for (var i = 0; i < cards.length; i++) {
+      var hip = cards[i].getAttribute('data-host-ip');
+      if (hip && !seen[hip]) {
+        seen[hip] = true;
+        fetchRollbackStatusForRemote(hip);
+      }
+    }
+  }
+
   function fetchUpdateStatus() {
     fetch(API_BASE + '/update-status')
       .then(function (res) { return res.json(); })
@@ -2204,6 +2451,7 @@
         updateReuseConfigVisibility();
         updateAllHostApplyButtons();
         fetchUpdateStatusForAllRemoteHosts();
+        fetchRollbackStatusForAllRemoteHosts();
         refreshRemoteBulkButtonsState();
       })
       .catch(function () {});
@@ -2817,7 +3065,7 @@
   updateAllHostApplyButtons();
   initConfigEditorModal();
   initBulkResultsModal();
-  initBulkRemoteStatusDismiss();
+  initBulkApplyUpdateConfirmModal();
   loadSelf();
 
   document.addEventListener('visibilitychange', function () {

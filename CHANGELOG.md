@@ -1,20 +1,25 @@
 # 변경 이력 (mol)
 
-## 웹 UI · 일괄 원격 config·재시작 (2026-06)
+## 웹 UI · 일괄 원격 작업 (2026-06)
 
-- **모든 리모트 호스트 일괄 작업** 영역: Discovery 아래 전용 섹션에 4개 버튼·각각 상태 줄·「결과 보기」.
-- **일괄 버튼**: 「**로컬 설정을 리모트 호스트에 일괄 복사**」(`POST …/current-config/push-local-all`), 「**리모트 호스트 일괄 재시작**」(`POST …/service-control/restart-all`), 「**리모트 호스트에 일괄 업데이트 적용**」(`POST …/apply-update-all`), 「**리모트 호스트 일괄 롤백**」(`POST …/versions/rollback-all`). 원격 카드가 있을 때만 활성(업데이트 적용은 로컬 `can_apply` 추가 필요); 진행 **`N/M`**, NDJSON per-host 결과, 공용 **「결과 보기」** 모달.
-- **일괄 업데이트**: 호스트별 `StagingUpdateAvailable` 미충족은 **`skipped`**(실패 아님). 적용 성공 여부 자동 확인은 미구현(요청 전송까지만).
-- **일괄 롤백**: 원격 `POST …/versions/rollback`(embedded `rollback.sh`) — previous→current·서비스 재시작; previous 없으면 **`skipped`**.
-- **호스트 목록**: UI **카드 1장 = 호스트 1대**(`hosts` body: `primary_ip`, `hostname`, `cpu_uuid`, `ips[]`); IP 순차 시도·첫 성공. **`remoteregistry`**(volatile) + **`GET …/discovered-remotes`**.
-- **재시작 확인**: restart-all — 프록시 restart 후 **2s 대기·최대 45s** 폴링(`GET …/health` 또는 `service-status`의 `Active: active (running)`); connection reset/EOF는 진행 중으로 처리.
-- **업데이트 기록**: bulk 완료 시 **`config push-all finished succeeded=N failed=M`** / **`service restart-all finished …`** 요약 1줄 append(`appendDeployHistory`).
-- **`recent_rollback` 수정**: 맨 아래 줄의 `failed=N` 카운트(일괄 요약)만으로는 롤백 경고를 띄우지 않음 — **`update … failed`**·**`rollback failed`** 등 실제 실패만.
-- **상태 줄 UX**: 완료 메시지·「결과 보기」·줄 오른쪽 **×** — × 클릭 시 메시지와 결과 보기 버튼 함께 숨김.
-- **Discovery 미응답 표시**: run 완료(`done`·부분 수신 후 `onerror`) 시 **이번 UDP run에 응답하지 않은 기존 원격 카드**에 「**이번 Discovery 미응답**」 배지·펼친 카드 안내 배너. 카드는 유지; `discoveryfail`·시작 직후에는 이전 run 표시를 지우지 않음.
-- **원격 조작 가드**: HTTP 헬스체크 실패·이번 Discovery 미응답 카드에서는 **「업데이트 적용」·「서비스 재시작」** 비활성(스테이징 번들 유무와 무관).
-- **Discovery 진행 표시**: 상태 줄 `Discovery 진행 중… N초 (호스트 M개, …)` — 타임아웃은 서버 `client-runtime`의 `discovery.timeoutSec`.
-- **문서**: **PRD.md** §5.4·§5.4.1·§6.6, **docs/REST_API.md**.
+- **레이아웃**: **「모든 리모트 호스트 일괄 작업」** 섹션은 Discovery 옆이 아니라 **오른쪽 sticky 사이드바**(「업데이트」 패널 아래)에 둔다. 호스트 카드는 가운데 열, 업데이트·일괄 작업은 오른쪽 열.
+- **일괄 버튼(4개)**: 「**로컬 설정을 리모트 호스트에 일괄 복사**」(`POST …/current-config/push-local-all`), 「**리모트 호스트 일괄 재시작**」(`POST …/service-control/restart-all`), 「**리모트 호스트에 일괄 업데이트 적용**」(`POST …/apply-update-all`), 「**리모트 호스트 일괄 롤백**」(`POST …/versions/rollback-all`). NDJSON per-host 결과, 공용 **「결과 보기」** 모달.
+- **결과·상태 UX**: 버튼 클릭 **순서대로** 상태 줄이 `#bulk-remote-status-list`에 **추가**된다(고정 슬롯 없음). 상태 줄 접두는 짧은 라벨(**설정 복사**·**서비스 재시작**·**업데이트 적용**·**롤백**). **「결과 보기」** 와 **×** 는 같은 줄 오른쪽에 배치; × 클릭 시 해당 줄 전체 제거.
+- **일괄 업데이트 적용(버튼)**: 로컬 `can_apply`가 아니라 **호스트별** `GET …/update-status?ip=` 의 `can_apply`로 판단. 스테이징 버전이 있고 **도달 가능한 원격 중 적용 가능 ≥1** 일 때만 활성. 라벨 **`(적용가능/전체)`** 표시. 확인 모달은 **오른쪽 업데이트 패널**의 「이전버전의 환경설정 파일 재사용」을 모든 원격에 동일 적용(카드별 체크박스 무시). 성공 호스트는 완료 후 **카드 자동 갱신**(host-info 폴링·패널 refresh).
+- **일괄 롤백(버튼)**: 호스트별 `GET …/versions/list?ip=` 로 **`is_current`·`is_previous` 버전 키**를 비교. **`previous` 없음** 또는 **`current`와 `previous`가 같으면**(이미 롤백됨) 롤백 불가 — **도달 가능한 롤백 가능 호스트 ≥1** 일 때만 버튼 활성. 롤백 성공 후에는 동일 조건으로 버튼 비활성 유지.
+- **일괄 API 공통**: 호스트별 `StagingUpdateAvailable` / 롤백 가능 여부 미충족은 **`skipped`**(실패 아님). 진행 중 해당 버튼 **`N/M`**·비활성. `hosts` body = **화면 카드 1장 = 호스트 1대**(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`).
+- **호스트 목록**: **`remoteregistry`**(volatile) + **`GET …/discovered-remotes`**; UI는 DOM 카드 목록을 body로 보냄(권장).
+- **재시작 확인**: restart-all — 프록시 restart 후 **2s 대기·최대 45s** 폴링(`GET …/health` 또는 `service-status`의 `Active: active (running)`).
+- **업데이트 기록**: bulk 완료 시 **`config push-all` / `service restart-all` / `apply-update-all` / `rollback-all finished`** 요약 1줄 append(`appendDeployHistory`).
+- **`recent_rollback`**: 맨 아래 줄의 `failed=N` 카운트(일괄 요약)만으로는 롤백 경고를 띄우지 않음 — **`update … failed`**·**`rollback failed`** 등 실제 실패만.
+- **Discovery 미응답**: run 완료 시 **이번 UDP run에 응답하지 않은 기존 원격 카드**에 「**이번 Discovery 미응답**」 배지·펼친 카드 안내 배너(카드는 유지). `discoveryfail`·시작 직후에는 이전 run 표시를 지우지 않음.
+- **원격 조작 가드**: HTTP 헬스체크 실패·이번 Discovery 미응답 카드에서는 **「업데이트 적용」·「서비스 재시작」** 비활성(일괄 버튼의 도달 가능 판단에도 동일 규칙).
+- **Discovery 진행 표시**: 상태 줄 `Discovery 진행 중… N초 (호스트 M개, …)` — 타임아웃은 `client-runtime`의 `discovery.timeoutSec`.
+- **문서**: **PRD.md** §5.4.1·§5.5.3.1·§6.6, **docs/REST_API.md**.
+
+## 웹 UI · 일괄 원격 config·재시작 (초기, 2026-06)
+
+- 위 **「일괄 원격 작업 (2026-06)」** 절에 통합·확장됨. 초기에는 Discovery 아래 2버튼(config·restart)만 있었음.
 
 ## 문서 현행화 (2026-05)
 

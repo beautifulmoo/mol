@@ -1,5 +1,26 @@
 # 변경 이력 (mol)
 
+## CLI 리모트 일괄 명령 4종 (2026-06)
+
+웹 UI §6.6 사이드바 4버튼과 동일 maintenance NDJSON API를 **`agent` CLI**로 제공한다. `contrabass-moleU agent --help` 에서는 **`--versions-*` 다음 맨 아래**에 나열된다.
+
+| CLI | 요약 |
+|-----|------|
+| **`--push-config-all-remotes`** | UDP Discovery(기본값) → `POST …/current-config/push-local-all` |
+| **`--restart-all-remotes`** | Discovery → `POST …/service-control/restart-all` |
+| **`--apply-update-all-remotes <bundle>`** | `POST …/upload` → Discovery → `POST …/apply-update-all` |
+| **`--rollback-all-remotes`** | Discovery → `POST …/versions/rollback-all` |
+
+- **공통**: orchestrator **`-cfg`** 필수; **`-apiprefix`**·**`-maintenance-port`**(기본 8889); Discovery는 명령 **내부 1회**(dest 9999, src 9998, timeout 10s) — **`--discovery` 선행 불필요**; `hosts[]`는 메모리 병합(`BulkPushHostsFromDiscovery`).
+- **코드**: `discoverycli`(`Discover`, `RunDefaultDiscoveryToStdout`, `BulkPushHostsFromDiscovery`); `clirest`(`postBulkNDJSON`, `UploadBundleMaintenance`, bulk API 클라이언트); `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli`.
+- **`--apply-update-all-remotes`**: **`-agent-variant`**, **`-use-bundle-config`**(`--apply-update` 와 동일 의미).
+- **문서**: **docs/CLI.md**(「리모트 일괄 CLI (공통)」), **docs/REST_API.md**, **PRD.md** §4.1.1·§6.6, **README.md**.
+
+## CLI `--apply-update` 환경설정 재사용 (2026-06)
+
+- **`agent --apply-update`**: 기본 **`reuse_previous_config: true`** — 대상 호스트 **current** `agent.local.yml` 재사용(웹 「이전버전의 환경설정 파일 재사용」 체크 기본 on과 동일). **`-use-bundle-config`** 지정 시 번들 config 적용.
+- **문서**: **docs/CLI.md**, **PRD.md** §4.1·§5.5.3, **docs/REST_API.md**, **README.md**.
+
 ## 웹 UI · 일괄 원격 작업 (2026-06)
 
 - **레이아웃**: **「모든 리모트 호스트 일괄 작업」** 섹션은 Discovery 옆이 아니라 **오른쪽 sticky 사이드바**(「업데이트」 패널 아래)에 둔다. 호스트 카드는 가운데 열, 업데이트·일괄 작업은 오른쪽 열.
@@ -28,7 +49,7 @@
 - **빌드**: `make build` — dual binary + **`strip`**, 루트 `./contrabass-moleU`는 **control** 복사(README·PRD §5.5.0).
 - **CLI `--discovery`**: `version=<키> (control|compute)` (웹 UI와 동일).
 - **CLI `--host-info`**: `BUILD_VARIANT` 행.
-- **CLI `--apply-update`**: `-agent-variant` 생략 시 설치 variant 유지; REST JSON 빈 `agent_variant`는 `compute`(PRD §5.5.3).
+- **CLI `--apply-update`**: `-agent-variant` 생략 시 설치 variant 유지; **기본 `reuse_previous_config: true`**(웹과 동일), **`-use-bundle-config`** 시 번들 config; REST JSON 빈 `agent_variant`는 `compute`(PRD §5.5.3).
 - **`update_history.log.lock`**: flock용 0바이트 파일, 업데이트 후 잔존 가능·다음 업데이트 차단 아님.
 - **Ubuntu**: `bin/ubuntu/contrabass-agent-install.sh` / `contrabass-agent-uninstall.sh`.
 
@@ -78,7 +99,7 @@
 
 ## Web UI · update.sh 헬스체크
 
-- **CLI `--apply-update` `-agent-variant`**: 생략 시 웹 UI와 같이 적용 대상의 설치된 `build_variant`를 따름(self: `current` 바이너리 `--version`, remote: `GET …/self`; 미상이면 `compute`).
+- **CLI `--apply-update` `-agent-variant`**: 생략 시 웹 UI와 같이 적용 대상의 설치된 `build_variant`를 따름(self: `current` 바이너리 `--version`, remote: `GET …/self`; 미상이면 `compute`). **`-use-bundle-config`** 로 번들 config 적용; 생략 시 **`reuse_previous_config: true`**.
 
 - **원격 「업데이트 적용」**: `GET …/update-status?ip=`의 `can_apply`가 확정되면 업로드 파일 선택만으로 버튼을 켜지 않음. 적용 성공·실패·host-info 폴링 후 해당 IP에 대해 `update-status`를 재조회해 `AllowSameVersionUpdate: false`일 때 원격이 스테이징과 같으면 적용 버튼·variant 라디오를 비활성·숨김.
 - **Agent variant (웹)**: 로컬·리모트 라디오 기본값 = 설치된 `build_variant`(`data-build-variant`). 리모트 variant는 적용 버튼이 활성일 때만 표시.
@@ -91,8 +112,8 @@
 - **BuildVariant 주입**: `Makefile`이 `go build`를 두 번 수행하여 `-X main.BuildVariant=control`·`compute`를 각각 주입. `contrabass-moleU --version` 출력에 `(control)` / `(compute)` 표시. variant 미지정 빌드는 빈 문자열(정상 동작).
 - **Agent Variant 선택**: 적용(`apply-update`) 시 `agent_variant` 파라미터로 어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지 결정. 기본값 `compute`.
   - **웹 UI**: 로컬 패널·각 리모트 카드에 라디오 버튼. 스테이징에 dual agent가 있을 때만 표시.
-  - **CLI**: `--apply-update -agent-variant=compute|control` (생략 시 설치된 `build_variant` 따름).
-  - **REST**: `POST …/apply-update` JSON/multipart `agent_variant` 필드.
+  - **CLI**: `--apply-update -agent-variant=compute|control` (생략 시 설치된 `build_variant` 따름). **`reuse_previous_config`**: 기본 true; **`-use-bundle-config`** 시 false.
+  - **REST**: `POST …/apply-update` JSON/multipart `agent_variant`·`reuse_previous_config` 필드.
 - **MaterializeCanonicalAgent** (`server/agentvariant.go`): 선택된 variant를 canonical `contrabass-moleU`로 복사. 스테이징 시점에는 canonical 파일 미생성, 적용 시점에만 수행.
 - **AllowSameVersionUpdate**: `agent.local.yml`의 `AllowSameVersionUpdate: true`로 동일 버전 재적용 허용 (기본 false).
 - **pack-agent-tarball.sh**: manifest v2 번들 생성. control·compute·config SHA-256. 기본 출력 파일명은 두 바이너리 **`agent --version`** 키(일치 필수), `build-version.sh` 미사용.

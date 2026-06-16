@@ -207,15 +207,33 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **`--host-info`**: **`-apiprefix`**(선택, 기본 `/maintenance/api/v1`)와 **`<self|원격 IP>`** 한 인자. 대상 에이전트 **Gin(`Server.HTTPPort`, 기본 8888)** 에 **`GET {APIPrefix}/self`** — **대상 HTTP 서비스가 떠 있어야 한다**. 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨 표로 출력(`BUILD_VARIANT` 포함). 구현: `maintenance/hostinfocli` → `maintenance/clirest`. **`-h` 도움말 순서**: `-h` 다음 `-version` 다음 **`--host-info`** …
 - **`--nic-brd`**: §3.1.1과 동일 규칙으로 IPv4 브로드캐스트(brd)를 `NIC이름 : brd주소` 형식으로 출력(확인용) 후 종료.
 - **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만] version=<에이전트 버전 키> (<control|compute>)` 형식으로, **`responded_from_ip`**만 취합하고 **버전·variant**는 DISCOVERY_RESPONSE JSON의 **`version`**·**`build_variant`** 필드(§3.4·§9)를 표시한다(웹 UI와 같이 variant는 버전 뒤 괄호; 버전 없으면 `version=?`, variant 없으면 괄호 생략). Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
-- **`--apply-update`**: **`-apiprefix`**(선택), **`-agent-variant`**(선택), **`<self|원격 IP>`**, **`<bundle.tar.gz>`**. 대상 Gin에 **`POST …/upload`** 후 **`POST …/apply-update`**(JSON). **대상 HTTP 서비스 필수**. 검증·정책·적용은 서버 핸들러가 처리(웹 UI와 동등). `maintenance/applycli` → `maintenance/clirest`. **CLI 도움말·진단 메시지**는 **영문**.
+- **`--apply-update`**: **`-apiprefix`**(선택), **`-agent-variant`**(선택), **`-use-bundle-config`**(선택, 지정 시 번들 config·미지정 시 **current config 재사용**), **`<self|원격 IP>`**, **`<bundle.tar.gz>`**. 대상 Gin에 **`POST …/upload`** 후 **`POST …/apply-update`**(JSON, **`reuse_previous_config` 명시**). **대상 HTTP 서비스 필수**. 검증·정책·적용은 서버 핸들러가 처리(웹 UI와 동등). `maintenance/applycli` → `maintenance/clirest`. **CLI 도움말·진단 메시지**는 **영문**.
 - **`--versions-list`**: **`-apiprefix`**(선택)와 **`<self|원격 IP>`**. **`GET {APIPrefix}/versions/list`** on target Gin. **대상 HTTP 서비스 필수**.
 - **`--versions-switch`**: **`-apiprefix`**(선택), **`<self|원격 IP>`**, **`<버전 키>`**. **`POST {APIPrefix}/versions/switch-current`**. **대상 HTTP 서비스 필수**.
+
+#### 4.1.1 리모트 일괄 CLI (4종)
+
+`contrabass-moleU agent --help` 에서는 **`--versions-*` 다음 맨 아래**에 나열된다. 공통 동작·플래그·종료 코드는 **[docs/CLI.md](docs/CLI.md)** 「리모트 일괄 CLI (공통)」을 본다.
+
+| CLI | 전제 | 동작 요약 |
+|-----|------|-----------|
+| **`--push-config-all-remotes`** | orchestrator **`-cfg`** | Discovery(기본값, 내부) → `POST …/current-config/push-local-all` |
+| **`--restart-all-remotes`** | 동일 | Discovery → `POST …/service-control/restart-all` |
+| **`--apply-update-all-remotes <bundle>`** | 동일 | `POST …/upload` → Discovery → `POST …/apply-update-all` |
+| **`--rollback-all-remotes`** | 동일 | Discovery → `POST …/versions/rollback-all` |
+
+- **HTTP 대상**: 단일 호스트 CLI는 Gin(`Server.HTTPPort`)이지만, 일괄 4종은 **로컬 maintenance**(`Maintenance.MaintenancePort`, 기본 8889) NDJSON API.
+- **Discovery**: 명령마다 **내부 1회**, dest 9999·src 9998·timeout 10s·service `Mole-Discovery`. **`--discovery` 선행 불필요**; discovery 플래그는 일괄 명령에 없음.
+- **`hosts[]`**: 이번 Discovery 응답을 **메모리**에서 병합(CPU UUID·IP). `remoteregistry`/웹 DOM에 의존하지 않음.
+- **`-apiprefix`**·**`-maintenance-port`**: 공통(기본 `/maintenance/api/v1`, `8889`).
+- **`--apply-update-all-remotes`**: **`-agent-variant`**(생략 시 CLI `build_variant`, 없으면 `compute`), **`-use-bundle-config`**(`--apply-update` 와 동일 — 미지정 시 각 원격 **current** config 재사용).
+- **구현**: `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli` → `discoverycli` + `clirest`.
 
 ---
 
 ## 5. API
 
-**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를, **CLI 옵션**(`--discovery`, `--apply-update`, `--versions-list`, `--versions-switch`, `--host-info` 등)은 [`docs/CLI.md`](docs/CLI.md)를 본다.
+**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를, **CLI 옵션**(`--discovery`, `--apply-update`, `--push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes`, `--rollback-all-remotes`, `--versions-list`, `--versions-switch`, `--host-info` 등)은 [`docs/CLI.md`](docs/CLI.md)를 본다.
 
 ### 5.1 공통 응답 형식 (일반 API)
 
@@ -362,8 +380,8 @@ config:
 manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된다. **적용(`apply-update`) 시점**에 `agent_variant` 파라미터(`"control"` 또는 `"compute"`)로 **어떤 바이너리를 `contrabass-moleU`(BinaryName)로 설치할지** 결정한다(`MaterializeCanonicalAgent`). 스테이징에는 항상 두 바이너리 모두 보관되며, variant 선택 후 canonical 바이너리가 복사된다. **명시적으로 비우거나 생략하지 않고 API가 `compute`만 보낼 때**는 `compute`; **CLI·웹에서 생략**하면 적용 대상의 **설치된 `build_variant`** 를 따른다(§352).
 
 - **웹 UI**: 로컬 패널의 variant 라디오는 **스테이징에 dual agent가 있을 때만** 표시하며, 기본 선택은 **실행 중인 `build_variant`**(self·host-info·카드 `data-build-variant`, 미상이면 `compute`). 리모트 카드의 variant 라디오는 **「업데이트 적용」이 활성**이고 dual-agent 스테이징(또는 multipart로 tar.gz만 전송)일 때만 표시한다. `GET …/update-status?ip=` 결과로 `can_apply`가 false이면(`AllowSameVersionUpdate` false로 원격이 이미 스테이징과 동일 버전 등) **적용 버튼·variant 선택을 함께 비활성·숨김**한다 — 업로드 영역에 파일만 선택해 있어도 서버 판단을 덮어쓰지 않는다.
-- **CLI**: `agent --apply-update -agent-variant=compute|control`. **생략 시** 적용 대상의 설치된 `build_variant`를 따른다(self: `DeployBase/current` 바이너리 `--version` 접미사 또는 CLI 바이너리 variant, remote: `GET …/self`의 `build_variant`; 미상이면 `compute`).
-- **REST**: `POST …/apply-update` JSON `agent_variant` 필드 또는 multipart `agent_variant` 필드.
+- **CLI**: `agent --apply-update -agent-variant=compute|control`. **생략 시** 적용 대상의 설치된 `build_variant`를 따른다(self: `DeployBase/current` 바이너리 `--version` 접미사 또는 CLI 바이너리 variant, remote: `GET …/self`의 `build_variant`; 미상이면 `compute`). **환경설정**: **기본** `reuse_previous_config: true`(웹 체크박스 기본 on); **`-use-bundle-config`** 시 번들의 config 적용.
+- **REST**: `POST …/apply-update` JSON `agent_variant`·`reuse_previous_config` 필드 또는 multipart 동명 필드.
 
 ##### 패키징(번들 만들기)
 
@@ -402,7 +420,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 | **로컬 적용** | 스테이징 후 `POST …/apply-update` `{ "version", "ip": "self" }` | 스테이징→`versions/` 복사 후 내장 **`update.sh`** `systemd-run` |
 | **원격 적용(JSON)** | 스테이징·`versions/` 에 번들 또는 풀린 트리 존재 | 이 서버가 원격 **`POST …/upload`**(`upload.bundle.tar.gz` 우선) 후 원격 **`apply-update`(self)** 호출 |
 | **원격 적용(multipart)** | `POST …/apply-update` 필드 **`ip`** + **`bundle`** | 로컬 스테이징 없이 원격만 업로드·적용 |
-| **CLI** | `contrabass-moleU agent --apply-update [-apiprefix=…] [-agent-variant=…] <self\|ip> <bundle.tar.gz>` | 대상 **Gin**에 `POST …/upload` + `POST …/apply-update` (`clirest`) |
+| **CLI** | `contrabass-moleU agent --apply-update [-apiprefix=…] [-agent-variant=…] [-use-bundle-config] <self\|ip> <bundle.tar.gz>` | 대상 **Gin**에 `POST …/upload` + `POST …/apply-update` (`clirest`); 기본 **`reuse_previous_config: true`**, `-use-bundle-config` 시 번들 config |
 
 - **업데이트 가능 여부**: 업로드·적용 전 **`StagingUpdateAvailable`**(현재 `current` 대비 스테이징 버전 키 비교, §5.5.1)을 만족할 때만 진행한다. `AllowSameVersionUpdate` 설정이 `true`이면 동일 버전도 적용 가능.
 - **variant 선택**: v2 번들에서 `agent_variant`로 canonical name으로 설치할 바이너리를 고른다. **CLI `--apply-update`에서 `-agent-variant` 생략** 시 설치된 `build_variant`를 따른다(§352). REST JSON에서 필드를 **비우면** 서버는 `compute`로 처리한다(웹 UI는 카드의 설치 variant를 보냄).
@@ -418,7 +436,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 | `maintenance/server/applylocal.go` | `ApplyUpdateSelfFromBundleExtract` — CLI/서버 로컬 적용 |
 | `maintenance/appmeta/agentvariant.go` | `ParseAgentVariant`, variant 상수·basename 매핑 |
 | `maintenance/versionsapi/staging.go` | `StagingHasDualAgents`, `DirHasStagedAgents` |
-| `maintenance/applycli/applycli.go` | CLI `--apply-update` (`-agent-variant` 플래그) |
+| `maintenance/applycli/applycli.go` | CLI `--apply-update` (`-agent-variant`, `-use-bundle-config`) |
 | `maintenance/scripts/pack-agent-tarball.sh` | 릴리스 번들 빌드 (manifest v2) |
 | `bin/ubuntu/contrabass-agent-install.sh` | **최초 설치**(greenfield): manifest v2 tar.gz → `versions/`·`current`·systemd |
 | `bin/ubuntu/contrabass-agent-uninstall.sh` | **제거**: `contrabass-mole.service` 중지·비활성·유닛 삭제, `{DeployBase}`·로그 디렉터리 삭제 |
@@ -506,7 +524,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **업로드 삭제** `POST .../upload/remove` — Body `{ "version": "<버전 키>" }`. **스테이징** 만 삭제; `versions/` 는 유지.
 - **적용 (로컬)** `POST .../apply-update`, Body `{ "version": "<버전 키>", "ip": "self" 또는 생략, "agent_variant": "control"|"compute" (선택), "reuse_previous_config": true|false (선택) }`  
   - 소스: 스테이징 우선, 없으면 `versions/`.  
-  - 스테이징에만 있으면 **`staging/<버전 키>/` 전체를 `versions/<버전 키>/`로 복사**한 뒤 **`upload.bundle.tar.gz`만 제거**하고 `update.sh` 경로로 진행한다(§5.5.1). v2 dual-agent 트리는 **`MaterializeCanonicalAgent`** 로 `agent_variant`(비면 설치 `build_variant`, 서버 ldflags 폴백)에 맞게 `contrabass-moleU`를 준비한다. **`reuse_previous_config`가 true**이면 §5.5.1의 **적용 전 `current` config 복사**를 수행한다. **생략·false**이면 번들(스테이징)의 config가 그대로 `versions/<키>/`에 남는다.  
+  - 스테이징에만 있으면 **`staging/<버전 키>/` 전체를 `versions/<버전 키>/`로 복사**한 뒤 **`upload.bundle.tar.gz`만 제거**하고 `update.sh` 경로로 진행한다(§5.5.1). v2 dual-agent 트리는 **`MaterializeCanonicalAgent`** 로 `agent_variant`(비면 설치 `build_variant`, 서버 ldflags 폴백)에 맞게 `contrabass-moleU`를 준비한다. **`reuse_previous_config`가 true**이면 §5.5.1의 **적용 전 `current` config 복사**를 수행한다. JSON에서 필드 **생략** 시 서버는 **false**; **웹 UI·CLI**는 기본 동작을 위해 **`true`를 명시**한다(`-use-bundle-config` 시 CLI는 `false`).
   - **`{DeployBase}/current` 존재 필수**(심볼릭 링크 또는 그에 준하는 배포). 없으면 적용 불가.  
   - 내장 `update.sh`·`rollback.sh` 내용을 **`{DeployBase}/current/update.sh`**, `.../rollback.sh` 로 쓴 뒤(실제 파일은 `current` 가 가리키는 `versions/<현재 버전 키>/` 아래),  
     `systemd-run --unit=contrabass-mole-update --property=RemainAfterExit=yes /bin/bash <그 경로>/update.sh <적용할 버전 키>`  
@@ -615,7 +633,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
   - **업로드**: `maintenance/scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리에 대해 **`versionKeyFromAgentBinary`**(§5.5.3·§12)로 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + 버전 한 줄, §12)·**agent.local.yml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
   - **config 변경**: 번들을 만들기 전에 로컬에서 `agent.local.yml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
-- **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, **「업데이트 적용」**(`POST /api/v1/apply-update`, Body `{ "version": "<버전 키>", "agent_variant": "compute"|"control", "reuse_previous_config": true|false }`). **로컬 스테이징에 번들이 있을 때만** 「업데이트 적용」 버튼 아래 **「이전버전의 환경설정 파일 재사용」** 체크박스를 표시하며 **기본값은 체크(재사용)** 이다. 스테이징이 비면 체크박스를 숨긴다. 체크 해제 후 적용 시 **확인 대화상자**로 번들 config 사용 여부를 묻고, **취소** 시 `alert`로 재사용 체크 후 다시 적용하라고 안내한다(적용은 진행하지 않음). 활성 시 **초록색** 버튼 스타일. 성공 시 에이전트 재시작으로 HTTP가 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 이후 **두 갱신 루프를 병렬**로 돌린다(§6.3.1). (1) **호스트**: 약 **4초 후**부터 `GET /api/v1/self`를 **2초 간격·최대 15회** — 성공 시 카드 호스트 정보·config·versions·서비스 상태·update-status 현행화. (2) **업데이트 기록**: §6.3.1. `/self`가 먼저 돌아와도 **기록 폴링은 success/failed까지 유지**한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다.
+- **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, **「업데이트 적용」**(`POST /api/v1/apply-update`, Body `{ "version": "<버전 키>", "agent_variant": "compute"|"control", "reuse_previous_config": true|false }`). **로컬 스테이징에 번들이 있을 때만** 「업데이트 적용」 버튼 아래 **「이전버전의 환경설정 파일 재사용」** 체크박스를 표시하며 **기본값은 체크(재사용)** 이다. **`agent --apply-update`** 도 동일 기본(`-use-bundle-config`로 번들 config). 스테이징이 비면 체크박스를 숨긴다. 체크 해제 후 적용 시 **확인 대화상자**로 번들 config 사용 여부를 묻고, **취소** 시 `alert`로 재사용 체크 후 다시 적용하라고 안내한다(적용은 진행하지 않음). 활성 시 **초록색** 버튼 스타일. 성공 시 에이전트 재시작으로 HTTP가 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 이후 **두 갱신 루프를 병렬**로 돌린다(§6.3.1). (1) **호스트**: 약 **4초 후**부터 `GET /api/v1/self`를 **2초 간격·최대 15회** — 성공 시 카드 호스트 정보·config·versions·서비스 상태·update-status 현행화. (2) **업데이트 기록**: §6.3.1. `/self`가 먼저 돌아와도 **기록 폴링은 success/failed까지 유지**한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다.
 - **적용 (원격)**  
   - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 브라우저는 **`GET …/update-status?ip=<해당 호스트 IP>`** 를 호출해 받은 **`can_apply`**·**`apply_version`**·**`remote_current_version`**(및 스테이징 목록)을 사용한다 — **로컬 스테이징**과 **그 호스트의 현재 버전**(원격 `GET …/self`)에 대해 서버가 **`StagingUpdateAvailable`**·**`AllowSameVersionUpdate`**(§5.5.4·§7.1)로 계산한 결과와 일치시킨다. **`can_apply`가 확정된 응답(`ok`)이 있으면**, 업로드 영역의 **파일 선택만으로는** 버튼을 켜지 않는다. `can_apply`가 false이고 원격이 스테이징과 동일 버전이면 툴팁에 동일 버전 재적용 안내를 표시한다. 단순히 **스테이징 최상위 버전 문자열과 카드 `data-host-version`만 비교**하지 않는다. 원격 비교 조회가 진행 중이면 버튼·variant를 비활성·숨김·짧은 안내로 둔다. 카드에는 `data-host-version`·`data-build-variant`에 버전 키·variant를 저장한다.  
   - **버튼 스타일**: 활성화 시 **초록색** 계열(로컬 적용 버튼과 동일)로 표시하여 적용 가능 상태를 직관적으로 구분한다.  
@@ -665,6 +683,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   2. **「리모트 호스트 일괄 재시작」** — `POST …/service-control/restart-all`  
   3. **「리모트 호스트에 일괄 업데이트 적용」** — `POST …/apply-update-all`  
   4. **「리모트 호스트 일괄 롤백」** — `POST …/versions/rollback-all`  
+- **CLI 대응**(§4.1.1): `agent --push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes <bundle>`, `--rollback-all-remotes` — 웹과 동일 API, Discovery는 명령 내부(기본값).
 - **대상 호스트 목록**: 화면 **원격 호스트 카드**(`.host-card`, self 제외)에서 **카드 1장 = 물리 호스트 1대**로 수집한다(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). 요청 body `{ hosts: [...] }` 로 전송(레지스트리만 의존하지 않음).
 - **버튼 활성 조건**  
   - **설정 복사·재시작**: 원격 카드 **≥1** (진행 중 해당 버튼은 `data-busy`로 비활성).  
@@ -802,11 +821,11 @@ Maintenance:
 - [ ] 발견된 호스트 카드: **로컬과 동일 레이아웃**(오른쪽 컬럼 + 하단 상태 행). 시작·중지 버튼 비노출; 상태 새로고침·서비스 재시작·업데이트 적용. 카드 열릴 때 업데이트 기록·config·버전 목록 자동 로드
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`). 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 에이전트 API 호출**(SSH 키 불필요)
 - [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·**current-config/push-local**·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
-- [ ] **일괄 원격 작업**: **push-local-all**·**restart-all**·**apply-update-all**·**rollback-all** NDJSON(`hosts` body = UI 카드 1장=1대); **remoteregistry**·**discovered-remotes**; `update_history.log` 요약 1줄; **`recent_rollback`** 이 bulk `failed=N`에 반응하지 않음; 롤백-all은 **current=previous** 시 skipped
+- [ ] **일괄 원격 작업**: **push-local-all**·**restart-all**·**apply-update-all**·**rollback-all** NDJSON(`hosts` body = UI 카드 1장=1대); **CLI 4종**(§4.1.1); **remoteregistry**·**discovered-remotes**; `update_history.log` 요약 1줄; **`recent_rollback`** 이 bulk `failed=N`에 반응하지 않음; 롤백-all은 **current=previous** 시 skipped
 - [ ] **일괄 UI(§6.6)**: 오른쪽 사이드바 4버튼; 상태 줄 **클릭 순 누적**·짧은 접두·「결과 보기」+**×**; apply-all **호스트별 can_apply**·`(N/M)`·확인 모달(로컬 재사용 체크); rollback-all **versions/list** 기반 버튼 비활성; Discovery **미응답**·헬스 dead 가드
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
 - [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
-- [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; **`--host-info` / `--apply-update` / `--versions-list` / `--versions-switch`** 는 **`-apiprefix`**(기본 `/maintenance/api/v1`)·대상 Gin REST·**서비스 필수**(`clirest`); `agent --nic-brd`; **`agent --discovery`**(UDP만); 번들·ELF 검증은 서버 `POST /upload` 시 **`--version` → `agent --version`** 폴백
+- [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; **`--host-info` / `--apply-update` / `--versions-list` / `--versions-switch`** 는 **`-apiprefix`**(기본 `/maintenance/api/v1`)·대상 Gin REST·**서비스 필수**(`clirest`); **`--apply-update -use-bundle-config`**(미지정 시 `reuse_previous_config: true`); `agent --nic-brd`; **`agent --discovery`**(UDP만); 번들·ELF 검증은 서버 `POST /upload` 시 **`--version` → `agent --version`** 폴백
 - [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] **최초 설치**: `bin/ubuntu/contrabass-agent-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
 - [ ] **완전 제거**: `bin/ubuntu/contrabass-agent-uninstall.sh` — root·인자 없음·service stop/disable·유닛 삭제·`DeployBase`·`/var/log/contrabass/mole` 삭제

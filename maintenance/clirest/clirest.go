@@ -258,11 +258,12 @@ func UploadBundle(client *http.Client, target, apiPrefix, bundlePath string) (st
 	return version, nil
 }
 
-// ApplyUpdateJSON posts POST {apiBase}/apply-update with version and optional agent_variant.
-func ApplyUpdateJSON(client *http.Client, target, apiPrefix, version, agentVariant string) (string, error) {
-	body := map[string]string{
-		"version": version,
-		"ip":      selfTarget,
+// ApplyUpdateJSON posts POST {apiBase}/apply-update with version, agent_variant, and reuse_previous_config.
+func ApplyUpdateJSON(client *http.Client, target, apiPrefix, version, agentVariant string, reusePreviousConfig bool) (string, error) {
+	body := map[string]interface{}{
+		"version":               version,
+		"ip":                    selfTarget,
+		"reuse_previous_config": reusePreviousConfig,
 	}
 	if strings.TrimSpace(agentVariant) != "" {
 		body["agent_variant"] = strings.TrimSpace(agentVariant)

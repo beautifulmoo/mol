@@ -19,10 +19,14 @@ import (
 	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/discovery"
 	"contrabass-agent/maintenance/applycli"
+	"contrabass-agent/maintenance/applyupdateallclicli"
+	"contrabass-agent/maintenance/configpushclicli"
 	"contrabass-agent/maintenance/discoverycli"
 	"contrabass-agent/maintenance/hostinfocli"
 	"contrabass-agent/maintenance/hostinfo"
 	"contrabass-agent/maintenance/ginproxy"
+	"contrabass-agent/maintenance/restartallclicli"
+	"contrabass-agent/maintenance/rollbackallclicli"
 	"contrabass-agent/maintenance/server"
 	"contrabass-agent/maintenance/versionscli"
 
@@ -46,6 +50,10 @@ Options (after "agent"):
   --apply-update [flags]   Upload bundle and apply via REST API (<bin> agent --apply-update -h)
   --versions-list [flags]  List installed versions via REST (<bin> agent --versions-list -h)
   --versions-switch [flags] Switch current version via REST (<bin> agent --versions-switch -h)
+  --push-config-all-remotes [flags]  UDP discovery then push local config to all remotes (<bin> agent --push-config-all-remotes -h)
+  --restart-all-remotes [flags]      UDP discovery then restart all remotes (<bin> agent --restart-all-remotes -h)
+  --apply-update-all-remotes [flags] Upload bundle, UDP discovery, apply to all remotes (<bin> agent --apply-update-all-remotes -h)
+  --rollback-all-remotes [flags]     UDP discovery then rollback all remotes (<bin> agent --rollback-all-remotes -h)
 
 `
 
@@ -368,6 +376,14 @@ func Run(buildVersionKey string, buildVariantArg string, args []string) int {
 			return discoverycli.Run(args[2:])
 		case "--apply-update":
 			return applycli.Run(buildVersionKey, buildVariant, args[2:])
+		case "--push-config-all-remotes":
+			return configpushclicli.Run(args[2:])
+		case "--restart-all-remotes":
+			return restartallclicli.Run(args[2:])
+		case "--apply-update-all-remotes":
+			return applyupdateallclicli.Run(buildVariant, args[2:])
+		case "--rollback-all-remotes":
+			return rollbackallclicli.Run(args[2:])
 		case "--versions-list":
 			return versionscli.RunList(args[2:])
 		case "--versions-switch":

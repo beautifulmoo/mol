@@ -437,6 +437,8 @@ h3 {
   flex: 1 1 12rem;
   min-width: 0;
   margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
 }
 .bulk-remote-status-actions {
   display: flex;
@@ -470,9 +472,10 @@ h3 {
   padding: 0.75rem;
   max-height: min(60vh, 28rem);
   overflow: auto;
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   line-height: 1.45;
   white-space: pre-wrap;
+  font-family: ui-monospace, monospace;
   background: #18181b;
   border: 1px solid #3f3f46;
   border-radius: 6px;

@@ -14,7 +14,7 @@ import (
 
 // Run parses flags and runs apply-update CLI.
 //
-//	<bin> agent --apply-update [-apiprefix <path>] [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>
+//	<bin> agent --apply-update [-apiprefix <path>] [-agent-variant=control|compute] [-use-bundle-config] <self|remote-ip> <bundle.tar.gz>
 func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	_ = buildVersionKey
 
@@ -22,8 +22,9 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	fs.SetOutput(os.Stderr)
 	apiPrefixFlag := fs.String("apiprefix", "", fmt.Sprintf("API path prefix (default %s)", clirest.DefaultAPIPrefix))
 	agentVariantFlag := fs.String("agent-variant", "", "control or compute; if omitted, match installed build_variant on target (compute if unknown)")
+	useBundleConfigFlag := fs.Bool("use-bundle-config", false, "apply config from the bundle instead of reusing current agent.local.yml")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update [-apiprefix=<path>] [-agent-variant=control|compute] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update [-apiprefix=<path>] [-agent-variant=control|compute] [-use-bundle-config] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST {APIPrefix}/upload then POST {APIPrefix}/apply-update on the target agent (Gin port %d).\n", clirest.DefaultHTTPPort)
 		fmt.Fprintf(os.Stderr, "  The target agent HTTP service must be running.\n\n")
 		fmt.Fprintf(os.Stderr, "  Optional flags may be written as -name=value or -name value (Go flag package).\n\n")
@@ -32,6 +33,9 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 		fmt.Fprintf(os.Stderr, "  -agent-variant=control|compute\n")
 		fmt.Fprintf(os.Stderr, "        which bundle binary becomes %s at apply; if omitted, match installed\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "        build_variant on target (compute if unknown)\n")
+		fmt.Fprintf(os.Stderr, "  -use-bundle-config\n")
+		fmt.Fprintf(os.Stderr, "        use agent.local.yml from the bundle; default is to reuse the target's\n")
+		fmt.Fprintf(os.Stderr, "        current config (same as the web UI reuse checkbox, on by default)\n")
 	}
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -92,13 +96,14 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	}
 
 	cur := strings.TrimSpace(selfInfo.Version)
+	reusePreviousConfig := !*useBundleConfigFlag
 	if strings.EqualFold(target, "self") {
-		fmt.Printf("Applying bundle %s locally (current %s, variant %s)\n", versionKey, cur, variant)
+		fmt.Printf("Applying bundle %s locally (current %s, variant %s, reuse_previous_config=%v)\n", versionKey, cur, variant, reusePreviousConfig)
 	} else {
-		fmt.Printf("Applying bundle %s to remote %s (current %s, variant %s)\n", versionKey, target, cur, variant)
+		fmt.Printf("Applying bundle %s to remote %s (current %s, variant %s, reuse_previous_config=%v)\n", versionKey, target, cur, variant, reusePreviousConfig)
 	}
 
-	msg, err := clirest.ApplyUpdateJSON(client, target, apiPrefix, versionKey, variant)
+	msg, err := clirest.ApplyUpdateJSON(client, target, apiPrefix, versionKey, variant, reusePreviousConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: apply: %v\n", appmeta.BinaryName, err)
 		return 1

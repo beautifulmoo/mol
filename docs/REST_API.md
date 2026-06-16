@@ -14,6 +14,22 @@
 | **JSON 응답(대부분의 API)** | `Content-Type: application/json`. 본문 형식: `{"status":"success"\|"fail","data":<임의>}` (`APIResponse`). 일부 오류는 HTTP 4xx와 함께 동일 형식. **`data`가 문자열인 경우(적용·전환·삭제 안내 등)는 영문** — CLI가 원격 응답을 그대로 출력하고, 웹 UI도 동일 API를 사용한다. |
 | **원격 프록시** | `ip` 쿼리/바디로 원격 호스트를 지정하면, 서버는 **`Server.HTTPPort`(Gin 등 외부 포트)** 로 해당 에이전트에 HTTP 요청을 보내 응답을 그대로 전달한다(`remoteBaseURL`). `Server.HTTPPort`가 유효하지 않으면 원격 호출 실패. |
 | **텍스트** | `GET /version`만 `text/plain` (JSON 아님). |
+| **일괄 원격 NDJSON** | `push-local-all`·`restart-all`·`apply-update-all`·`rollback-all` — `Content-Type: application/x-ndjson`. 호스트별 `progress` 스트림. **CLI** 대응은 아래 §「일괄 원격 API·CLI」·[CLI.md](./CLI.md). |
+
+---
+
+## 일괄 원격 API·CLI
+
+오케스트레이터 **maintenance HTTP**(`Maintenance.MaintenancePort`, 기본 8889)에서 호출한다. Body의 **`hosts[]`** 는 화면 카드 1장 = 호스트 1대(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). body 생략 시 서버 **remoteregistry** fallback(웹·CLI는 Discovery로 만든 `hosts` 전달 권장).
+
+| API (`POST {API}/…`) | CLI | 완료 시 `update_history.log` 요약 |
+|----------------------|-----|-----------------------------------|
+| `current-config/push-local-all` | `agent --push-config-all-remotes` | `config push-all finished succeeded=N failed=M` |
+| `service-control/restart-all` | `agent --restart-all-remotes` | `service restart-all finished succeeded=N failed=M` |
+| `apply-update-all` | `agent --apply-update-all-remotes <bundle.tar.gz>` | `apply-update-all finished succeeded=N failed=M skipped=K` |
+| `versions/rollback-all` | `agent --rollback-all-remotes` | `rollback-all finished succeeded=N failed=M skipped=K` |
+
+CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호출한다(`--discovery` 선행 불필요). 공통 플래그: `-apiprefix`, `-maintenance-port`. 상세는 **CLI.md** 「리모트 일괄 CLI (공통)」.
 
 ---
 
@@ -57,7 +73,7 @@
 |--------|------|------|------|
 | **GET** | `{API}/service-status` | **Query**: `ip` (선택). 없음/`self` → 로컬 `systemctl status`. 지정 시 원격 `GET {API}/service-status`(Gin 포트). | **200** `success`, `data`: `{ "output": "<systemctl 문자열>" }` 형 또는 원격과 동일 구조. 실패 시 `fail`. |
 | **POST** | `{API}/service-control` | **Body JSON**: `{ "ip": "" \| "self" \| "<호스트IP>", "action": "start" \| "stop" \| "restart" }` | **200** `success` / `fail`. 원격 `restart`만 HTTP로, `start`/`stop`은 SSH. |
-| **POST** | `{API}/service-control/restart-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). 호스트별로 `POST …/service-control` restart 프록시 후 **2초 대기·최대 45초** 동안 `GET …/health` 또는 `GET …/service-status`의 `Active: active (running)` 으로 재기동 확인. 연결 끊김(connection reset·EOF 등)은 재시작 진행 중으로 간주. 완료 시 `update_history.log`에 **요약 1줄**(`service restart-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**. progress 필드: `verify_ok`, `verify_detail`, `connect_ip`, `tried_ips`. | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
+| **POST** | `{API}/service-control/restart-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). 호스트별로 `POST …/service-control` restart 프록시 후 **2초 대기·최대 45초** 동안 `GET …/health` 또는 `GET …/service-status`의 `Active: active (running)` 으로 재기동 확인. 연결 끊김(connection reset·EOF 등)은 재시작 진행 중으로 간주. 완료 시 `update_history.log`에 **요약 1줄**(`service restart-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**. progress 필드: `verify_ok`, `verify_detail`, `connect_ip`, `tried_ips`. **CLI**: `agent --restart-all-remotes` — UDP Discovery(기본값)로 `hosts` 구성 후 동일 API 호출(`docs/CLI.md`). | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
 
 ---
 
@@ -68,8 +84,8 @@
 | **POST** | `{API}/upload` | **multipart/form-data**: 필드 **`bundle`** — **tar.gz** 배포 번들(`contrabass.manifest.yaml` + 에이전트 + config 등, `maintenance/scripts/pack-agent-tarball.sh` 참고). 본문 상한은 설정 `Maintenance.MaxUploadBytes`(기본 64MiB). | **200** `success`, `data`: `{ "version": "<버전 키>" }`. 검증 실패 **400** `fail`. |
 | **POST** | `{API}/upload/remove` | **Body JSON**: `{ "version": "<버전 키>" }` — 스테이징 디렉터리만 삭제. | **200** `success` / `fail`. |
 | **GET** | `{API}/update-status` | **Query**: `ip` (선택). 비어 있거나 `self`면 **이 서버**의 `current`와 로컬 스테이징을 비교. **원격 IP**면 해당 호스트 `GET .../self`의 `version`과 **이 서버의 로컬 스테이징**을 비교해 원격에 적용 가능한지 판단(`StagingUpdateAvailable`, 설정 `AllowSameVersionUpdate` 반영). | **200** `success`, `data`: 로컬만일 때 `current_version`, 스테이징 `staging_versions`, `can_apply`, `apply_version`, `remove_version`, `update_in_progress`, `staging_dual_agents`. 원격 `ip`일 때 추가로 `remote_ip`, `remote_current_version`, `can_apply`/`apply_version`은 **원격 기준**. 웹 UI는 원격 카드마다 이 API를 호출해 적용 버튼·variant 표시를 맞춘다(적용 후 해당 `ip` 재조회). 원격 조회 실패 시 `fail`. |
-| **POST** | `{API}/apply-update-all` | **Body JSON**(선택): `{ "hosts": […], "version": "<키>" (생략 시 로컬 스테이징 최신), "agent_variant": "control"\|"compute", "reuse_previous_config": true\|false }` — 호스트별로 원격 `GET …/self` 버전 조회 후 `StagingUpdateAvailable`이면 `apply-update`와 동일 경로(업로드+적용). 미충족 호스트는 **`skipped`**. 완료 시 `update_history.log`에 `apply-update-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. 웹 UI는 성공 호스트 카드를 적용 후 자동 갱신; 버튼 활성은 **호스트별** `GET …/update-status?ip=` 의 `can_apply`(로컬 `can_apply` 아님). | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
-| **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>", "agent_variant":"control"\|"compute" (선택), "reuse_previous_config":true\|false (선택)}` — 로컬이면 스테이징/versions에서 적용·`MaterializeCanonicalAgent`·(재사용 시 **적용 전 `current` config** 복사)·`systemd-run` 비동기, 원격이면 **`reuse_previous_config`가 true**일 때 원격 `GET …/current-config`로 config를 주입한 뒤 업로드 API·apply(self). JSON에서 **`agent_variant` 생략·빈 문자열**이면 서버는 **`compute`** 로 처리(CLI `--apply-update` 생략 시는 설치 `build_variant` 따름). **`reuse_previous_config` 생략**이면 false. (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz), **`agent_variant`**(선택), **`reuse_previous_config`**(선택, 기본 true) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
+| **POST** | `{API}/apply-update-all` | **Body JSON**(선택): `{ "hosts": […], "version": "<키>" (생략 시 로컬 스테이징 최신), "agent_variant": "control"\|"compute", "reuse_previous_config": true\|false }` — 호스트별로 원격 `GET …/self` 버전 조회 후 `StagingUpdateAvailable`이면 `apply-update`와 동일 경로(업로드+적용). 미충족 호스트는 **`skipped`**. 완료 시 `update_history.log`에 `apply-update-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. **CLI**: `agent --apply-update-all-remotes <bundle.tar.gz>` — 로컬 `POST …/upload` 후 Discovery(기본값)로 `hosts` 구성·동일 API(`docs/CLI.md`). | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
+| **POST** | `{API}/apply-update` | **두 가지 모드**: (1) **JSON** `{"version":"<키>","ip":""\|"self"\|"<IP>", "agent_variant":"control"\|"compute" (선택), "reuse_previous_config":true\|false (선택)}` — 로컬이면 스테이징/versions에서 적용·`MaterializeCanonicalAgent`·(재사용 시 **적용 전 `current` config** 복사)·`systemd-run` 비동기, 원격이면 **`reuse_previous_config`가 true**일 때 원격 `GET …/current-config`로 config를 주입한 뒤 업로드 API·apply(self). JSON에서 **`agent_variant` 생략·빈 문자열**이면 서버는 **`compute`** 로 처리(CLI `--apply-update` 생략 시는 설치 `build_variant` 따름). **`reuse_previous_config` 생략**이면 서버는 **false**; **웹 UI·CLI**(`agent --apply-update`, 기본 재사용·`-use-bundle-config` 시 false)는 의도를 **명시**한다. (2) **multipart/form-data** `ip`(필수, 원격), **`bundle`**(tar.gz), **`agent_variant`**(선택), **`reuse_previous_config`**(선택, 기본 true) — 로컬 스테이징 없이 원격에만 번들 업로드+적용. | **200** 성공 메시지 문자열 또는 `fail`. |
 
 적용·롤백 기록은 `{DeployBase}/update_history.log`(append, API는 **tail 10**). 동시 기록은 **`flock`**(`update_history.log.lock`, 0바이트로 잔존 가능, 다음 적용 차단 아님).
 
@@ -85,13 +101,13 @@
 | **GET** | `{API}/current-config` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "content": "<yaml 문자열>" }`. |
 | **POST** | `{API}/current-config` | **Body JSON**: `{ "content": "<yaml>", "ip": "<선택>", "backup_before_write": true\|false (선택) }` — `ip`로 원격 저장 프록시(프록시 시 원격에 **`backup_before_write`: true** 전달). 로컬 직접 저장 시 기존 파일은 **`backup_before_write`: true**일 때만 `current/` 아래 **`agent.local.yml.backup`** 으로 백업 후 덮어쓴다. | **200** `success`, `data`: null(로컬 저장 성공 시). 검증 실패 `fail`. |
 | **POST** | `{API}/current-config/push-local` | **Body JSON**: `{ "ip": "<원격 IP>" }` — **이 서버(로컬) `current`의 `agent.local.yml`** 내용을 읽어 해당 원격의 `POST …/current-config`로 전송(`backup_before_write`: true). | **200** `success`, `data`: `{ "message": "…" }` / `fail`. |
-| **POST** | `{API}/current-config/push-local-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). `ips`는 해당 카드의 접속 후보 IP(첫 성공 시 종료). 레거시 `{ "ips":[] }` 도 지원. 완료 시 로컬 `update_history.log`에 **요약 1줄**만 append(`config push-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**(호스트별 progress는 스트림·UI 「결과 보기」). | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
+| **POST** | `{API}/current-config/push-local-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). `ips`는 해당 카드의 접속 후보 IP(첫 성공 시 종료). 레거시 `{ "ips":[] }` 도 지원. body 생략 시 **remoteregistry**·필요 시 서버 측 Discovery fallback. 완료 시 로컬 `update_history.log`에 **요약 1줄**만 append(`config push-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**(호스트별 progress는 스트림·UI 「결과 보기」). **CLI**: `agent --push-config-all-remotes` — UDP Discovery(기본값)로 `hosts` 구성 후 동일 API 호출(`docs/CLI.md`). | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
 | **GET** | `{API}/discovered-remotes` | 없음. | **200** `success`, `data`: `{ "remotes": [ { "primary_ip", "hostname", "health_dead", … } ] }` — 서버 메모리 레지스트리 스냅샷(헬스 실패 포함). |
 | **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ] }`. |
 | **POST** | `{API}/versions/remove` | **Body JSON**: `{ "versions": ["<키>",...], "ip": "<선택>" }` | **200** `success`, `data`: 결과 메시지 문자열(삭제·제외 요약). current/previous 가리키는 버전은 삭제 안 함. |
 | **POST** | `{API}/versions/switch-current` | **Body JSON**: `{ "version": "<버전 키>", "ip": "<선택>" }` — 로컬에서 `versions/`(또는 스테이징)에 있는 버전을 **current**로 두기 위해 내장 `update.sh`를 `systemd-run`으로 실행(`apply-update` 로컬과 동일). `ip`가 원격이면 해당 호스트 API로 프록시. | **200** `success`, `data`: 안내 문자열 / `fail`. |
 | **POST** | `{API}/versions/rollback` | **Body JSON**(선택): `{ "ip": "<선택>" }` — 로컬(또는 원격 프록시)에서 embedded **`rollback.sh`** 실행: `previous` → `current` 심링크 전환·서비스 재시작. `previous` 없으면 `fail`. | **200** `success` / `fail`. |
-| **POST** | `{API}/versions/rollback-all` | **Body JSON**(선택): `{ "hosts": […] }` — 호스트별 원격 `versions/list`로 `is_current`·`is_previous` 버전 키를 비교. **`previous` 없음** 또는 **`current`·`previous` 동일**(이미 롤백됨)이면 **`skipped`**. 그 외 `POST …/versions/rollback` 프록시(embedded `rollback.sh`: `previous`→`current`·서비스 재시작). 완료 시 `rollback-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. 웹 UI는 호스트별 `GET …/versions/list?ip=` 로 롤백 가능 여부를 캐시해 버튼 활성을 제어한다. | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
+| **POST** | `{API}/versions/rollback-all` | **Body JSON**(선택): `{ "hosts": […] }` — 호스트별 원격 `versions/list`로 `is_current`·`is_previous` 버전 키를 비교. **`previous` 없음** 또는 **`current`·`previous` 동일**(이미 롤백됨)이면 **`skipped`**. 그 외 `POST …/versions/rollback` 프록시(embedded `rollback.sh`: `previous`→`current`·서비스 재시작). 완료 시 `rollback-all finished succeeded=N failed=M skipped=K`. 응답 **`application/x-ndjson`**. **CLI**: `agent --rollback-all-remotes` — UDP Discovery(기본값)로 `hosts` 구성 후 동일 API 호출(`docs/CLI.md`). | **200** NDJSON / 사전 검증 실패 시 JSON `fail`. |
 
 ---
 
@@ -138,6 +154,8 @@ curl -sS -N -X POST "${BASE}${API}/service-control/restart-all" \
 
 Body 생략 시 서버 **remoteregistry** fallback. 완료 시 `update_history.log`에 `service restart-all finished succeeded=N failed=M` 한 줄.
 
+**CLI**: `contrabass-moleU agent --restart-all-remotes`.
+
 ---
 
 ### 업로드 `POST .../upload` (multipart)
@@ -180,30 +198,35 @@ curl -sS -X POST "${BASE}${API}/upload/remove" \
 
 ### 업데이트 적용 `POST .../apply-update`
 
-**로컬** — 이미 스테이징 또는 `versions/`에 있는 버전 키를 적용(`ip` 생략 또는 `self`):
+**로컬** — 이미 스테이징 또는 `versions/`에 있는 버전 키를 적용(`ip` 생략 또는 `self`). 기본은 **current config 재사용**(`reuse_previous_config: true`, 웹·CLI와 동일):
 
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -H 'Content-Type: application/json' \
-  -d '{"version":"0.4.4-10","ip":"self","agent_variant":"control"}'
+  -d '{"version":"0.4.4-10","ip":"self","agent_variant":"control","reuse_previous_config":true}'
 ```
+
+번들에 포함된 config를 쓰려면 `reuse_previous_config`를 `false`로 보낸다. JSON에서 필드를 **생략**하면 서버는 **false**로 처리한다.
 
 **원격** — JSON만: 로컬에 해당 버전 디렉터리가 있어야 하며, 서버가 원격으로 업로드·적용 API를 호출한다.
 
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -H 'Content-Type: application/json' \
-  -d '{"version":"0.4.4-10","ip":"192.168.0.42"}'
+  -d '{"version":"0.4.4-10","ip":"192.168.0.42","reuse_previous_config":true}'
 ```
 
-**원격** — tar.gz 번들을 이 서버에서 골라 원격에 올리며 적용(multipart, `ip` 필수):
+**원격** — tar.gz 번들을 이 서버에서 골라 원격에 올리며 적용(multipart, `ip` 필수). multipart는 `reuse_previous_config` 생략 시 **true**:
 
 ```bash
 curl -sS -X POST "${BASE}${API}/apply-update" \
   -F 'ip=192.168.0.42' \
   -F 'agent_variant=compute' \
+  -F 'reuse_previous_config=true' \
   -F 'bundle=@/path/to/contrabass-agent-0.4.4.tar.gz'
 ```
+
+**CLI** (`docs/CLI.md`): `agent --apply-update`는 기본 재사용; **`-use-bundle-config`** 로 번들 config.
 
 ---
 
@@ -263,6 +286,8 @@ curl -sS -N -X POST "${BASE}${API}/current-config/push-local-all" \
 
 완료 시 `update_history.log`에 `config push-all finished succeeded=N failed=M` 한 줄.
 
+**CLI**: `contrabass-moleU agent --push-config-all-remotes` — Discovery(기본값)로 `hosts` 구성 후 동일 API.
+
 ---
 
 ### 일괄 업데이트 적용 `POST .../apply-update-all` (NDJSON)
@@ -280,6 +305,8 @@ curl -sS -N -X POST "${BASE}${API}/apply-update-all" \
 
 `version` 생략 시 로컬 스테이징 최신. `StagingUpdateAvailable` 미충족 호스트는 스트림에서 `skipped`. 완료 시 `apply-update-all finished succeeded=N failed=M skipped=K` 한 줄.
 
+**CLI**: `contrabass-moleU agent --apply-update-all-remotes <bundle.tar.gz>` — 먼저 `POST …/upload`로 스테이징.
+
 ---
 
 ### 일괄 롤백 `POST .../versions/rollback-all` (NDJSON)
@@ -291,6 +318,8 @@ curl -sS -N -X POST "${BASE}${API}/versions/rollback-all" \
 ```
 
 원격에서 `previous` 없음 또는 `current`·`previous`가 같은 버전이면 `skipped`. 완료 시 `rollback-all finished succeeded=N failed=M skipped=K` 한 줄.
+
+**CLI**: `contrabass-moleU agent --rollback-all-remotes`.
 
 ---
 

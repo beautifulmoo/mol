@@ -26,8 +26,8 @@
 
 | 항목 | 설명 |
 |------|------|
-| **종료 코드** | 성공 **`0`**, 실패 **`1`**. `maintenance`·`discoverycli`·`applycli`·`versionscli`·`hostinfocli` 패키지는 **`os.Exit`를 호출하지 않고** 상위 `main`이 `os.Exit` 한다. |
-| **도움말·API 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`** 관련 **CLI 진단 메시지**는 **영문**이다. 원격 호출 시 stdout에 찍히는 성공/실패 문구는 **원격 에이전트 REST API**의 `data` 문자열(영문)을 그대로 출력한다. `--discovery` 도움말도 영문. |
+| **종료 코드** | 성공 **`0`**, 실패 **`1`**. `maintenance`·`discoverycli`·`applycli`·`versionscli`·`hostinfocli`·`*clicli`(일괄 원격) 패키지는 **`os.Exit`를 호출하지 않고** 상위 `main`이 `os.Exit` 한다. |
+| **도움말·API 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`**, **리모트 일괄 CLI 4종** 관련 **CLI 진단 메시지**는 **영문**이다. 원격 호출 시 stdout에 찍히는 성공/실패 문구는 **원격 에이전트 REST API**의 `data` 문자열(영문)을 그대로 출력한다. `--discovery` 도움말도 영문. |
 | **버전 출력** | **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** / **`agent --version`** — 빌드 시 주입된 **`main.VersionKey`** 와 `BinaryName` 한 줄. `BuildVariant`가 주입된 경우 **`contrabass-moleU 0.4.4-test (compute)`** 형태로 variant 접미사가 붙는다. **전환용**: 루트 **`contrabass-moleU --version`** / **`-version`** 도 동일 한 줄을 출력한다(구 업데이트 스크립트 호환; PRD §4.1·§9). 설정 파일 불필요. |
 
 ---
@@ -76,7 +76,14 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 
 ## `-h` / `--help`
 
-표준 도움말 출력(영문). 서비스 미기동. 아래 **개별 명령 절 순서**는 **`contrabass-moleU agent --help`** 에 나오는 옵션 순서와 같다(`--version` 다음 **`--host-info`**, 그다음 **`--nic-brd`** …).
+표준 도움말 출력(영문). 서비스 미기동. **`contrabass-moleU agent --help`** 옵션 순서:
+
+1. `-h` / `--help`, `-version` / `--version`
+2. `--host-info`, `--nic-brd`, `--discovery`, `--apply-update`
+3. `--versions-list`, `--versions-switch`
+4. **리모트 일괄 4종**(맨 아래): `--push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes`, `--rollback-all-remotes`
+
+아래 **개별 명령 절**은 2→3→4 순으로 정리한다(일괄 4종은 §「리모트 일괄 CLI」).
 
 ---
 
@@ -159,12 +166,12 @@ contrabass-moleU agent --discovery -h
 
 ## `--apply-update`
 
-대상 에이전트 Gin에 **`POST {APIPrefix}/upload`**(번들 검증·스테이징) 후 **`POST {APIPrefix}/apply-update`**(JSON `version`·`ip:self`·`agent_variant`)를 호출한다. 웹 UI의 업로드+적용과 동등. **대상 HTTP 서비스가 떠 있어야 한다.**
+대상 에이전트 Gin에 **`POST {APIPrefix}/upload`**(번들 검증·스테이징) 후 **`POST {APIPrefix}/apply-update`**(JSON `version`·`ip:self`·`agent_variant`·`reuse_previous_config`)를 호출한다. 웹 UI의 업로드+적용과 동등. **대상 HTTP 서비스가 떠 있어야 한다.**
 
 ### 사용법
 
 ```text
-contrabass-moleU agent --apply-update [-apiprefix=<path>] [-agent-variant=compute|control] <self|remote-ip> /path/to/bundle.tar.gz
+contrabass-moleU agent --apply-update [-apiprefix=<path>] [-agent-variant=compute|control] [-use-bundle-config] <self|remote-ip> /path/to/bundle.tar.gz
 contrabass-moleU agent --apply-update -h
 ```
 
@@ -174,10 +181,22 @@ contrabass-moleU agent --apply-update -h
 |------|------|
 | **`-apiprefix`** | **선택.** API path prefix (기본 `/maintenance/api/v1`). |
 | **`-agent-variant`** | **선택.** `compute` 또는 `control`. **생략 시** `GET …/self`의 `build_variant`(없으면 CLI ldflags, 그것도 없으면 `compute`). |
+| **`-use-bundle-config`** | **선택.** 지정 시 번들에 포함된 config를 적용한다. **생략 시(기본)** 대상 호스트 **current** config를 재사용한다(`reuse_previous_config: true`, 웹 UI 체크박스 기본과 동일). |
 | **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
 | **두 번째 인자** | 업로드할 **번들 파일 경로** (`.tar.gz`). |
 
 검증·업로드 상한·적용 정책은 **대상 서버** 설정·핸들러가 처리한다. HTTP 클라이언트 타임아웃 **300초**.
+
+### 환경설정 재사용
+
+| 클라이언트 | 기본 동작 | 번들 config 사용 |
+|------------|-----------|------------------|
+| **웹 UI** | 「이전버전의 환경설정 파일 재사용」 체크 **on** | 체크 해제 후 적용(확인 대화상자) |
+| **CLI** | `reuse_previous_config: true` 전송 | **`-use-bundle-config`** |
+| **REST JSON** | 필드 생략 시 서버 **false** | `"reuse_previous_config": false` 명시 |
+| **REST multipart** | 필드 생략 시 **true** | `reuse_previous_config=false` |
+
+적용 전 **current** config를 `versions/<키>/`에 복사하는 동작은 PRD §5.5.1·§5.5.3을 따른다.
 
 구현: `maintenance/applycli/applycli.go` → `maintenance/clirest`.
 
@@ -230,9 +249,185 @@ contrabass-moleU agent --versions-switch -h
 
 ---
 
+## 리모트 일괄 CLI (공통)
+
+오케스트레이터(이 머신)에서 **`<bin> -cfg <file>`** 로 **로컬 maintenance HTTP**가 떠 있어야 한다(`Maintenance.MaintenancePort`, 기본 **8889**). 단일 호스트 CLI(`--host-info`, `--apply-update` 등)는 대상 **Gin(`Server.HTTPPort`, 기본 8888)** 에 직접 붙지만, 일괄 4종은 **maintenance 리스너**의 NDJSON API를 호출한다.
+
+| 항목 | 설명 |
+|------|------|
+| **웹 UI** | PRD §6.6 사이드바 4버튼과 **동일 API** |
+| **Discovery** | 각 명령 **내부**에서 UDP Discovery **1회**(dest `9999`, src `9998`, timeout `10`s, service `Mole-Discovery`). **`agent --discovery` 선행 불필요**; 이전 discovery·`remoteregistry`·DOM 결과도 **사용하지 않음** |
+| **Discovery 옵션** | 일괄 명령에는 `--dest-port` 등 **없음**. 커스텀 설정으로 원격만 확인할 때만 standalone `agent --discovery` |
+| **`hosts[]`** | 이번 Discovery 응답을 메모리에서 CPU UUID·`responded_from_ip`로 병합(`discoverycli.BulkPushHostsFromDiscovery`). 로컬·self 제외 |
+| **응답** | `application/x-ndjson` — `start` → 호스트별 `progress` → `done`. stdout에 `[N/M] hostname (ip): …` |
+| **공통 플래그** | **`-apiprefix`**(기본 `/maintenance/api/v1`), **`-maintenance-port`**(기본 `8889`) |
+| **구현** | `maintenance/discoverycli` + `maintenance/clirest` + 각 `*clicli` 패키지 |
+
+### 명령·API·웹 UI 대응
+
+| CLI | maintenance API | 웹 UI (§6.6) |
+|-----|-----------------|--------------|
+| `--push-config-all-remotes` | `POST …/current-config/push-local-all` | 로컬 설정을 리모트 호스트에 일괄 복사 |
+| `--restart-all-remotes` | `POST …/service-control/restart-all` | 리모트 호스트 일괄 재시작 |
+| `--apply-update-all-remotes <bundle>` | `POST …/upload` 후 `POST …/apply-update-all` | 리모트 호스트에 일괄 업데이트 적용 |
+| `--rollback-all-remotes` | `POST …/versions/rollback-all` | 리모트 호스트 일괄 롤백 |
+
+### 종료 코드 (일괄 공통)
+
+| 명령 | 종료 `1` 조건 |
+|------|----------------|
+| push / restart | `failed > 0`, 처리 호스트 없음, discovery·maintenance 사전 실패 |
+| apply-update-all / rollback-all | 위와 같고, 추가로 **`succeeded == 0`**(전원 `skipped` 포함) |
+
+`skipped`는 실패가 아니다(apply·rollback). `update_history.log`에는 작업별 요약 1줄만 append된다.
+
+---
+
+## `--push-config-all-remotes`
+
+오케스트레이터(이 머신)에서 **UDP Discovery**로 원격을 찾은 뒤, 로컬 maintenance HTTP의 **`POST {APIPrefix}/current-config/push-local-all`** 로 **로컬 `current` config**를 모든 원격에 복사한다. 웹 UI **「로컬 설정을 리모트 호스트에 일괄 복사」** 와 동등한 API이며, 호스트 목록은 **이번 Discovery 결과**에서 만든다(메모리 내 병합, 레지스트리/DOM 불필요).
+
+**전제**: `<bin> -cfg <file>` 로 **로컬 maintenance 서비스**가 떠 있어야 한다(로컬 `current` config 읽기·원격 프록시).
+
+### 사용법
+
+```text
+contrabass-moleU agent --push-config-all-remotes [-apiprefix=<path>] [-maintenance-port=N]
+contrabass-moleU agent --push-config-all-remotes -h
+```
+
+### 플래그
+
+| 플래그 | 기본값 | 설명 |
+|--------|--------|------|
+| **`-apiprefix`** | `/maintenance/api/v1` | 로컬 maintenance API path prefix (`Maintenance.APIPrefix` 와 동일). |
+| **`-maintenance-port`** | `8889` | 로컬 maintenance HTTP 포트 (`Maintenance.MaintenancePort`). |
+
+### Discovery
+
+§「리모트 일괄 CLI (공통)」참고.
+
+로컬·자기 응답은 제외하고, CPU UUID·IP로 호스트를 병합한 뒤 `hosts[]` body로 push-local-all에 전달한다. 원격이 없으면 종료 코드 `1`.
+
+### 출력
+
+Discovery brd·카운트다운·`Discovery Done.` 후 호스트 수, 호스트별 `[N/M] hostname (ip): success|fail — …`, 마지막 요약 줄.
+
+구현: `maintenance/configpushclicli` → `maintenance/discoverycli` + `maintenance/clirest`.
+
+---
+
+## `--restart-all-remotes`
+
+오케스트레이터에서 **UDP Discovery**로 원격을 찾은 뒤, 로컬 maintenance HTTP의 **`POST {APIPrefix}/service-control/restart-all`** 로 모든 원격 에이전트 서비스를 재시작한다. 웹 UI **「리모트 호스트 일괄 재시작」** 과 동등하며, 호스트 목록은 **이번 Discovery 결과**에서 만든다.
+
+**전제**: `<bin> -cfg <file>` 로 **로컬 maintenance 서비스**가 떠 있어야 한다(원격 restart 프록시·재기동 확인).
+
+### 사용법
+
+```text
+contrabass-moleU agent --restart-all-remotes [-apiprefix=<path>] [-maintenance-port=N]
+contrabass-moleU agent --restart-all-remotes -h
+```
+
+### 플래그
+
+| 플래그 | 기본값 | 설명 |
+|--------|--------|------|
+| **`-apiprefix`** | `/maintenance/api/v1` | 로컬 maintenance API path prefix. |
+| **`-maintenance-port`** | `8889` | 로컬 maintenance HTTP 포트. |
+
+### Discovery
+
+§「리모트 일괄 CLI (공통)」참고.
+
+### 출력
+
+Discovery brd·카운트다운 후 호스트 수, 호스트별 `[N/M] hostname (ip): restart verified via … — …` 또는 `fail — …`, 마지막 요약 줄.
+
+구현: `maintenance/restartallclicli` → `maintenance/discoverycli` + `maintenance/clirest`.
+
+---
+
+## `--apply-update-all-remotes`
+
+오케스트레이터에서 **번들을 로컬 스테이징에 업로드**한 뒤 **UDP Discovery**로 원격을 찾고, 로컬 maintenance HTTP의 **`POST {APIPrefix}/apply-update-all`** 로 모든 원격에 업데이트를 적용한다. 웹 UI **「리모트 호스트에 일괄 업데이트 적용」** 과 동등하다.
+
+**전제**: `<bin> -cfg <file>` 로 **로컬 maintenance 서비스**가 떠 있어야 한다.
+
+### 사용법
+
+```text
+contrabass-moleU agent --apply-update-all-remotes [-apiprefix=<path>] [-maintenance-port=N] [-agent-variant=control|compute] [-use-bundle-config] <bundle.tar.gz>
+contrabass-moleU agent --apply-update-all-remotes -h
+```
+
+### 플래그
+
+| 플래그 | 기본값 | 설명 |
+|--------|--------|------|
+| **`-apiprefix`** | `/maintenance/api/v1` | 로컬 maintenance API path prefix. |
+| **`-maintenance-port`** | `8889` | 로컬 maintenance HTTP 포트. |
+| **`-agent-variant`** | (CLI `build_variant`, 없으면 `compute`) | 모든 원격에 적용할 variant. `--apply-update` 와 달리 **호스트별**이 아니라 **일괄 body 하나**. |
+| **`-use-bundle-config`** | off | 지정 시 번들 config 적용. **미지정 시** 각 원격 **current** config 재사용(`reuse_previous_config: true`, `--apply-update`·웹 체크박스 기본과 동일). |
+
+### 인자
+
+| 인자 | 설명 |
+|------|------|
+| **`<bundle.tar.gz>`** | 로컬 maintenance `POST …/upload` 로 스테이징한 뒤 그 **version 키**로 apply-update-all 호출. |
+
+### Discovery
+
+§「리모트 일괄 CLI (공통)」참고. 실행 순서: **번들 업로드 → Discovery → apply-update-all**.
+
+### 출력
+
+업로드·스테이징 버전, Discovery, 호스트별 `[N/M] …: update apply requested (version) via …` / `skipped — …` / `fail — …`, 마지막 `succeeded`/`failed`/`skipped` 요약.
+
+종료 코드: **`failed > 0`** 또는 **`succeeded == 0`**(전원 skipped 포함)이면 `1`.
+
+구현: `maintenance/applyupdateallclicli` → `maintenance/discoverycli` + `maintenance/clirest`.
+
+---
+
+## `--rollback-all-remotes`
+
+오케스트레이터에서 **UDP Discovery**로 원격을 찾은 뒤, 로컬 maintenance HTTP의 **`POST {APIPrefix}/versions/rollback-all`** 로 모든 원격을 `previous` 버전으로 롤백한다. 웹 UI **「리모트 호스트 일괄 롤백」** 과 동등하다.
+
+**전제**: `<bin> -cfg <file>` 로 **로컬 maintenance 서비스**가 떠 있어야 한다.
+
+### 사용법
+
+```text
+contrabass-moleU agent --rollback-all-remotes [-apiprefix=<path>] [-maintenance-port=N]
+contrabass-moleU agent --rollback-all-remotes -h
+```
+
+### 플래그
+
+| 플래그 | 기본값 | 설명 |
+|--------|--------|------|
+| **`-apiprefix`** | `/maintenance/api/v1` | 로컬 maintenance API path prefix. |
+| **`-maintenance-port`** | `8889` | 로컬 maintenance HTTP 포트. |
+
+### Discovery
+
+§「리모트 일괄 CLI (공통)」참고.
+
+### 출력
+
+Discovery 후 호스트 수, 호스트별 `[N/M] …: rollback requested via …` / `skipped — …` / `fail — …`, 마지막 `succeeded`/`failed`/`skipped` 요약.
+
+`previous` 없음·`current`=`previous`(이미 롤백됨) 호스트는 **`skipped`**(실패 아님). 종료 코드: **`failed > 0`** 또는 **`succeeded == 0`** 이면 `1`.
+
+구현: `maintenance/rollbackallclicli` → `maintenance/discoverycli` + `maintenance/clirest`.
+
+---
+
 ## 관련 문서
 
 | 문서 | 내용 |
 |------|------|
-| **[PRD.md](../PRD.md)** | 제품 요구사항 전체(§1.1 소스 트리, §4.1 CLI, §9 버전, §3 Discovery, §5.5 업데이트 API). |
-| **[REST_API.md](./REST_API.md)** | maintenance HTTP API 경로·쿼리·응답 형식. |
+| **[PRD.md](../PRD.md)** | 제품 요구사항 전체(§1.1 소스 트리, §4.1·§4.1.1 CLI, §9 버전, §3 Discovery, §5.5 업데이트 API, §6.6 일괄 UI). |
+| **[REST_API.md](./REST_API.md)** | maintenance HTTP API 경로·쿼리·응답 형식(§「일괄 원격 API·CLI」). |

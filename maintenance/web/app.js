@@ -1602,16 +1602,30 @@
     return hosts;
   }
 
-  function prefixBulkStatusMessage(operationLabel, message) {
-    var prefix = '「' + (operationLabel || '일괄 작업') + '」 ';
+  function formatBulkLogTimestamp(date) {
+    if (!date) date = new Date();
+    if (!(date instanceof Date)) date = new Date(date);
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+    return '[' + date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+      ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()) + ']';
+  }
+
+  function prefixBulkStatusMessage(operationLabel, message, at) {
+    var ts = at ? formatBulkLogTimestamp(at) + ' ' : '';
+    var prefix = ts + '「' + (operationLabel || '일괄 작업') + '」 ';
     if (!message) return prefix.trim();
     return prefix + message;
+  }
+
+  function formatBulkResultLogLine(at, text) {
+    return formatBulkLogTimestamp(at) + ' ' + text;
   }
 
   function createBulkRemoteStatusEntry(operationLabel, resultsTitle) {
     var list = el('bulk-remote-status-list');
     if (!list) return null;
-    var resultsStore = { lines: [], title: resultsTitle || '결과' };
+    var startedAt = new Date();
+    var resultsStore = { lines: [], title: resultsTitle || '결과', startedAt: startedAt };
     var row = document.createElement('div');
     row.className = 'bulk-remote-status-row';
     row.innerHTML =
@@ -1623,7 +1637,7 @@
     var statusEl = row.querySelector('.bulk-remote-status-text');
     var resultsBtn = row.querySelector('.bulk-remote-entry-results-btn');
     var dismissEl = row.querySelector('.bulk-remote-status-dismiss');
-    if (statusEl) statusEl.textContent = prefixBulkStatusMessage(operationLabel, '진행 중…');
+    if (statusEl) statusEl.textContent = prefixBulkStatusMessage(operationLabel, '진행 중…', startedAt);
     if (dismissEl) dismissEl.hidden = false;
     resultsBtn.addEventListener('click', function () {
       openBulkResultsModal(resultsStore);
@@ -1727,7 +1741,11 @@
     var title = el('bulk-remote-results-modal-title');
     var body = el('bulk-remote-results-body');
     var data = store || { lines: [], title: '' };
-    if (title) title.textContent = data.title || '결과';
+    if (title) {
+      var titleText = data.title || '결과';
+      if (data.finishedAt) titleText += ' — ' + formatBulkLogTimestamp(data.finishedAt);
+      title.textContent = titleText;
+    }
     if (body) body.textContent = (data.lines && data.lines.length) ? data.lines.join('\n') : '(결과 없음)';
     if (modal) {
       modal.hidden = false;
@@ -1951,9 +1969,13 @@
         function finish(evt) {
           if (doneHandled) return;
           doneHandled = true;
+          var finishedAt = new Date();
+          resultsStore.finishedAt = finishedAt;
           btn.textContent = label;
           btn.removeAttribute('data-busy');
-          resultsStore.lines = progressResults.map(formatLine);
+          resultsStore.lines = progressResults.map(function (r) {
+            return formatBulkResultLogLine(r.recordedAt || finishedAt, formatLine(r));
+          });
           resultsStore.title = options.resultsTitle || '결과';
           if (resultsBtn) resultsBtn.hidden = progressResults.length === 0;
           if (statusEl) {
@@ -1967,7 +1989,7 @@
             } else {
               detail = '요청이 중단되었습니다.';
             }
-            statusEl.textContent = prefixBulkStatusMessage(operationLabel, detail);
+            statusEl.textContent = prefixBulkStatusMessage(operationLabel, detail, finishedAt);
           }
           if (dismissEl) dismissEl.hidden = false;
           refreshRemoteBulkButtonsState();
@@ -1988,6 +2010,7 @@
             btn.textContent = '0/' + evt.total;
           } else if (evt.type === 'progress') {
             btn.textContent = evt.current + '/' + evt.total;
+            evt.recordedAt = new Date();
             progressResults.push(evt);
           } else if (evt.type === 'done') {
             finish(evt);
@@ -2013,7 +2036,7 @@
       .catch(function () {
         btn.textContent = label;
         btn.removeAttribute('data-busy');
-        if (statusEl) statusEl.textContent = prefixBulkStatusMessage(operationLabel, '요청 실패.');
+        if (statusEl) statusEl.textContent = prefixBulkStatusMessage(operationLabel, '요청 실패.', new Date());
         if (dismissEl) dismissEl.hidden = false;
         refreshRemoteBulkButtonsState();
       });

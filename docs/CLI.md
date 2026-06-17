@@ -30,6 +30,7 @@
 | **도움말·API 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`**, **리모트 일괄 CLI 4종** 관련 **CLI 진단 메시지**는 **영문**이다. 원격 호출 시 stdout에 찍히는 성공/실패 문구는 **원격 에이전트 REST API**의 `data` 문자열(영문)을 그대로 출력한다. `--discovery` 도움말도 영문. |
 | **버전 출력** | **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** / **`agent --version`** — 빌드 시 주입된 **`main.VersionKey`** 와 `BinaryName` 한 줄. `BuildVariant`가 주입된 경우 **`contrabass-moleU 0.4.4-test (compute)`** 형태로 variant 접미사가 붙는다. **전환용**: 루트 **`contrabass-moleU --version`** / **`-version`** 도 동일 한 줄을 출력한다(구 업데이트 스크립트 호환; PRD §4.1·§9). 설정 파일 불필요. |
 | **로컬 대상** | **`host-info`**·**`apply-update`**·**`versions-*`** 등의 대상 인자에서 **`self`** 와 **`local`** 은 동의어(이 머신 Gin `127.0.0.1:8888`). REST JSON의 `ip` 필드는 계속 **`self`** 만 사용. Discovery 결과의 **`[Local]`** 태그와는 별개. |
+| **번들 파일 경로** | **`--apply-update`**·**`--apply-update-all-remotes`** 및 REPL `apply-update` / `apply-update-all`의 번들 인자: **`~/…` 확장**, `./`·상대 경로는 **프로세스 CWD** 기준(`clirest.ExpandLocalPath`). |
 
 ---
 

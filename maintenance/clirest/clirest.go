@@ -216,7 +216,11 @@ func GetHostInfo(client *http.Client, target, apiPrefix string) (discovery.Disco
 
 // UploadBundle posts multipart bundle to POST {apiBase}/upload; returns version key.
 func UploadBundle(client *http.Client, target, apiPrefix, bundlePath string) (string, error) {
-	f, err := os.Open(bundlePath)
+	resolved, err := ExpandLocalPath(bundlePath)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(resolved)
 	if err != nil {
 		return "", err
 	}

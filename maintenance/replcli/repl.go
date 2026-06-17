@@ -41,7 +41,7 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	fmt.Printf("%s %s interactive REPL. Type 'help' for commands, 'exit' to quit.\n", appmeta.BinaryName, v)
 	fmt.Println("Bulk commands use hosts from the last 'discover'. Orchestrator maintenance must be running for bulk.")
 	if isatty.IsTerminal(os.Stdin.Fd()) {
-		fmt.Println("Arrow keys browse command history; Tab completes commands (saved under user cache).")
+		fmt.Println("Arrow keys browse command history; Tab completes commands and paths (bash-like; Tab twice lists choices).")
 	}
 
 	reader, err := newREPLReader(prompt, s)
@@ -196,6 +196,11 @@ func parseApplyUpdateArgs(s *Session, args []string) ([]string, error) {
 	if len(positional) != 2 {
 		return nil, fmt.Errorf("usage: apply-update [-agent-variant=control|compute] [-use-bundle-config] <self|local|ip> <bundle.tar.gz>")
 	}
+	resolved, err := clirest.ExpandLocalPath(positional[1])
+	if err != nil {
+		return nil, err
+	}
+	positional[1] = resolved
 	return s.applyUpdateCLIArgs(positional[0], positional[1], agentVar, useBundle), nil
 }
 
@@ -221,6 +226,11 @@ func parseApplyUpdateAllArgs(s *Session, args []string) (bundle string, useBundl
 	}
 	if strings.TrimSpace(bundle) == "" {
 		return "", false, "", fmt.Errorf("usage: apply-update-all [-agent-variant=...] [-use-bundle-config] <bundle.tar.gz>")
+	}
+	if resolved, err := clirest.ExpandLocalPath(bundle); err != nil {
+		return "", false, "", err
+	} else {
+		bundle = resolved
 	}
 	if agentVariant != "" {
 		if _, err := clirest.ResolveAgentVariantForTarget(agentVariant, ""); err != nil {

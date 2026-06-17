@@ -53,24 +53,28 @@ func (c *replCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	if pos < 0 || pos > len(line) {
 		return nil, 0
 	}
-	wordStart, word := currentWord(line, pos)
+	wordStart, word := currentWordRunes(line, pos)
 	prefix := strings.TrimSpace(string(line[:wordStart]))
 	tokens := splitFields(prefix)
 	candidates := c.candidates(tokens, word)
-	suffixes, length := formatCompleterSuffixes(word, candidates)
-	return suffixes, length
+	suffixes, _ := formatCompleterSuffixes(word, candidates)
+	return suffixes, pos - wordStart
 }
 
 func newReplCompleter(s *Session) readline.AutoCompleter {
 	return &replCompleter{session: s}
 }
 
-func currentWord(line []rune, pos int) (start int, word string) {
+func currentWordRunes(line []rune, pos int) (start int, word string) {
 	start = pos
 	for start > 0 && line[start-1] != ' ' && line[start-1] != '\t' {
 		start--
 	}
 	return start, string(line[start:pos])
+}
+
+func currentWord(line []rune, pos int) (start int, word string) {
+	return currentWordRunes(line, pos)
 }
 
 func (c *replCompleter) candidates(tokens []string, word string) []string {
@@ -102,11 +106,51 @@ func (c *replCompleter) candidates(tokens []string, word string) []string {
 		if len(tokens) == 1 {
 			return prefixMatches(c.targetCandidates(), word)
 		}
-		if cmd == "apply-update" && len(tokens) == 2 {
-			return prefixMatches(filePathCandidates(word), word)
+		if cmd == "apply-update" && completingBundlePath(tokens) {
+			return filePathCandidates(word)
+		}
+	case "apply-update-all", "apply-update-all-remotes":
+		if completingApplyUpdateAllBundle(tokens) {
+			return filePathCandidates(word)
 		}
 	}
 	return nil
+}
+
+// completingBundlePath reports whether tokens name apply-update with target set and bundle path being typed.
+func completingBundlePath(tokens []string) bool {
+	if len(tokens) == 0 || !strings.EqualFold(tokens[0], "apply-update") {
+		return false
+	}
+	return len(stripApplyUpdateFlags(tokens)) == 1
+}
+
+func completingApplyUpdateAllBundle(tokens []string) bool {
+	if len(tokens) == 0 {
+		return false
+	}
+	cmd := strings.ToLower(tokens[0])
+	if cmd != "apply-update-all" && cmd != "apply-update-all-remotes" {
+		return false
+	}
+	return len(stripApplyUpdateFlags(tokens)) == 0
+}
+
+func stripApplyUpdateFlags(tokens []string) []string {
+	var out []string
+	for i := 1; i < len(tokens); i++ {
+		t := tokens[i]
+		switch {
+		case t == "-use-bundle-config" || t == "--use-bundle-config":
+		case strings.HasPrefix(t, "-agent-variant="):
+		case t == "-agent-variant" && i+1 < len(tokens):
+			i++
+		case strings.HasPrefix(t, "-apiprefix="):
+		default:
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func helpTopicNames() []string {
@@ -157,33 +201,77 @@ func (c *replCompleter) targetCandidates() []string {
 }
 
 func filePathCandidates(partial string) []string {
-	partial = strings.TrimSpace(partial)
-	dir := "."
-	base := partial
-	if partial != "" {
-		dir = filepath.Dir(partial)
-		if dir == "." || dir == "" {
-			dir = "."
-		}
-		base = filepath.Base(partial)
-	}
+	dir, base, pathPrefix := filePathCompletionContext(partial)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
+	showHidden := strings.HasPrefix(base, ".") || strings.Contains(partial, "/.")
 	var out []string
 	for _, e := range entries {
 		name := e.Name()
-		if partial == "" || strings.HasPrefix(name, base) {
-			full := name
-			if dir != "." {
-				full = filepath.Join(dir, name)
-			}
-			out = append(out, full)
+		if !showHidden && strings.HasPrefix(name, ".") {
+			continue
 		}
+		if base != "" && !strings.HasPrefix(strings.ToLower(name), strings.ToLower(base)) {
+			continue
+		}
+		full := pathPrefix + name
+		if e.IsDir() {
+			full += string(filepath.Separator)
+		}
+		if partial != "" && !strings.HasPrefix(strings.ToLower(full), strings.ToLower(partial)) {
+			continue
+		}
+		out = append(out, full)
 	}
 	sort.Strings(out)
 	return out
+}
+
+func filePathCompletionContext(partial string) (dir, base, pathPrefix string) {
+	partial = strings.TrimSpace(partial)
+	if partial == "" {
+		return ".", "", ""
+	}
+
+	fsPartial := partial
+	if partial == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ".", partial, ""
+		}
+		return home, "", "~/"
+	}
+	if strings.HasPrefix(partial, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ".", partial, ""
+		}
+		fsPartial = filepath.Join(home, partial[2:])
+	}
+
+	if strings.HasSuffix(partial, "/") || strings.HasSuffix(partial, string(filepath.Separator)) {
+		dir := filepath.Clean(strings.TrimRight(fsPartial, string(filepath.Separator)))
+		if dir == "" {
+			dir = "."
+		}
+		return dir, "", partial
+	}
+
+	dir = filepath.Dir(fsPartial)
+	base = filepath.Base(fsPartial)
+	if dir == "" {
+		dir = "."
+	}
+	dir = filepath.Clean(dir)
+
+	if base != "" && strings.HasSuffix(partial, base) {
+		pathPrefix = partial[:len(partial)-len(base)]
+	} else {
+		pathPrefix = partial
+	}
+	return dir, base, pathPrefix
 }
 
 func prefixMatches(candidates []string, word string) []string {
@@ -222,12 +310,13 @@ func formatCompleterSuffixes(word string, matches []string) ([][]rune, int) {
 	wordRunes := []rune(word)
 	wordLen := len(wordRunes)
 	out := make([][]rune, 0, len(matches))
+	wordLower := strings.ToLower(word)
 	for _, m := range matches {
-		mRunes := []rune(m)
-		if wordLen > len(mRunes) {
+		if word != "" && !strings.HasPrefix(strings.ToLower(m), wordLower) {
 			continue
 		}
-		if !strings.EqualFold(string(mRunes[:wordLen]), word) {
+		mRunes := []rune(m)
+		if len(mRunes) < wordLen {
 			continue
 		}
 		out = append(out, mRunes[wordLen:])

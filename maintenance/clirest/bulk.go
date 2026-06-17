@@ -134,7 +134,11 @@ func RollbackAllRemotes(client *http.Client, apiPrefix string, maintenancePort i
 
 // UploadBundleMaintenance posts multipart bundle to local maintenance POST {base}/upload; returns version key.
 func UploadBundleMaintenance(client *http.Client, apiPrefix string, maintenancePort int, bundlePath string) (string, error) {
-	f, err := os.Open(bundlePath)
+	resolved, err := ExpandLocalPath(bundlePath)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(resolved)
 	if err != nil {
 		return "", err
 	}

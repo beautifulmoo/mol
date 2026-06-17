@@ -1,5 +1,15 @@
 # 변경 이력 (mol)
 
+## REPL·CLI 번들 경로 (2026-06)
+
+| 항목 | 요약 |
+|------|------|
+| **`~` 확장** | 번들 업로드(`UploadBundle`·`UploadBundleMaintenance`)·REPL `apply-update` / `apply-update-all`에서 **`~/…` 경로를 홈 디렉터리로 확장** 후 `os.Open` (`clirest.ExpandLocalPath`) |
+| **REPL Tab 경로 완성** | `apply-update`·`apply-update-all` — `./dist/…`, `~/…`, 절대 경로. 플래그(`-use-bundle-config` 등) 뒤에도 동작. **Tab 두 번** 후보 목록(bash 유사) |
+| **CWD** | REPL·CLI 번들 상대 경로는 **프로세스 시작 시 CWD** 기준(셸에서 `agent` 실행한 디렉터리) |
+
+구현: `maintenance/clirest/path.go`, `maintenance/replcli/complete.go`. **문서**: **docs/REPL.md**, **docs/CLI.md**.
+
 ## Agent CLI·REPL (2026-06)
 
 한 세션에서 추가·정리된 agent 하위 기능.

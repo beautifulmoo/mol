@@ -44,7 +44,9 @@ contrabass-moleU agent -h            # REPL이 아니라 agent CLI 도움말(일
 - 히스토리 파일: **`$XDG_CACHE_HOME/<BinaryName>/repl_history`** (기본 `BinaryName` = `contrabass-moleU`).
 - **파이프·리다이렉트** 입력 시 readline 미사용(히스토리·Tab 없음).
 
-### Tab 완성
+### Tab 완성 (bash 유사)
+
+readline 기반. **Tab 한 번** = 공통 접두어까지 확장(후보 1개면 끝까지). **Tab 두 번** = 후보 목록.
 
 | 위치 | 완성 대상 |
 |------|-----------|
@@ -53,9 +55,11 @@ contrabass-moleU agent -h            # REPL이 아니라 agent CLI 도움말(일
 | `set` | `apiprefix`, `maintenance-port`, `agent-variant`, `use-bundle-config` 및 값 |
 | `discover` | `--dest-port=`, `--src-port=`, `--timeout=`, `--service=` |
 | `host-info` 등 | `self`, `local`, **`discover` 캐시 IP** |
-| `apply-update` | 대상 IP 후 **번들 파일 경로** |
+| `apply-update` / `apply-update-all` | **로컬 파일 경로** — `./dist/…`, `~/…`, 절대 경로. 디렉터리는 `/` 접미 |
 
-유일 후보는 자동 완성, 여러 후보는 목록 표시(bash 유사).
+**작업 디렉터리**: REPL은 셸과 같이 **프로세스 시작 시점의 CWD**를 쓴다. `~/work/mol$ ./contrabass-moleU agent` 이면 `./dist/…` 는 `~/work/mol/dist/…` 이다. 실행 시 **`~`는 자동 확장**된다.
+
+파이프 입력 시 Tab 미지원.
 
 ---
 
@@ -113,7 +117,7 @@ CLI **`agent --nic-brd`** 와 동일 — Discovery용 `(인터페이스 : brd)` 
 | **`host-info <self\|local\|ip>`** | `GET …/self` 표 출력. **`HOST_IP`** / **`HOST_IPS`** 는 `discover` 캐시 우선, 없으면 UDP ~3s 보강 |
 | **`versions-list <self\|local\|ip>`** | `GET …/versions/list` |
 | **`versions-switch <self\|local\|ip> <version-key>`** | `POST …/versions/switch-current` |
-| **`apply-update <self\|local\|ip> <bundle.tar.gz>`** | 업로드 + 적용. 세션 `agent-variant`·`use-bundle-config` 사용(해당 줄 플래그로 덮어쓰기 가능) |
+| **`apply-update <self\|local\|ip> <bundle.tar.gz>`** | 업로드 + 적용. 번들 경로는 **`~/…`·`./`·상대/절대** (CWD 기준, 실행 시 `~` 확장). 세션 `agent-variant`·`use-bundle-config` |
 
 대상 에이전트 HTTP 서비스가 떠 있어야 한다. 상세는 **[CLI.md](./CLI.md)** 해당 절.
 
@@ -127,7 +131,7 @@ CLI **`agent --nic-brd`** 와 동일 — Discovery용 `(인터페이스 : brd)` 
 |-----------|-----------------|-----|
 | **`push-config-all`** | `--push-config-all-remotes` | `POST …/current-config/push-local-all` |
 | **`restart-all`** | `--restart-all-remotes` | `POST …/service-control/restart-all` |
-| **`apply-update-all <bundle>`** | `--apply-update-all-remotes` | 업로드 → `POST …/apply-update-all` |
+| **`apply-update-all <bundle>`** | `--apply-update-all-remotes` | 업로드 → `POST …/apply-update-all`. 번들 경로 규칙은 `apply-update` 와 동일 |
 | **`rollback-all`** | `--rollback-all-remotes` | `POST …/versions/rollback-all` |
 
 ### bulk 동작 요약

@@ -42,27 +42,7 @@ func EnsureMaintenanceRunning(client *http.Client, apiPrefix string, maintenance
 		client = DefaultHTTPClient(5 * time.Second)
 	}
 	base := MaintenanceBaseURL(apiPrefix, maintenancePort)
-	healthURL := base + "/health"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("maintenance service is not running at %s (GET %s failed: %v)", base, healthURL, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("maintenance service is not running at %s (GET %s returned HTTP %d: %s)", base, healthURL, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var out struct {
-		Status string `json:"status"`
-	}
-	if json.Unmarshal(body, &out) != nil || out.Status != "success" {
-		return fmt.Errorf("maintenance service is not running at %s (GET %s: unexpected response)", base, healthURL)
-	}
-	return nil
+	return ensureHealthOK(client, base+"/health", fmt.Sprintf("maintenance service is not running at %s", base))
 }
 
 func postBulkNDJSON(client *http.Client, apiPrefix string, maintenancePort int, apiPath string, body map[string]interface{}, onEvent func(map[string]interface{}) error) error {

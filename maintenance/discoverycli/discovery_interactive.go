@@ -8,29 +8,27 @@ import (
 	"contrabass-agent/maintenance/discovery"
 )
 
-// RunDefaultDiscoveryToStdout prints brd addresses and a countdown, then runs Discover with default options.
-func RunDefaultDiscoveryToStdout() ([]discovery.DiscoveryResponse, error) {
+// DiscoverToStdout prints brd addresses and a countdown, runs UDP discovery, prints "Discovery Done."
+func DiscoverToStdout(opts DiscoverOptions) ([]discovery.DiscoveryResponse, error) {
 	fmt.Println("Discovery brd (broadcast addresses):")
 	for _, brd := range BroadcastAddresses() {
 		fmt.Printf("  %s\n", brd)
 	}
 
-	timeoutSec := DefaultTimeoutSec
+	timeoutSec := opts.TimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = DefaultTimeoutSec
+	}
 	nw := len(strconv.Itoa(timeoutSec))
 	if nw < 2 {
 		nw = 2
 	}
 	maxLineLen := len(fmt.Sprintf("Discovering ... %*d ", nw, timeoutSec))
 
-	list, err := Discover(DiscoverOptions{
-		DestPort:    DefaultDestPort,
-		SrcPort:     DefaultSrcPort,
-		TimeoutSec:  timeoutSec,
-		ServiceName: "",
-		Progress: func(remaining int) {
-			fmt.Printf("\rDiscovering ... %*d ", nw, remaining)
-		},
-	})
+	opts.Progress = func(remaining int) {
+		fmt.Printf("\rDiscovering ... %*d ", nw, remaining)
+	}
+	list, err := Discover(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -41,4 +39,13 @@ func RunDefaultDiscoveryToStdout() ([]discovery.DiscoveryResponse, error) {
 	}
 	fmt.Printf("\r%s\n", doneLine)
 	return list, nil
+}
+
+// RunDefaultDiscoveryToStdout runs discovery with default ports/timeout and progress UI.
+func RunDefaultDiscoveryToStdout() ([]discovery.DiscoveryResponse, error) {
+	return DiscoverToStdout(DiscoverOptions{
+		DestPort:   DefaultDestPort,
+		SrcPort:    DefaultSrcPort,
+		TimeoutSec: DefaultTimeoutSec,
+	})
 }

@@ -8,7 +8,7 @@
 | **인자 없음**, 루트 **`--version`**, 잘못된 argv (`!IsServiceModeRootCfg`) | `os.Exit(Run(…))` | 없음 |
 | **`<bin> -cfg <파일>`** (`IsServiceModeRootCfg`) | `go func() { os.Exit(Run(…)) }()` + 메인에서 **`router.Run`** | 있음 (`RegisterMaintenanceProxy`) |
 
-**HTTP·Discovery 서비스**는 **`<bin> -cfg …`** 또는 **`<bin> agent -cfg …`** 로 기동한다(`Run` 동작 동일). **Discovery·host-info·apply-update 등**은 **`agent` 다음** 옵션만(실행 후 셸 복귀). 예: `contrabass-moleU agent --discovery -h`.
+**HTTP·Discovery 서비스**는 **`<bin> -cfg …`** 또는 **`<bin> agent -cfg …`** 로 기동한다(`Run` 동작 동일). **Discovery·host-info·apply-update 등**은 **`agent` 다음** 옵션만(실행 후 셸 복귀). **`agent`만** 주면 **대화형 REPL** — **[REPL.md](./REPL.md)**. 예: `contrabass-moleU agent`, `contrabass-moleU agent --discovery -h`.
 
 **시그널**: `SIGINT`/`SIGTERM`은 **`maintenance.runServiceWithConfigPath`** 가 `signal.Notify`로 처리한다. **`main`은 시그널 핸들러를 등록하지 않는다.** `<bin> -cfg …` 에서 Ctrl+C 시 maintenance가 내려가고 `Run`이 끝나면, 고루틴의 **`os.Exit(Run(…))`** 로 프로세스(Gin 포함)가 종료된다.
 
@@ -29,6 +29,7 @@
 | **종료 코드** | 성공 **`0`**, 실패 **`1`**. `maintenance`·`discoverycli`·`applycli`·`versionscli`·`hostinfocli`·`*clicli`(일괄 원격) 패키지는 **`os.Exit`를 호출하지 않고** 상위 `main`이 `os.Exit` 한다. |
 | **도움말·API 언어** | `-h` / `--help` 본문 및 **`--apply-update`**, **`--versions-list`**, **`--versions-switch`**, **`--host-info`**, **리모트 일괄 CLI 4종** 관련 **CLI 진단 메시지**는 **영문**이다. 원격 호출 시 stdout에 찍히는 성공/실패 문구는 **원격 에이전트 REST API**의 `data` 문자열(영문)을 그대로 출력한다. `--discovery` 도움말도 영문. |
 | **버전 출력** | **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** / **`agent --version`** — 빌드 시 주입된 **`main.VersionKey`** 와 `BinaryName` 한 줄. `BuildVariant`가 주입된 경우 **`contrabass-moleU 0.4.4-test (compute)`** 형태로 variant 접미사가 붙는다. **전환용**: 루트 **`contrabass-moleU --version`** / **`-version`** 도 동일 한 줄을 출력한다(구 업데이트 스크립트 호환; PRD §4.1·§9). 설정 파일 불필요. |
+| **로컬 대상** | **`host-info`**·**`apply-update`**·**`versions-*`** 등의 대상 인자에서 **`self`** 와 **`local`** 은 동의어(이 머신 Gin `127.0.0.1:8888`). REST JSON의 `ip` 필드는 계속 **`self`** 만 사용. Discovery 결과의 **`[Local]`** 태그와는 별개. |
 
 ---
 
@@ -78,10 +79,11 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 
 표준 도움말 출력(영문). 서비스 미기동. **`contrabass-moleU agent --help`** 옵션 순서:
 
-1. `-h` / `--help`, `-version` / `--version`
-2. `--host-info`, `--nic-brd`, `--discovery`, `--apply-update`
-3. `--versions-list`, `--versions-switch`
-4. **리모트 일괄 4종**(맨 아래): `--push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes`, `--rollback-all-remotes`
+1. **`<bin> agent`**(인자 없음) — 대화형 **REPL** — **[REPL.md](./REPL.md)**. `-h`는 아래 목록 출력.
+2. `-h` / `--help`, `-version` / `--version`
+3. `--host-info`, `--nic-brd`, `--discovery`, `--apply-update`
+4. `--versions-list`, `--versions-switch`
+5. **리모트 일괄 4종**(맨 아래): `--push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes`, `--rollback-all-remotes`
 
 아래 **개별 명령 절**은 2→3→4 순으로 정리한다(일괄 4종은 §「리모트 일괄 CLI」).
 
@@ -94,7 +96,7 @@ contrabass-moleU -cfg /path/to/agent.local.yml
 ### 사용법
 
 ```text
-contrabass-moleU agent --host-info [-apiprefix <path>] <self|remote-ip>
+contrabass-moleU agent --host-info [-apiprefix <path>] <self|local|remote-ip>
 contrabass-moleU agent --host-info -h
 ```
 
@@ -104,17 +106,19 @@ contrabass-moleU agent --host-info -h
 |--------|--------|------|
 | **`-apiprefix`** | `/maintenance/api/v1` | Gin에 노출된 API 경로 prefix (`Maintenance.APIPrefix` 와 동일). |
 
-**`-apiprefix`** 와 **`<self|remote-ip>`** 는 **순서 무관**.
+**`-apiprefix`** 와 **`<self|local|remote-ip>`** 는 **순서 무관**.
 
 ### 인자
 
 | 위치 | 설명 |
 |------|------|
-| **첫 번째 인자** | **`self`**: `http://127.0.0.1:8888{APIPrefix}/self`. **IPv4/IPv6**: 해당 호스트 Gin에 직접 요청(호스트명 불가). |
+| **첫 번째 인자** | **`self`** 또는 **`local`**: `http://127.0.0.1:8888{APIPrefix}/self`. **IPv4/IPv6**: 해당 호스트 Gin에 직접 요청(호스트명 불가). |
 
 표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, **`BUILD_VARIANT`**, `CPU_UUID` 등 라벨·값 테이블(영문 헤더).
 
-구현: `maintenance/hostinfocli/hostinfocli.go` → `maintenance/clirest`.
+**`HOST_IP`**: Discovery와 같이 **응답한 IP**(`responded_from_ip` 대표값). **`HOST_IPS`**: 같은 호스트(CPU UUID)에 대해 UDP Discovery로 모은 **발견 IP**(`host_ip`·`responded_from_ip` 합집합). `GET …/self`로 CPU·메모리 등을 가져온 뒤 **약 3초** 브로드캐스트 Discovery로 IP 열을 보강한다(웹 UI **IP**·**응답한 IP** 규칙과 동일). **REPL** `host-info`는 **`discover` 캐시**가 있으면 UDP 없이 캐시로 보강.
+
+구현: `maintenance/hostinfocli` → `maintenance/clirest` + `maintenance/discoverycli`.
 
 ---
 
@@ -153,14 +157,15 @@ contrabass-moleU agent --discovery -h
 ### 결과 한 줄 형식
 
 ```text
-[Local|Remote] <hostname> - <primary> : [<response IPs>] version=<agent version key> (<control|compute>)
+[Local|Remote] <hostname> - <primary> : [<discovered IPs>] version=<agent version key> (<control|compute>)
 ```
 
-- **`[response IPs]`**: UDP 패킷 **실제 발신지**만 취합(`responded_from_ip`).
+- **`<primary>`**: 마지막으로 수신한 **`responded_from_ip`**(UDP 실제 발신지). 웹 UI의 **「응답한 IP」** 대표값과 같다.
+- **`[discovered IPs]`**: CPU UUID로 묶인 응답마다 **`host_ip`**·**`responded_from_ip`** 를 합친 목록(중복 제거·정렬). 웹 UI **「IP」** 컬럼과 같다.
 - **`version=`**: `DISCOVERY_RESPONSE` JSON 의 **`version`** 필드(에이전트 버전 키). **`build_variant`** 가 있으면 웹 UI와 같이 **`version=<key> (control|compute)`** 형태. 버전 없으면 `version=?`, variant만 없으면 괄호 생략.
 - **`[Local]`** / **`[Remote]`**: 로컬 CPU UUID와 응답 `cpu_uuid` 일치 우선, 아니면 응답 IP가 로컬 IPv4와 겹치는지로 보조 판별.
 
-구현: `maintenance/discoverycli/discovery_cli.go`.
+구현: `maintenance/discoverycli` (`DiscoverToStdout`, `discovery_cli.go`).
 
 ---
 
@@ -171,7 +176,7 @@ contrabass-moleU agent --discovery -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --apply-update [-apiprefix=<path>] [-agent-variant=compute|control] [-use-bundle-config] <self|remote-ip> /path/to/bundle.tar.gz
+contrabass-moleU agent --apply-update [-apiprefix=<path>] [-agent-variant=compute|control] [-use-bundle-config] <self|local|remote-ip> /path/to/bundle.tar.gz
 contrabass-moleU agent --apply-update -h
 ```
 
@@ -182,7 +187,7 @@ contrabass-moleU agent --apply-update -h
 | **`-apiprefix`** | **선택.** API path prefix (기본 `/maintenance/api/v1`). |
 | **`-agent-variant`** | **선택.** `compute` 또는 `control`. **생략 시** `GET …/self`의 `build_variant`(없으면 CLI ldflags, 그것도 없으면 `compute`). |
 | **`-use-bundle-config`** | **선택.** 지정 시 번들에 포함된 config를 적용한다. **생략 시(기본)** 대상 호스트 **current** config를 재사용한다(`reuse_previous_config: true`, 웹 UI 체크박스 기본과 동일). |
-| **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
+| **첫 번째 인자** | **`self`** / **`local`** 또는 원격 **IP**. |
 | **두 번째 인자** | 업로드할 **번들 파일 경로** (`.tar.gz`). |
 
 검증·업로드 상한·적용 정책은 **대상 서버** 설정·핸들러가 처리한다. HTTP 클라이언트 타임아웃 **300초**.
@@ -209,7 +214,7 @@ contrabass-moleU agent --apply-update -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --versions-list [-apiprefix <path>] <self|remote-ip>
+contrabass-moleU agent --versions-list [-apiprefix <path>] <self|local|remote-ip>
 contrabass-moleU agent --versions-list -h
 ```
 
@@ -218,7 +223,7 @@ contrabass-moleU agent --versions-list -h
 | 위치 | 설명 |
 |------|------|
 | **`-apiprefix`** | **선택.** 기본 `/maintenance/api/v1`. |
-| **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
+| **첫 번째 인자** | **`self`** / **`local`** 또는 원격 **IP**. |
 
 표준 출력: `host …` 한 줄 후 `VERSION` / `CURRENT` / `PREVIOUS` 컬럼 테이블.
 
@@ -233,7 +238,7 @@ contrabass-moleU agent --versions-list -h
 ### 사용법
 
 ```text
-contrabass-moleU agent --versions-switch [-apiprefix <path>] <self|remote-ip> <version-key>
+contrabass-moleU agent --versions-switch [-apiprefix <path>] <self|local|remote-ip> <version-key>
 contrabass-moleU agent --versions-switch -h
 ```
 
@@ -242,7 +247,7 @@ contrabass-moleU agent --versions-switch -h
 | 위치 | 설명 |
 |------|------|
 | **`-apiprefix`** | **선택.** 기본 `/maintenance/api/v1`. |
-| **첫 번째 인자** | **`self`** 또는 원격 **IP**. |
+| **첫 번째 인자** | **`self`** / **`local`** 또는 원격 **IP**. |
 | **두 번째 인자** | 전환할 **버전 키**. |
 
 구현: `maintenance/versionscli/versionscli.go` (`RunSwitch`) → `maintenance/clirest`.
@@ -258,7 +263,7 @@ contrabass-moleU agent --versions-switch -h
 | **웹 UI** | PRD §6.6 사이드바 4버튼과 **동일 API** |
 | **Discovery** | 각 명령 **내부**에서 UDP Discovery **1회**(dest `9999`, src `9998`, timeout `10`s, service `Mole-Discovery`). **`agent --discovery` 선행 불필요**; 이전 discovery·`remoteregistry`·DOM 결과도 **사용하지 않음** |
 | **Discovery 옵션** | 일괄 명령에는 `--dest-port` 등 **없음**. 커스텀 설정으로 원격만 확인할 때만 standalone `agent --discovery` |
-| **`hosts[]`** | 이번 Discovery 응답을 메모리에서 CPU UUID·`responded_from_ip`로 병합(`discoverycli.BulkPushHostsFromDiscovery`). 로컬·self 제외 |
+| **`hosts[]`** | 이번 Discovery 응답을 CPU UUID로 병합(`discoverycli.BulkPushHostsFromDiscovery`). **`host_ip`**·**`responded_from_ip`** 모두 포함, primary는 **`responded_from_ip`**. 로컬·self 제외 |
 | **응답** | `application/x-ndjson` — `start` → 호스트별 `progress` → `done`. stdout에 `[N/M] hostname (ip): …` |
 | **공통 플래그** | **`-apiprefix`**(기본 `/maintenance/api/v1`), **`-maintenance-port`**(기본 `8889`) |
 | **구현** | `maintenance/discoverycli` + `maintenance/clirest` + 각 `*clicli` 패키지 |
@@ -425,9 +430,18 @@ Discovery 후 호스트 수, 호스트별 `[N/M] …: rollback requested via …
 
 ---
 
+## 대화형 REPL
+
+**`contrabass-moleU agent`**(인자 없음) → 프롬프트 `contrabass-agent>`. `discover` 캐시, 세션 `set`, bulk·단일 호스트 명령, readline 히스토리·Tab 완성.
+
+상세(명령 목록, 세션 키, bulk vs 일회성 CLI, Tab 완성): **[REPL.md](./REPL.md)**.
+
+---
+
 ## 관련 문서
 
 | 문서 | 내용 |
 |------|------|
-| **[PRD.md](../PRD.md)** | 제품 요구사항 전체(§1.1 소스 트리, §4.1·§4.1.1 CLI, §9 버전, §3 Discovery, §5.5 업데이트 API, §6.6 일괄 UI). |
+| **[REPL.md](./REPL.md)** | 대화형 REPL 전체 명세 |
+| **[PRD.md](../PRD.md)** | 제품 요구사항 전체(§1.1 소스 트리, §4.1·§4.1.1·§4.1.2 CLI·REPL, §9 버전, §3 Discovery, §5.5 업데이트 API, §6.6 일괄 UI). |
 | **[REST_API.md](./REST_API.md)** | maintenance HTTP API 경로·쿼리·응답 형식(§「일괄 원격 API·CLI」). |

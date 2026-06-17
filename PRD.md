@@ -198,18 +198,18 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 - **인자 없이 실행**: **`contrabass-moleU`** — 버전과 **`-cfg <파일>`**(HTTP·Discovery 기동) 및 **`agent …`**(기타 CLI) 안내를 출력하고 종료한다. HTTP·Discovery 서비스는 **`<bin> -cfg <파일>`** 또는 **`<bin> agent -cfg <파일>`** 로 설정 파일을 지정했을 때 기동한다(`Run` 동작 동일). **바깥 Gin** 은 **`<bin> -cfg …` 일 때만** `main`이 연다.
 - **`-cfg <파일>`**(서비스): 설정 파일 경로(필수 인자). **`contrabass-moleU`의 첫 인자로 `-cfg`** 와 경로를 두면 HTTP·Discovery가 기동한다. systemd 등에서는 `ExecStart=.../contrabass-moleU -cfg /path/to/agent.local.yml` 형태를 권장한다. **`contrabass-moleU agent -cfg <파일>`** 도 동일하게 HTTP·Discovery를 기동한다.
-- **접두**: **`-h`·`--host-info`·`--discovery` 등**(서비스용 `-cfg` 제외)은 모두 **`contrabass-moleU agent …`** 형태(첫 인자 **`agent`**)로 호출한다.
+- **접두**: **`-h`·`--host-info`·`--discovery` 등**(서비스용 `-cfg` 제외)은 모두 **`contrabass-moleU agent …`** 형태(첫 인자 **`agent`**)로 호출한다. **`agent`만** 주면 **대화형 REPL**(`contrabass-agent>`, `maintenance/replcli`) — `-cfg`·웹 UI와 별개.
 - **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료. **`agent` 다음**에만 지원(`contrabass-moleU agent --help`).
 - **`-version`, `--version` (두 경로)**  
   - **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** — 다른 CLI와 동일하게 `agent` 접두.  
   - **전환용(루트)**: **`contrabass-moleU --version`** / **`-version`** — 구버전 업데이트·외부 스크립트가 루트 플래그만 호출하는 경우를 위해 **`agent` 없이** 한 줄 출력을 허용한다. 향후 제거·비권장으로 좁힐 수 있다.  
   - 출력 형식은 동일: **`<BinaryName> <main.VersionKey>`** 한 줄.
-- **`--host-info`**: **`-apiprefix`**(선택, 기본 `/maintenance/api/v1`)와 **`<self|원격 IP>`** 한 인자. 대상 에이전트 **Gin(`Server.HTTPPort`, 기본 8888)** 에 **`GET {APIPrefix}/self`** — **대상 HTTP 서비스가 떠 있어야 한다**. 표준 출력은 DISCOVERY_RESPONSE 주요 필드를 영문 라벨 표로 출력(`BUILD_VARIANT` 포함). 구현: `maintenance/hostinfocli` → `maintenance/clirest`. **`-h` 도움말 순서**: `-h` 다음 `-version` 다음 **`--host-info`** …
+- **`--host-info`**: **`-apiprefix`**(선택, 기본 `/maintenance/api/v1`)와 **`<self|local|원격 IP>`** 한 인자(`local`은 `self`와 동의어, REST JSON은 `self` 유지). 대상 에이전트 **Gin(`Server.HTTPPort`, 기본 8888)** 에 **`GET {APIPrefix}/self`** 로 CPU·메모리·버전 등을 가져온 뒤, stdout의 **`HOST_IP`**(응답 IP)·**`HOST_IPS`**(발견 IP)는 **UDP Discovery(~3초)** 로 보강(웹 카드 **IP**·**응답한 IP** 규칙). **대상 HTTP 서비스가 떠 있어야 한다**. 구현: `maintenance/hostinfocli` → `maintenance/clirest` + `discoverycli`.
 - **`--nic-brd`**: §3.1.1과 동일 규칙으로 IPv4 브로드캐스트(brd)를 `NIC이름 : brd주소` 형식으로 출력(확인용) 후 종료.
-- **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [응답한 IP만] version=<에이전트 버전 키> (<control|compute>)` 형식으로, **`responded_from_ip`**만 취합하고 **버전·variant**는 DISCOVERY_RESPONSE JSON의 **`version`**·**`build_variant`** 필드(§3.4·§9)를 표시한다(웹 UI와 같이 variant는 버전 뒤 괄호; 버전 없으면 `version=?`, variant 없으면 괄호 생략). Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
-- **`--apply-update`**: **`-apiprefix`**(선택), **`-agent-variant`**(선택), **`-use-bundle-config`**(선택, 지정 시 번들 config·미지정 시 **current config 재사용**), **`<self|원격 IP>`**, **`<bundle.tar.gz>`**. 대상 Gin에 **`POST …/upload`** 후 **`POST …/apply-update`**(JSON, **`reuse_previous_config` 명시**). **대상 HTTP 서비스 필수**. 검증·정책·적용은 서버 핸들러가 처리(웹 UI와 동등). `maintenance/applycli` → `maintenance/clirest`. **CLI 도움말·진단 메시지**는 **영문**.
-- **`--versions-list`**: **`-apiprefix`**(선택)와 **`<self|원격 IP>`**. **`GET {APIPrefix}/versions/list`** on target Gin. **대상 HTTP 서비스 필수**.
-- **`--versions-switch`**: **`-apiprefix`**(선택), **`<self|원격 IP>`**, **`<버전 키>`**. **`POST {APIPrefix}/versions/switch-current`**. **대상 HTTP 서비스 필수**.
+- **`--discovery`**: 설정 파일·HTTP 서버 없이 **UDP Discovery만** 수행. `--dest-port`(기본 9999), `--src-port`(기본 9998), `--timeout`(초, 기본 10), `--service`(기본 `Mole-Discovery`). 시작 시 **사용 가능한 brd(브로드캐스트) 주소를 모두 한 줄씩 출력**한다. 에이전트와 같이 **서브넷별로 로컬 IP:src-port 소켓을 열어** 각 brd로 송신한다(다중 NIC·src≠dest 안정화). `reply_udp_port` 포함 `DISCOVERY_REQUEST` 전송 후, 같은 줄에서 `Discovering ... N` 카운트다운 → **`Discovery Done.`** → 수신 유예·드레인. 결과는 호스트별 **`[Local]`** / **`[Remote]`** `hostname - 대표 IP : [발견된 IP들] version=<에이전트 버전 키> (<control|compute>)` 형식으로, **대표 IP**는 마지막 **`responded_from_ip`**, **대괄호 IP**는 CPU UUID로 묶인 응답의 **`host_ip`**·**`responded_from_ip`** 를 모두 취합(웹 UI **IP**·**응답한 IP**와 동일 규칙). **버전·variant**는 DISCOVERY_RESPONSE JSON의 **`version`**·**`build_variant`** 필드(§3.4·§9)를 표시한다(웹 UI와 같이 variant는 버전 뒤 괄호; 버전 없으면 `version=?`, variant 없으면 괄호 생략). Local/Remote는 **CPU UUID 일치(대소문자 무시)** 우선, 아니면 **응답한 IP가 로컬 IPv4와 겹치는지**로 보조 판별한다.
+- **`--apply-update`**: **`-apiprefix`**(선택), **`-agent-variant`**(선택), **`-use-bundle-config`**(선택, 지정 시 번들 config·미지정 시 **current config 재사용**), **`<self|local|원격 IP>`**, **`<bundle.tar.gz>`**. 대상 Gin에 **`POST …/upload`** 후 **`POST …/apply-update`**(JSON, **`reuse_previous_config` 명시**). **대상 HTTP 서비스 필수**. 검증·정책·적용은 서버 핸들러가 처리(웹 UI와 동등). `maintenance/applycli` → `maintenance/clirest`. **CLI 도움말·진단 메시지**는 **영문**.
+- **`--versions-list`**: **`-apiprefix`**(선택)와 **`<self|local|원격 IP>`**. **`GET {APIPrefix}/versions/list`** on target Gin. **대상 HTTP 서비스 필수**.
+- **`--versions-switch`**: **`-apiprefix`**(선택), **`<self|local|원격 IP>`**, **`<버전 키>`**. **`POST {APIPrefix}/versions/switch-current`**. **대상 HTTP 서비스 필수**.
 
 #### 4.1.1 리모트 일괄 CLI (4종)
 
@@ -224,16 +224,26 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 - **HTTP 대상**: 단일 호스트 CLI는 Gin(`Server.HTTPPort`)이지만, 일괄 4종은 **로컬 maintenance**(`Maintenance.MaintenancePort`, 기본 8889) NDJSON API.
 - **Discovery**: 명령마다 **내부 1회**, dest 9999·src 9998·timeout 10s·service `Mole-Discovery`. **`--discovery` 선행 불필요**; discovery 플래그는 일괄 명령에 없음.
-- **`hosts[]`**: 이번 Discovery 응답을 **메모리**에서 병합(CPU UUID·IP). `remoteregistry`/웹 DOM에 의존하지 않음.
+- **`hosts[]`**: 이번 Discovery 응답을 **메모리**에서 CPU UUID로 병합. 각 응답의 **`host_ip`**·**`responded_from_ip`** 를 `ips[]`에 포함, **`primary_ip`** 는 마지막 **`responded_from_ip`**. 로컬·self 제외(`discoverycli.BulkPushHostsFromDiscovery`). `remoteregistry`/웹 DOM에 의존하지 않음.
 - **`-apiprefix`**·**`-maintenance-port`**: 공통(기본 `/maintenance/api/v1`, `8889`).
 - **`--apply-update-all-remotes`**: **`-agent-variant`**(생략 시 CLI `build_variant`, 없으면 `compute`), **`-use-bundle-config`**(`--apply-update` 와 동일 — 미지정 시 각 원격 **current** config 재사용).
 - **구현**: `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli` → `discoverycli` + `clirest`.
+
+#### 4.1.2 대화형 REPL (`agent`)
+
+- **진입**: **`contrabass-moleU agent`**(인자 없음). **`agent repl`** 은 동일 별칭. **`-cfg` 서비스·웹 UI는 대상이 아님**.
+- **프롬프트**: `contrabass-agent>`. **TTY**에서 readline — **↑/↓** 명령 히스토리(캐시 파일 `repl_history`), **Tab** 명령·인자 완성.
+- **Discovery**: `discover` — standalone `--discovery` 와 동일 UDP·출력 형식. 결과를 **메모리 캐시**; **`push-config-all`** 등 bulk는 **재-discovery 없음**.
+- **`host-info`**: `GET …/self` 후 IP 열은 **캐시 우선**, 없으면 UDP 보강(일회성 `--host-info` 와 동일 규칙).
+- **세션**: `set apiprefix`·`maintenance-port`·`agent-variant`·`use-bundle-config`; `show`·`hosts`·`clear-hosts`.
+- **로컬 대상**: REPL·일회성 CLI 공통 — **`self`** / **`local`** 동의어.
+- **구현**: `maintenance/replcli`. 상세: **[docs/REPL.md](docs/REPL.md)**.
 
 ---
 
 ## 5. API
 
-**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를, **CLI 옵션**(`--discovery`, `--apply-update`, `--push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes`, `--rollback-all-remotes`, `--versions-list`, `--versions-switch`, `--host-info` 등)은 [`docs/CLI.md`](docs/CLI.md)를 본다.
+**엔드포인트별 메서드(GET/POST)·쿼리/바디·응답 형식 요약**은 [`docs/REST_API.md`](docs/REST_API.md)를, **일회성 CLI**는 [`docs/CLI.md`](docs/CLI.md)를, **대화형 REPL**은 [`docs/REPL.md`](docs/REPL.md)를 본다.
 
 ### 5.1 공통 응답 형식 (일반 API)
 

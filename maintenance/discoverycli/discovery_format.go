@@ -2,28 +2,22 @@ package discoverycli
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/discovery"
-	"contrabass-agent/maintenance/hostinfo"
 )
+
+// FormatDiscoveryResultLines formats grouped discovery results for display (CLI/REPL).
+func FormatDiscoveryResultLines(list []discovery.DiscoveryResponse) []string {
+	return formatResults(list)
+}
 
 func formatResults(list []discovery.DiscoveryResponse) []string {
 	if len(list) == 0 {
 		return []string{"(no hosts found)"}
 	}
-	selfUUID := ""
-	if info, err := hostinfo.Get(); err == nil {
-		selfUUID = strings.TrimSpace(info.CPUUUID)
-	}
-	localIPSet := make(map[string]struct{})
-	for _, ip := range hostinfo.AllIPv4Addresses() {
-		if ip != "" {
-			localIPSet[ip] = struct{}{}
-		}
-	}
+	selfUUID, localIPSet := localDiscoveryContext()
 
 	type group struct {
 		hostname     string
@@ -37,26 +31,18 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 	order := []string{}
 
 	for _, r := range list {
-		key := strings.TrimSpace(r.CPUUUID)
-		if key == "" {
-			hn := strings.TrimSpace(r.Hostname)
-			if hn == "" {
-				hn = "(no name)"
-			}
-			key = "noid:" + hn
-		}
+		key := discoveryGroupKey(r)
 		g, ok := groups[key]
 		if !ok {
 			cpu := strings.TrimSpace(r.CPUUUID)
 			g = &group{
 				hostname:     r.Hostname,
-				hostIP:       "",
 				cpuUUID:      cpu,
 				version:      strings.TrimSpace(r.Version),
 				buildVariant: strings.TrimSpace(r.BuildVariant),
 				ips:          make(map[string]struct{}),
 			}
-			if g.hostname == "" {
+			if strings.TrimSpace(g.hostname) == "" {
 				g.hostname = "(no name)"
 			}
 			groups[key] = g
@@ -74,22 +60,16 @@ func formatResults(list []discovery.DiscoveryResponse) []string {
 				g.buildVariant = strings.TrimSpace(r.BuildVariant)
 			}
 		}
-		if r.RespondedFromIP != "" {
-			g.ips[r.RespondedFromIP] = struct{}{}
-			if g.hostIP == "" {
-				g.hostIP = r.RespondedFromIP
-			}
+		addDiscoveryResponseIPs(g.ips, r)
+		if ip := strings.TrimSpace(r.RespondedFromIP); ip != "" {
+			g.hostIP = ip
 		}
 	}
 
 	out := make([]string, 0, len(order))
 	for _, key := range order {
 		g := groups[key]
-		ipList := make([]string, 0, len(g.ips))
-		for ip := range g.ips {
-			ipList = append(ipList, ip)
-		}
-		sort.Strings(ipList)
+		ipList := sortedIPSet(g.ips)
 		primary := g.hostIP
 		if primary == "" && len(ipList) > 0 {
 			primary = ipList[0]

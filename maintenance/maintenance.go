@@ -27,6 +27,7 @@ import (
 	"contrabass-agent/maintenance/ginproxy"
 	"contrabass-agent/maintenance/restartallclicli"
 	"contrabass-agent/maintenance/rollbackallclicli"
+	"contrabass-agent/maintenance/replcli"
 	"contrabass-agent/maintenance/server"
 	"contrabass-agent/maintenance/versionscli"
 
@@ -42,7 +43,8 @@ Usage:
 Other commands require the "agent" subcommand first (not used for HTTP service).
 
 Options (after "agent"):
-  -h, --help               Show this help
+  <bin> agent                        Interactive REPL (default when no other command)
+  -h, --help               Show this help (with agent: <bin> agent -h)
   -version, --version      Print version and exit
   --host-info [flags]      Host info via GET .../self (<bin> agent --host-info -h)
   --nic-brd                Print per-interface IPv4 broadcast addresses (same rules as Discovery), then exit
@@ -54,6 +56,7 @@ Options (after "agent"):
   --restart-all-remotes [flags]      UDP discovery then restart all remotes (<bin> agent --restart-all-remotes -h)
   --apply-update-all-remotes [flags] Upload bundle, UDP discovery, apply to all remotes (<bin> agent --apply-update-all-remotes -h)
   --rollback-all-remotes [flags]     UDP discovery then rollback all remotes (<bin> agent --rollback-all-remotes -h)
+  repl                               Alias for <bin> agent (interactive REPL)
 
 `
 
@@ -82,7 +85,8 @@ func printMustSpecifyConfig(binVersion string) {
 	fmt.Println("To start HTTP service and Discovery, pass a config file:")
 	fmt.Printf("  %s -cfg <%s>\n", appmeta.BinaryName, appmeta.ConfigFileName)
 	fmt.Println()
-	fmt.Println("For discovery, host-info, and other CLI commands:")
+	fmt.Println("For discovery, host-info, REPL, and other CLI commands:")
+	fmt.Printf("  %s agent              # interactive REPL\n", appmeta.BinaryName)
 	fmt.Printf("  %s agent --help\n", appmeta.BinaryName)
 }
 
@@ -344,8 +348,7 @@ func Run(buildVersionKey string, buildVariantArg string, args []string) int {
 		return 1
 	}
 	if len(args) == 2 {
-		fmt.Fprintf(os.Stderr, "%s: %q requires a command after it (e.g. %s agent --help)\n", appmeta.BinaryName, "agent", appmeta.BinaryName)
-		return 1
+		return replcli.Run(buildVersionKey, buildVariant, nil)
 	}
 	args = append([]string{args[0]}, args[2:]...)
 
@@ -384,12 +387,14 @@ func Run(buildVersionKey string, buildVariantArg string, args []string) int {
 			return applyupdateallclicli.Run(buildVariant, args[2:])
 		case "--rollback-all-remotes":
 			return rollbackallclicli.Run(args[2:])
+		case "repl", "--repl":
+			return replcli.Run(buildVersionKey, buildVariant, args[2:])
 		case "--versions-list":
 			return versionscli.RunList(args[2:])
 		case "--versions-switch":
 			return versionscli.RunSwitch(args[2:])
 		case "--host-info":
-			return hostinfocli.Run(buildVersionKey, buildVariant, args[2:])
+			return hostinfocli.Run(buildVersionKey, buildVariant, args[2:], nil)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "unknown argument: %q\n\n", args[1])

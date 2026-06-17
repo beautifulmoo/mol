@@ -28,7 +28,15 @@ const DefaultAPIPrefix = "/maintenance/api/v1"
 const DefaultHTTPPort = 8888
 
 const selfTarget = "self"
+const localTarget = "local"
 const bundleFormField = "bundle"
+
+// IsLocalTarget reports whether target names this machine (CLI/REPL: self or local).
+// HTTP JSON bodies still use "self"; this is only for argv targets.
+func IsLocalTarget(target string) bool {
+	t := strings.TrimSpace(target)
+	return strings.EqualFold(t, selfTarget) || strings.EqualFold(t, localTarget)
+}
 
 // NormalizeAPIPrefix returns a path prefix (leading slash, no trailing slash).
 // Empty input uses DefaultAPIPrefix.
@@ -43,10 +51,11 @@ func NormalizeAPIPrefix(p string) string {
 	return strings.TrimSuffix(p, "/")
 }
 
-// DialAddr returns host:port for TCP reachability checks (Gin listener).
-func DialAddr(target string) string {
-	host := resolveHost(target)
-	return net.JoinHostPort(host, strconv.Itoa(DefaultHTTPPort))
+func resolveHost(target string) string {
+	if IsLocalTarget(target) {
+		return "127.0.0.1"
+	}
+	return strings.TrimSpace(target)
 }
 
 // APIBaseURL returns http://host:port{apiPrefix} for API calls (no trailing slash on prefix).
@@ -56,11 +65,27 @@ func APIBaseURL(target, apiPrefix string) string {
 	return "http://" + net.JoinHostPort(host, strconv.Itoa(DefaultHTTPPort)) + prefix
 }
 
-func resolveHost(target string) string {
-	if strings.EqualFold(strings.TrimSpace(target), selfTarget) {
-		return "127.0.0.1"
+func ensureHealthOK(client *http.Client, healthURL, serviceAt string) error {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
+	if err != nil {
+		return err
 	}
-	return strings.TrimSpace(target)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s (GET %s failed: %v)", serviceAt, healthURL, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s (GET %s returned HTTP %d: %s)", serviceAt, healthURL, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(body, &out) != nil || out.Status != "success" {
+		return fmt.Errorf("%s (GET %s: unexpected response)", serviceAt, healthURL)
+	}
+	return nil
 }
 
 // DefaultHTTPClient is used by CLIs for REST calls.
@@ -77,27 +102,7 @@ func EnsureServiceRunning(client *http.Client, target, apiPrefix string) error {
 		client = DefaultHTTPClient(5 * time.Second)
 	}
 	base := APIBaseURL(target, apiPrefix)
-	healthURL := base + "/health"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("agent service is not running at %s (GET %s failed: %v)", base, healthURL, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("agent service is not running at %s (GET %s returned HTTP %d: %s)", base, healthURL, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var out struct {
-		Status string `json:"status"`
-	}
-	if json.Unmarshal(body, &out) != nil || out.Status != "success" {
-		return fmt.Errorf("agent service is not running at %s (GET %s: unexpected response)", base, healthURL)
-	}
-	return nil
+	return ensureHealthOK(client, base+"/health", fmt.Sprintf("agent service is not running at %s", base))
 }
 
 // ValidateTarget returns an error if target is empty, or remote target is not a valid IP.
@@ -106,7 +111,7 @@ func ValidateTarget(target string) error {
 	if target == "" {
 		return fmt.Errorf("target must not be empty")
 	}
-	if strings.EqualFold(target, selfTarget) {
+	if IsLocalTarget(target) {
 		return nil
 	}
 	if net.ParseIP(target) == nil {

@@ -1,6 +1,6 @@
 # Maintenance HTTP API 명세
 
-**CLI(명령줄)** 는 **[CLI.md](./CLI.md)** 를 참고한다.
+**CLI(명령줄)** 는 **[CLI.md](./CLI.md)** 를, **대화형 REPL**은 **[REPL.md](./REPL.md)** (`contrabass-moleU agent`, 인자 없음)를 참고한다.
 
 `maintenance/server/server.go`의 `Handler()`에 등록된 엔드포인트를 정리한다.  
 **기본 URL**은 `http://<호스트>:<Maintenance.MaintenancePort>`이며, 경로 앞에는 설정값 **`Maintenance.APIPrefix`**(기본 `/api/v1`), **`Maintenance.WebPrefix`**(기본 `/web`)가 붙는다. 아래 표에서는 `{API}`, `{WEB}`로 표기한다.
@@ -20,7 +20,7 @@
 
 ## 일괄 원격 API·CLI
 
-오케스트레이터 **maintenance HTTP**(`Maintenance.MaintenancePort`, 기본 8889)에서 호출한다. Body의 **`hosts[]`** 는 화면 카드 1장 = 호스트 1대(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). body 생략 시 서버 **remoteregistry** fallback(웹·CLI는 Discovery로 만든 `hosts` 전달 권장).
+오케스트레이터 **maintenance HTTP**(`Maintenance.MaintenancePort`, 기본 8889)에서 호출한다. Body의 **`hosts[]`** 는 화면 카드 1장 = 호스트 1대(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). **`ips[]`** 는 Discovery 응답별 **`host_ip`**·**`responded_from_ip`** 병합(웹 **IP**·CLI `--discovery` 대괄호와 동일). **`primary_ip`** 는 **`responded_from_ip`** 대표값. body 생략 시 서버 **remoteregistry** fallback(웹·CLI는 Discovery로 만든 `hosts` 전달 권장).
 
 | API (`POST {API}/…`) | CLI | 완료 시 `update_history.log` 요약 |
 |----------------------|-----|-----------------------------------|
@@ -29,7 +29,7 @@
 | `apply-update-all` | `agent --apply-update-all-remotes <bundle.tar.gz>` | `apply-update-all finished succeeded=N failed=M skipped=K` |
 | `versions/rollback-all` | `agent --rollback-all-remotes` | `rollback-all finished succeeded=N failed=M skipped=K` |
 
-CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호출한다(`--discovery` 선행 불필요). 공통 플래그: `-apiprefix`, `-maintenance-port`. 상세는 **CLI.md** 「리모트 일괄 CLI (공통)」.
+CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호출한다(`--discovery` 선행 불필요). **REPL** bulk는 **`discover` 캐시**의 `hosts[]` 사용(재-discovery 없음). 공통 플래그: `-apiprefix`, `-maintenance-port`. 상세는 **CLI.md** 「리모트 일괄 CLI (공통)」·**REPL.md**.
 
 ---
 
@@ -46,7 +46,7 @@ CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호�
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형, `version`·**`build_variant`** 등). |
+| **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형, `version`·**`build_variant`** 등). **CLI** `agent --host-info`·REPL `host-info`는 이 응답을 표로 출력하며, **`HOST_IP`**(응답 IP)·**`HOST_IPS`**(발견 IP) 열은 추가 **UDP Discovery**(~3s, REPL은 `discover` 캐시 우선)로 보강 — 웹 카드 **IP**·**응답한 IP** 규칙과 동일. |
 | **GET** | `{API}/health` | 없음 | **200** `success`, `data`: `{ "ok": true }` — HTTP 헬스(원격 에이전트 `Server.HTTPPort` 경로 동일). |
 | **GET** | `{API}/remote-health-check` | **Query**: `ip` (필수, 원격 호스트 IP). 이 서버가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`). | **200** `success` (원격 헬스 OK) / `fail` (연결·HTTP·응답 형식 오류). |
 | **GET** | `{API}/host-info` | **Query**: `ip` (선택). 비어 있거나 `self`면 `/self`와 동일. 그 외 해당 IP로 **UDP 유니캐스트** Discovery. | **200** `success` + 단일 호스트 객체, 또는 `fail` + 메시지. |

@@ -33,16 +33,6 @@ type DiscoverOptions struct {
 	Progress func(remaining int)
 }
 
-// DiscoverWithDefaults runs UDP discovery with DefaultDestPort, DefaultSrcPort, DefaultTimeoutSec, and DefaultDiscoveryServiceName.
-func DiscoverWithDefaults() ([]discovery.DiscoveryResponse, error) {
-	return Discover(DiscoverOptions{
-		DestPort:    DefaultDestPort,
-		SrcPort:     DefaultSrcPort,
-		TimeoutSec:  DefaultTimeoutSec,
-		ServiceName: agentcfg.DefaultDiscoveryServiceName,
-	})
-}
-
 // Discover collects DISCOVERY_RESPONSE packets until the timeout elapses.
 func Discover(opts DiscoverOptions) ([]discovery.DiscoveryResponse, error) {
 	if opts.DestPort <= 0 {

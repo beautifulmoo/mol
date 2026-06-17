@@ -14,7 +14,7 @@ import (
 
 // Run parses flags and runs apply-update CLI.
 //
-//	<bin> agent --apply-update [-apiprefix <path>] [-agent-variant=control|compute] [-use-bundle-config] <self|remote-ip> <bundle.tar.gz>
+//	<bin> agent --apply-update [-apiprefix <path>] [-agent-variant=control|compute] [-use-bundle-config] <self|local|remote-ip> <bundle.tar.gz>
 func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	_ = buildVersionKey
 
@@ -24,7 +24,7 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	agentVariantFlag := fs.String("agent-variant", "", "control or compute; if omitted, match installed build_variant on target (compute if unknown)")
 	useBundleConfigFlag := fs.Bool("use-bundle-config", false, "apply config from the bundle instead of reusing current agent.local.yml")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update [-apiprefix=<path>] [-agent-variant=control|compute] [-use-bundle-config] <self|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --apply-update [-apiprefix=<path>] [-agent-variant=control|compute] [-use-bundle-config] <self|local|remote-ip> <bundle.tar.gz>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST {APIPrefix}/upload then POST {APIPrefix}/apply-update on the target agent (Gin port %d).\n", clirest.DefaultHTTPPort)
 		fmt.Fprintf(os.Stderr, "  The target agent HTTP service must be running.\n\n")
 		fmt.Fprintf(os.Stderr, "  Optional flags may be written as -name=value or -name value (Go flag package).\n\n")
@@ -48,7 +48,7 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 	}
 	pos := fs.Args()
 	if len(pos) != 2 {
-		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|remote-ip> <bundle.tar.gz>\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|local|remote-ip> <bundle.tar.gz>\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}
@@ -97,7 +97,7 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 
 	cur := strings.TrimSpace(selfInfo.Version)
 	reusePreviousConfig := !*useBundleConfigFlag
-	if strings.EqualFold(target, "self") {
+	if clirest.IsLocalTarget(target) {
 		fmt.Printf("Applying bundle %s locally (current %s, variant %s, reuse_previous_config=%v)\n", versionKey, cur, variant, reusePreviousConfig)
 	} else {
 		fmt.Printf("Applying bundle %s to remote %s (current %s, variant %s, reuse_previous_config=%v)\n", versionKey, target, cur, variant, reusePreviousConfig)

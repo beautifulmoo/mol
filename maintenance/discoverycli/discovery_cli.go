@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 
 	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/appmeta"
@@ -24,7 +22,7 @@ func Run(args []string) int {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s agent --discovery [flags]\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  Sends DISCOVERY_REQUEST to broadcast:<dest-port>, listens on <src-port>.\n")
-		fmt.Fprintf(os.Stderr, "  Each line: [Local|Remote] hostname - primary : [response IPs] version=<key> (<control|compute> if known)\n\n")
+		fmt.Fprintf(os.Stderr, "  Each line: [Local|Remote] hostname - primary : [discovered IPs] version=<key> (<control|compute> if known)\n\n")
 		fs.PrintDefaults()
 	}
 	for _, a := range args {
@@ -49,39 +47,18 @@ func Run(args []string) int {
 		return 1
 	}
 
-	fmt.Println("Discovery brd (broadcast addresses):")
-	for _, brd := range BroadcastAddresses() {
-		fmt.Printf("  %s\n", brd)
-	}
-
-	nw := len(strconv.Itoa(*timeoutSec))
-	if nw < 2 {
-		nw = 2
-	}
-	maxLineLen := len(fmt.Sprintf("Discovering ... %*d ", nw, *timeoutSec))
-
-	list, err := Discover(DiscoverOptions{
+	list, err := DiscoverToStdout(DiscoverOptions{
 		DestPort:    *destPort,
 		SrcPort:     *srcPort,
 		TimeoutSec:  *timeoutSec,
 		ServiceName: *serviceName,
-		Progress: func(remaining int) {
-			fmt.Printf("\rDiscovering ... %*d ", nw, remaining)
-		},
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 
-	doneLine := "Discovery Done."
-	if len(doneLine) < maxLineLen {
-		doneLine = doneLine + strings.Repeat(" ", maxLineLen-len(doneLine))
-	}
-	fmt.Printf("\r%s\n", doneLine)
-
-	lines := formatResults(list)
-	for _, line := range lines {
+	for _, line := range FormatDiscoveryResultLines(list) {
 		fmt.Println(line)
 	}
 	return 0

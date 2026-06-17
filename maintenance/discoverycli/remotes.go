@@ -6,26 +6,17 @@ import (
 
 	"contrabass-agent/maintenance/clirest"
 	"contrabass-agent/maintenance/discovery"
-	"contrabass-agent/maintenance/hostinfo"
 )
 
 // BulkPushHostsFromDiscovery merges discovery responses into one host per remote (excludes local/self).
 func BulkPushHostsFromDiscovery(list []discovery.DiscoveryResponse) []clirest.BulkPushHost {
-	selfUUID := ""
-	if info, err := hostinfo.Get(); err == nil {
-		selfUUID = strings.TrimSpace(info.CPUUUID)
-	}
-	localIPSet := make(map[string]struct{})
-	for _, ip := range hostinfo.AllIPv4Addresses() {
-		if ip != "" {
-			localIPSet[ip] = struct{}{}
-		}
-	}
+	selfUUID, localIPSet := localDiscoveryContext()
 
 	type group struct {
-		hostname string
-		cpuUUID  string
-		ips      map[string]struct{}
+		hostname         string
+		cpuUUID          string
+		ips              map[string]struct{}
+		primaryResponded string
 	}
 	groups := make(map[string]*group)
 	order := []string{}
@@ -37,14 +28,7 @@ func BulkPushHostsFromDiscovery(list []discovery.DiscoveryResponse) []clirest.Bu
 		if isLocalDiscoveryResponse(r, selfUUID, localIPSet) {
 			continue
 		}
-		key := strings.TrimSpace(r.CPUUUID)
-		if key == "" {
-			hn := strings.TrimSpace(r.Hostname)
-			if hn == "" {
-				hn = "(no name)"
-			}
-			key = "noid:" + hn
-		}
+		key := discoveryGroupKey(r)
 		g, ok := groups[key]
 		if !ok {
 			g = &group{
@@ -61,24 +45,21 @@ func BulkPushHostsFromDiscovery(list []discovery.DiscoveryResponse) []clirest.Bu
 		if g.cpuUUID == "" {
 			g.cpuUUID = strings.TrimSpace(r.CPUUUID)
 		}
+		addDiscoveryResponseIPs(g.ips, r)
 		if ip := strings.TrimSpace(r.RespondedFromIP); ip != "" {
-			g.ips[ip] = struct{}{}
+			g.primaryResponded = ip
 		}
 	}
 
 	out := make([]clirest.BulkPushHost, 0, len(order))
 	for _, key := range order {
 		g := groups[key]
-		ipList := make([]string, 0, len(g.ips))
-		for ip := range g.ips {
-			ipList = append(ipList, ip)
-		}
-		sort.Strings(ipList)
+		ipList := sortedIPSet(g.ips)
 		if len(ipList) == 0 {
 			continue
 		}
 		out = append(out, clirest.BulkPushHost{
-			PrimaryIP: ipList[0],
+			PrimaryIP: primaryFromResponded(g.primaryResponded, ipList),
 			Hostname:  g.hostname,
 			CPUUUID:   g.cpuUUID,
 			IPs:       ipList,

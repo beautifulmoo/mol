@@ -16,7 +16,7 @@ import (
 	"contrabass-agent/maintenance/versionsapi"
 )
 
-// RunList runs: <bin> agent --versions-list [-apiprefix <path>] <self|remote-ip>
+// RunList runs: <bin> agent --versions-list [-apiprefix <path>] <self|local|remote-ip>
 func RunList(args []string) int {
 	apiPrefix, pos, showHelp, err := clirest.ParseAPIPrefixFlag(args)
 	if showHelp {
@@ -29,7 +29,7 @@ func RunList(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		fmt.Fprintf(os.Stderr, "%s: expected exactly one argument: <self|remote-ip>\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: expected exactly one argument: <self|local|remote-ip>\n", appmeta.BinaryName)
 		printVersionsListUsage()
 		return 1
 	}
@@ -56,7 +56,7 @@ func RunList(args []string) int {
 	}
 
 	remoteLabel := ""
-	if !strings.EqualFold(target, "self") {
+	if !clirest.IsLocalTarget(target) {
 		remoteLabel = target
 	}
 	printVersionsTable(os.Stdout, remoteLabel, payload.Versions)
@@ -64,7 +64,7 @@ func RunList(args []string) int {
 }
 
 func printVersionsListUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-list [-apiprefix <path>] <self|remote-ip>\n\n", appmeta.BinaryName)
+	fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-list [-apiprefix <path>] <self|local|remote-ip>\n\n", appmeta.BinaryName)
 	fmt.Fprintf(os.Stderr, "  GET {APIPrefix}/versions/list on the target agent (Gin port %d).\n", clirest.DefaultHTTPPort)
 	fmt.Fprintf(os.Stderr, "  Default -apiprefix: %s\n", clirest.DefaultAPIPrefix)
 	fmt.Fprintf(os.Stderr, "  The target agent HTTP service must be running.\n\n")
@@ -95,13 +95,13 @@ func printVersionsTable(w io.Writer, remoteIP string, rows []versionsapi.Version
 	_ = tw.Flush()
 }
 
-// RunSwitch runs: <bin> agent --versions-switch [-apiprefix <path>] <self|remote-ip> <version-key>
+// RunSwitch runs: <bin> agent --versions-switch [-apiprefix <path>] <self|local|remote-ip> <version-key>
 func RunSwitch(args []string) int {
 	fs := flag.NewFlagSet("versions-switch", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	apiPrefixFlag := fs.String("apiprefix", "", fmt.Sprintf("API path prefix (default %s)", clirest.DefaultAPIPrefix))
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch [-apiprefix <path>] <self|remote-ip> <version-key>\n\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch [-apiprefix <path>] <self|local|remote-ip> <version-key>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST {APIPrefix}/versions/switch-current on the target agent (Gin port %d).\n", clirest.DefaultHTTPPort)
 		fmt.Fprintf(os.Stderr, "  Default -apiprefix: %s\n", clirest.DefaultAPIPrefix)
 		fmt.Fprintf(os.Stderr, "  The target agent HTTP service must be running.\n\n")
@@ -118,7 +118,7 @@ func RunSwitch(args []string) int {
 	}
 	pos := fs.Args()
 	if len(pos) != 2 {
-		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|remote-ip> <version-key>\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|local|remote-ip> <version-key>\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}

@@ -1,4 +1,4 @@
-# Contrabass agent
+# Mole Agent
 
 단일 실행 파일 **`contrabass-moleU`** 로 동작하는 Discovery + 웹 UI (Go, net/http, UDP broadcast). 소스 트리는 예: `~/work/mol`.
 
@@ -105,7 +105,7 @@ sudo ./bin/ubuntu/contrabass-agent-uninstall.sh
 |------|------|
 | `-cfg <파일>` | **필수(서비스 기동 시).** HTTP 서버 + UDP Discovery 기동. argv는 **`<bin> -cfg <파일>`** 또는 **`<bin> agent -cfg <파일>`**(동일 `Run` 서비스). **바깥 Gin** 은 **`<bin> -cfg …` 일 때만** `main`에서 `router.Run`으로 연다. **`<bin> agent …`** 는 Gin 없이 `Run`만. |
 | (인자 없음) | 버전·`-cfg` / `agent` 안내 출력 후 종료 |
-| **`agent`** (인자 없음) | **대화형 REPL** — **[docs/REPL.md](docs/REPL.md)** (`contrabass-agent>`, `discover` 캐시, 히스토리·Tab). **`agent repl`** 별칭 |
+| **`agent`** (인자 없음) | **대화형 REPL** — **[docs/REPL.md](docs/REPL.md)** (`Mole-Agent>`, `discover` 캐시, 히스토리·Tab). **`agent repl`** 별칭 |
 | `agent -h`, `agent --help` | 사용법 출력 |
 | `agent --version`, `agent -version` | 빌드 버전 한 줄 출력 후 종료 |
 | `agent --nic-brd` | Discovery에 쓰는 것과 동일 규칙으로 `(인터페이스 : 브로드캐스트 주소)` 출력 후 종료(확인용) |
@@ -177,5 +177,7 @@ Maintenance:
 **리모트 일괄 CLI 4종**(`agent --push-config-all-remotes` 등)은 orchestrator `-cfg` 서비스·로컬 maintenance 포트(기본 8889)를 쓰며, Discovery는 명령 내부에서 기본값으로 수행한다. **REPL**의 `push-config-all` 등은 **`discover` 캐시**만 사용. 공통 규칙·종료 코드는 **docs/CLI.md** 「리모트 일괄 CLI (공통)」·**docs/REPL.md**.
 
 REST API 경로·바디 요약은 **docs/REST_API.md** 를 본다.
+
+**시스템 개요**(소개용): **docs/OVERVIEW.md**
 
 Discovery CLI·프로토콜 변경 요약은 **[CHANGELOG.md](CHANGELOG.md)** 를 본다.

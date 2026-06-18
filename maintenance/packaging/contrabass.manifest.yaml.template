@@ -1,4 +1,4 @@
-# Contrabass agent deployment bundle — manifest template for tar.gz packages.
+# Mole Agent deployment bundle — manifest template for tar.gz packages.
 # - Paths are relative to the archive root (flat ./name layout).
 # - Placeholders are substituted by maintenance/scripts/pack-agent-tarball.sh (64-char hex sha256).
 # - See maintenance/packaging/contrabass.manifest.example.yaml for a filled-out sample.

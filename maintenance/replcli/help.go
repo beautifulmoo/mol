@@ -11,7 +11,7 @@ import (
 	"contrabass-agent/maintenance/discoverycli"
 )
 
-const prompt = "contrabass-agent> "
+const prompt = "Mole-Agent> "
 
 func printHelp(topic string) {
 	topic = strings.ToLower(strings.TrimSpace(topic))
@@ -26,9 +26,9 @@ func printHelp(topic string) {
 	fmt.Print(helpText)
 }
 
-const helpText = `Contrabass agent interactive REPL (agent CLI only; does not start -cfg service).
+const helpText = `Mole Agent interactive REPL (agent CLI only; does not start -cfg service).
 
-Prompt: contrabass-agent>
+Prompt: Mole-Agent>
 
 Session
   set <key> <value>     Session defaults (persist until exit)

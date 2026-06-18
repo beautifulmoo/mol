@@ -34,7 +34,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const helpText = `Contrabass agent — Discovery and maintenance web UI
+const helpText = `Mole Agent — Discovery and maintenance web UI
 
 Usage:
   <bin> -cfg <file>         Start HTTP server + Discovery (config file required)

@@ -1,4 +1,4 @@
-# Contrabass agent — 대화형 REPL
+# Mole Agent — 대화형 REPL
 
 **`contrabass-moleU agent`**(인자 없음)로 진입하는 대화형 셸이다. **`-cfg` 서비스 기동·웹 UI는 대상이 아니다.** 일회성 `agent --…` CLI와 같은 작업을 프롬프트에서 반복 실행한다.
 
@@ -18,7 +18,7 @@ contrabass-moleU agent -h            # REPL이 아니라 agent CLI 도움말(일
 
 | 항목 | 설명 |
 |------|------|
-| **프롬프트** | `contrabass-agent>` |
+| **프롬프트** | `Mole-Agent>` |
 | **종료** | `exit` 또는 `quit` |
 | **도움말** | `help` — 전체 목록. `help <명령>` — 해당 명령만(예: `help discover`) |
 | **버전** | `version` — 빌드 버전 한 줄 |

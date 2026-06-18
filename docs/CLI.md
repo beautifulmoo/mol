@@ -1,4 +1,4 @@
-# Contrabass agent — CLI 명세
+# Mole Agent — CLI 명세
 
 루트 `main.go`는 argv를 나눈 뒤 **`maintenance.Run(main.VersionKey, os.Args)`** 의 반환값으로 **`os.Exit`** 한다. 실제 명령 분기는 **`maintenance/maintenance.go`** 의 `Run`에 있다.
 
@@ -433,7 +433,7 @@ Discovery 후 호스트 수, 호스트별 `[N/M] …: rollback requested via …
 
 ## 대화형 REPL
 
-**`contrabass-moleU agent`**(인자 없음) → 프롬프트 `contrabass-agent>`. `discover` 캐시, 세션 `set`, bulk·단일 호스트 명령, readline 히스토리·Tab 완성.
+**`contrabass-moleU agent`**(인자 없음) → 프롬프트 `Mole-Agent>`. `discover` 캐시, 세션 `set`, bulk·단일 호스트 명령, readline 히스토리·Tab 완성.
 
 상세(명령 목록, 세션 키, bulk vs 일회성 CLI, Tab 완성): **[REPL.md](./REPL.md)**.
 

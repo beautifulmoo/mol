@@ -18,7 +18,7 @@
 |------|------|
 | **리모트 일괄 CLI 4종** | `--push-config-all-remotes` 등 — 웹 §6.6과 동일 NDJSON API. Discovery 내부 1회. **docs/CLI.md** 「리모트 일괄 CLI」 |
 | **Discovery IP 표시** | `--discovery`·`discover`: 대괄호 IP = `host_ip`·`responded_from_ip` 병합(웹 **IP**). 대표 IP = **응답한 IP**. 일괄 `hosts[]`·`BulkPushHostsFromDiscovery` 동일 |
-| **REPL** | **`contrabass-moleU agent`**(인자 없음) → `contrabass-agent>`. `discover` 캐시 → bulk·`host-info` IP 보강. TTY: readline(↑/↓ 히스토리, Tab 완성). `agent repl` 별칭 |
+| **REPL** | **`contrabass-moleU agent`**(인자 없음) → `Mole-Agent>`. `discover` 캐시 → bulk·`host-info` IP 보강. TTY: readline(↑/↓ 히스토리, Tab 완성). `agent repl` 별칭 |
 | **`--host-info`** | `HOST_IP`/`HOST_IPS` = 응답 IP / 발견 IP(UDP ~3s 보강). REPL은 **discover 캐시** 우선 |
 | **로컬 대상** | CLI·REPL에서 **`local`** = **`self`** (argv만; REST JSON은 `self`) |
 | **코드 정리** | `discoverycli` 그룹/IP 헬퍼·`DiscoverToStdout` 공유; `replcli`; dead code 제거 |

@@ -1,8 +1,8 @@
-# Contrabass agent — 제품 요구 사항 문서 (PRD)
+# Mole Agent — 제품 요구 사항 문서 (PRD)
 
 ## 1. 개요
 
-- **프로젝트명**: Contrabass agent (저장소·작업 트리 디렉터리 예: `~/work/mol`)
+- **프로젝트명**: Mole Agent (저장소·작업 트리 디렉터리 예: `~/work/mol`)
 - **언어**: Go
 - **소스 위치**: `~/work/mol`
 - **실행 형태**: 프론트엔드와 백엔드를 포함한 **단일 실행 파일**
@@ -198,7 +198,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 - **인자 없이 실행**: **`contrabass-moleU`** — 버전과 **`-cfg <파일>`**(HTTP·Discovery 기동) 및 **`agent …`**(기타 CLI) 안내를 출력하고 종료한다. HTTP·Discovery 서비스는 **`<bin> -cfg <파일>`** 또는 **`<bin> agent -cfg <파일>`** 로 설정 파일을 지정했을 때 기동한다(`Run` 동작 동일). **바깥 Gin** 은 **`<bin> -cfg …` 일 때만** `main`이 연다.
 - **`-cfg <파일>`**(서비스): 설정 파일 경로(필수 인자). **`contrabass-moleU`의 첫 인자로 `-cfg`** 와 경로를 두면 HTTP·Discovery가 기동한다. systemd 등에서는 `ExecStart=.../contrabass-moleU -cfg /path/to/agent.local.yml` 형태를 권장한다. **`contrabass-moleU agent -cfg <파일>`** 도 동일하게 HTTP·Discovery를 기동한다.
-- **접두**: **`-h`·`--host-info`·`--discovery` 등**(서비스용 `-cfg` 제외)은 모두 **`contrabass-moleU agent …`** 형태(첫 인자 **`agent`**)로 호출한다. **`agent`만** 주면 **대화형 REPL**(`contrabass-agent>`, `maintenance/replcli`) — `-cfg`·웹 UI와 별개.
+- **접두**: **`-h`·`--host-info`·`--discovery` 등**(서비스용 `-cfg` 제외)은 모두 **`contrabass-moleU agent …`** 형태(첫 인자 **`agent`**)로 호출한다. **`agent`만** 주면 **대화형 REPL**(`Mole-Agent>`, `maintenance/replcli`) — `-cfg`·웹 UI와 별개.
 - **`-h`, `--help`**: 도움말(사용법·옵션 설명) 출력 후 종료. **`agent` 다음**에만 지원(`contrabass-moleU agent --help`).
 - **`-version`, `--version` (두 경로)**  
   - **권장**: **`contrabass-moleU agent --version`** 또는 **`agent -version`** — 다른 CLI와 동일하게 `agent` 접두.  
@@ -232,7 +232,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 #### 4.1.2 대화형 REPL (`agent`)
 
 - **진입**: **`contrabass-moleU agent`**(인자 없음). **`agent repl`** 은 동일 별칭. **`-cfg` 서비스·웹 UI는 대상이 아님**.
-- **프롬프트**: `contrabass-agent>`. **TTY**에서 readline — **↑/↓** 명령 히스토리(캐시 파일 `repl_history`), **Tab** 명령·인자 완성.
+- **프롬프트**: `Mole-Agent>`. **TTY**에서 readline — **↑/↓** 명령 히스토리(캐시 파일 `repl_history`), **Tab** 명령·인자 완성.
 - **Discovery**: `discover` — standalone `--discovery` 와 동일 UDP·출력 형식. 결과를 **메모리 캐시**; **`push-config-all`** 등 bulk는 **재-discovery 없음**.
 - **`host-info`**: `GET …/self` 후 IP 열은 **캐시 우선**, 없으면 UDP 보강(일회성 `--host-info` 와 동일 규칙).
 - **세션**: `set apiprefix`·`maintenance-port`·`agent-variant`·`use-bundle-config`; `show`·`hosts`·`clear-hosts`.
@@ -875,4 +875,4 @@ Maintenance:
 
 ---
 
-*본 PRD는 Contrabass agent 제품 요구 사항을 통합 기술 사양으로 기술하며, 구현·검증의 기준으로 삼는다.*
+*본 PRD는 Mole Agent 제품 요구 사항을 통합 기술 사양으로 기술하며, 구현·검증의 기준으로 삼는다.*

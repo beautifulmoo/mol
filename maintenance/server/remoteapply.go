@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,13 +16,23 @@ import (
 	"contrabass-agent/maintenance/versionsapi"
 )
 
+const (
+	remoteApplyTimeoutDefault    = 115 * time.Second
+	remoteApplyTimeoutMultipart  = 280 * time.Second
+	remoteStagingSubdir          = "remote-staging"
+)
+
 func (s *Server) applyUpdateOnRemote(ip, version, versionDir, agentVariant string, reusePreviousConfig bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), remoteApplyTimeoutDefault)
+	defer cancel()
+	return s.applyUpdateOnRemoteCtx(ctx, ip, version, versionDir, agentVariant, reusePreviousConfig)
+}
+
+func (s *Server) applyUpdateOnRemoteCtx(ctx context.Context, ip, version, versionDir, agentVariant string, reusePreviousConfig bool) error {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
 		return fmt.Errorf("remote apply failed: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
-	defer cancel()
 
 	if !versionsapi.DirHasAgentBinary(versionDir) && !versionsapi.StagingHasDualAgents(versionDir) {
 		return fmt.Errorf("version directory missing agent binaries: %s", versionDir)
@@ -47,6 +59,96 @@ func (s *Server) applyUpdateOnRemote(ip, version, versionDir, agentVariant strin
 	return nil
 }
 
+// applyPreparedBundleOnRemote stages a validated upload bundle then runs the shared remote apply path.
+// Used by multipart POST /apply-update; timeout preserves the longer multipart budget (upload + apply).
+func (s *Server) applyPreparedBundleOnRemote(ip string, pb *PreparedBundle, agentVariant string, reusePreviousConfig bool, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = remoteApplyTimeoutDefault
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	versionDir, err := s.stagePreparedBundleForRemoteApply(pb, reusePreviousConfig)
+	if err != nil {
+		return err
+	}
+	return s.applyUpdateOnRemoteCtx(ctx, ip, pb.VersionKey, versionDir, agentVariant, reusePreviousConfig)
+}
+
+// stagePreparedBundleForRemoteApply materializes pb under WorkDir/remote-staging for remote upload.
+// When reusePreviousConfig is false and BundlePath is set, the original tar.gz is kept as StagedBundleFileName
+// so postUploadToTarget re-sends the same bytes (multipart non-reuse behavior).
+// When reusePreviousConfig is true, config replacement is deferred to injectRemoteReuseConfigIntoVersionDir.
+func (s *Server) stagePreparedBundleForRemoteApply(pb *PreparedBundle, reusePreviousConfig bool) (string, error) {
+	if pb == nil {
+		return "", fmt.Errorf("prepared bundle is nil")
+	}
+	uploadDir := filepath.Join(pb.WorkDir, remoteStagingSubdir)
+	if err := os.RemoveAll(uploadDir); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return "", fmt.Errorf("remote staging dir: %w", err)
+	}
+	if err := StagePreparedBundle(uploadDir, pb); err != nil {
+		return "", err
+	}
+	if !reusePreviousConfig && strings.TrimSpace(pb.BundlePath) != "" {
+		dst := filepath.Join(uploadDir, StagedBundleFileName)
+		if err := copyFile(pb.BundlePath, dst, 0644); err != nil {
+			return "", fmt.Errorf("save uploaded bundle: %w", err)
+		}
+	}
+	return uploadDir, nil
+}
+
+func (s *Server) fetchRemoteCurrentConfigContent(ctx context.Context, baseURL, apiPrefix string) (string, error) {
+	u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/current-config"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := remoteHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("remote current-config request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Status string          `json:"status"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("parse remote current-config response: %w", err)
+	}
+	if out.Status != "success" {
+		msg := "remote current-config failed"
+		var errStr string
+		if json.Unmarshal(out.Data, &errStr) == nil && errStr != "" {
+			msg = errStr
+		}
+		return "", fmt.Errorf("%s", msg)
+	}
+	var wrapped struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(out.Data, &wrapped); err != nil {
+		return "", fmt.Errorf("parse remote current-config content: %w", err)
+	}
+	return wrapped.Content, nil
+}
+
+func (s *Server) injectRemoteReuseConfigIntoVersionDir(ctx context.Context, baseURL, apiPrefix, versionDir string) error {
+	content, err := s.fetchRemoteCurrentConfigContent(ctx, baseURL, apiPrefix)
+	if err != nil {
+		return err
+	}
+	if err := versionsapi.OverwriteVersionDirConfig(versionDir, content); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(versionDir, StagedBundleFileName))
+	return nil
+}
+
 func (s *Server) applyUpdateOnRemoteHost(remote remoteregistry.Remote, version, versionDir, agentVariant string, reusePreviousConfig bool) (connectIP string, tried []string, err error) {
 	return tryRemoteHostVoid(remote, func(ip string) error {
 		return s.applyUpdateOnRemote(ip, version, versionDir, agentVariant, reusePreviousConfig)
@@ -54,7 +156,10 @@ func (s *Server) applyUpdateOnRemoteHost(remote remoteregistry.Remote, version, 
 }
 
 func (s *Server) postRollbackToTarget(ctx context.Context, baseURL, apiPrefix string) (status string, data interface{}, err error) {
-	rollbackURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/versions/rollback"
+	if !strings.HasPrefix(apiPrefix, "/") {
+		apiPrefix = "/" + apiPrefix
+	}
+	rollbackURL := baseURL + apiPrefix + "/versions/rollback"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rollbackURL, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return "", nil, err
@@ -65,13 +170,13 @@ func (s *Server) postRollbackToTarget(ctx context.Context, baseURL, apiPrefix st
 		return "", nil, fmt.Errorf("remote rollback request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out struct {
-		Status string      `json:"status"`
-		Data   interface{} `json:"data"`
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
 	}
-	if json.Unmarshal(body, &out) != nil {
-		return "", nil, fmt.Errorf("failed to parse remote response")
+	var out APIResponse
+	if json.Unmarshal(respBody, &out) != nil {
+		return "", nil, errRemoteAPIParse
 	}
 	return out.Status, out.Data, nil
 }
@@ -81,7 +186,7 @@ func (s *Server) rollbackOnRemoteIP(ip string) error {
 	if err != nil {
 		return fmt.Errorf("remote rollback failed: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 115*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), remoteApplyTimeoutDefault)
 	defer cancel()
 	status, data, err := s.postRollbackToTarget(ctx, baseURL, s.apiPrefix)
 	if err != nil {
@@ -102,19 +207,12 @@ func (s *Server) rollbackOnRemoteHost(remote remoteregistry.Remote) (connectIP s
 }
 
 func (s *Server) remoteSymlinkVersionKeysAtIP(ip string) (currentKey, previousKey string, err error) {
-	baseURL, err := s.remoteBaseURL(ip)
+	url, err := s.remoteAPIURL(ip, "/versions/list")
 	if err != nil {
 		return "", "", err
 	}
-	u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(s.apiPrefix, "/") + "/versions/list"
-	resp, err := remoteHTTPClient.Get(u)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out APIResponse
-	if json.Unmarshal(body, &out) != nil || out.Status != "success" {
+	out, err := callRemoteAPIAtURL(http.MethodGet, url, nil)
+	if err != nil || out.Status != "success" {
 		return "", "", fmt.Errorf("remote versions list failed")
 	}
 	dataMap, ok := out.Data.(map[string]interface{})

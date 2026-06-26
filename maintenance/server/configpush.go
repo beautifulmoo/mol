@@ -1,10 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -38,11 +37,6 @@ func (s *Server) pushConfigContentToRemote(content, ip string) error {
 	if ip == "" {
 		return fmt.Errorf("remote ip is required")
 	}
-	baseURL, err := s.remoteBaseURL(ip)
-	if err != nil {
-		return err
-	}
-	u := baseURL + s.apiPrefix + "/current-config"
 	payload, err := json.Marshal(map[string]interface{}{
 		"content":             content,
 		"backup_before_write": true,
@@ -50,40 +44,17 @@ func (s *Server) pushConfigContentToRemote(content, ip string) error {
 	if err != nil {
 		return err
 	}
-	hr, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(payload))
+	out, err := s.fetchRemoteAPI(ip, http.MethodPost, "/current-config", payload)
 	if err != nil {
-		return err
-	}
-	hr.Header.Set("Content-Type", "application/json")
-	resp, err := remoteHTTPClient.Do(hr)
-	if err != nil {
+		if errors.Is(err, errRemoteAPIParse) {
+			return errRemoteAPIParse
+		}
 		return fmt.Errorf("remote config push failed: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out APIResponse
-	if json.Unmarshal(body, &out) != nil {
-		return fmt.Errorf("failed to parse remote response")
 	}
 	if out.Status == "success" {
 		return nil
 	}
-	return fmt.Errorf("%s", apiResponseErrorMessage(out))
-}
-
-func apiResponseErrorMessage(out APIResponse) string {
-	switch v := out.Data.(type) {
-	case string:
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	case nil:
-	default:
-		if b, err := json.Marshal(v); err == nil && len(b) > 0 && string(b) != "null" {
-			return string(b)
-		}
-	}
-	return "remote request failed"
+	return remoteAPIFailFromResponse(out, "")
 }
 
 func remoteRegistryEntryDTO(r remoteregistry.Remote) map[string]interface{} {

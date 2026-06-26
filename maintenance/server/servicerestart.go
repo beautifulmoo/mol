@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,31 +34,16 @@ func isRestartInProgressTransport(err error, apiMsg string) bool {
 }
 
 func (s *Server) postRemoteRestart(ip string) (string, error) {
-	baseURL, err := s.remoteBaseURL(ip)
-	if err != nil {
-		return "", err
-	}
-	u := baseURL + s.apiPrefix + "/service-control"
 	payload, _ := json.Marshal(map[string]string{"ip": "self", "action": "restart"})
-	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(payload))
+	out, err := s.fetchRemoteAPI(ip, http.MethodPost, "/service-control", payload)
 	if err != nil {
 		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := remoteHTTPClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out APIResponse
-	if json.Unmarshal(body, &out) != nil {
-		return "", fmt.Errorf("failed to parse remote response")
 	}
 	if out.Status == "success" {
 		return "", nil
 	}
-	return apiResponseErrorMessage(out), fmt.Errorf("%s", apiResponseErrorMessage(out))
+	msg := apiResponseErrorMessage(out)
+	return msg, fmt.Errorf("%s", msg)
 }
 
 func (s *Server) remoteHealthOK(ip string) bool {
@@ -90,19 +74,11 @@ func (s *Server) remoteHealthOK(ip string) bool {
 
 // fetchRemoteServiceStatusText proxies GET service-status to the remote agent.
 func (s *Server) fetchRemoteServiceStatusText(ip string) (string, error) {
-	baseURL, err := s.remoteBaseURL(ip)
+	out, err := s.fetchRemoteAPI(ip, http.MethodGet, "/service-status", nil)
 	if err != nil {
 		return "", err
 	}
-	u := baseURL + s.apiPrefix + "/service-status"
-	resp, err := remoteHTTPClient.Get(u)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out APIResponse
-	if json.Unmarshal(body, &out) != nil || out.Status != "success" {
+	if out.Status != "success" {
 		return "", fmt.Errorf("remote service-status failed")
 	}
 	switch v := out.Data.(type) {

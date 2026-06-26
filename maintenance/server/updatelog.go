@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -103,4 +104,102 @@ func historyLineIndicatesRecentRollback(line string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
+		return
+	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip != "" && ip != "self" {
+		out, err := s.fetchRemoteAPI(ip, http.MethodGet, "/update-log", nil)
+		if err != nil {
+			sendRemoteAPIError(w, s.send, "remote update-log request failed: ", err)
+			return
+		}
+		if out.Status == "success" {
+			payload := normalizeUpdateLogAPIPayload(out.Data, false)
+			w.Header().Set("Cache-Control", "no-store")
+			s.send(w, "success", payload, http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
+		return
+	}
+	base := s.deployBase
+	if base == "" {
+		base = "/var/lib/contrabass/mole"
+	}
+	historyPath := filepath.Join(base, "update_history.log")
+	payload, err := updateLogPayloadFromFile(historyPath, isUpdateUnitActive())
+	if err != nil {
+		if os.IsNotExist(err) {
+			w.Header().Set("Cache-Control", "no-store")
+			s.send(w, "success", map[string]interface{}{"output": "(no entries yet)", "recent_rollback": false}, http.StatusOK)
+			return
+		}
+		s.send(w, "fail", err.Error(), http.StatusOK)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	s.send(w, "success", payload, http.StatusOK)
+}
+
+const updateLogMaxLines = 10
+
+func updateLogPayloadFromFile(historyPath string, updateInProgress bool) (map[string]interface{}, error) {
+	data, err := os.ReadFile(historyPath)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeUpdateLogAPIPayload(string(data), updateInProgress), nil
+}
+
+// normalizeUpdateLogAPIPayload returns tail lines oldest-first for the UI to reverse (newest on top).
+// data may be raw file bytes/string or a proxied API map with an "output" field.
+func normalizeUpdateLogAPIPayload(data interface{}, updateInProgress bool) map[string]interface{} {
+	raw := ""
+	recentRollback := false
+	switch v := data.(type) {
+	case string:
+		raw = v
+	case map[string]interface{}:
+		if o, ok := v["output"].(string); ok {
+			raw = o
+		}
+		if rb, ok := v["recent_rollback"].(bool); ok {
+			recentRollback = rb
+		}
+	case []byte:
+		raw = string(v)
+	}
+	lines := splitUpdateLogLines(raw)
+	if len(lines) == 0 {
+		return map[string]interface{}{"output": "(no entries yet)", "recent_rollback": false}
+	}
+	outLines := lines
+	if len(lines) > updateLogMaxLines {
+		outLines = lines[len(lines)-updateLogMaxLines:]
+	}
+	output := strings.Join(outLines, "\n")
+	if len(lines) > 0 {
+		recentRollback = historyLineIndicatesRecentRollback(lines[len(lines)-1])
+	}
+	if recentRollback && updateInProgress {
+		recentRollback = false
+	}
+	return map[string]interface{}{"output": output, "recent_rollback": recentRollback}
+}
+
+func splitUpdateLogLines(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "(no entries yet)" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
 }

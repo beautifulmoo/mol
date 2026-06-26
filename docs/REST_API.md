@@ -2,7 +2,7 @@
 
 **CLI(명령줄)** 는 **[CLI.md](./CLI.md)** 를, **대화형 REPL**은 **[REPL.md](./REPL.md)** (`contrabass-moleU agent`, 인자 없음)를 참고한다.
 
-`maintenance/server/server.go`의 `Handler()`에 등록된 엔드포인트를 정리한다.  
+`maintenance/server/server.go`의 `Handler()`에 등록된 엔드포인트를 정리한다. 핸들러 구현은 **`handlers_*.go`**(업로드·apply·discovery 등), 원격 HTTP는 **`remotehttp.go`**·**`remoteapply.go`**, bulk body 파싱은 **`bulkhosts.go`** 등으로 분리되어 있다.  
 **기본 URL**은 `http://<호스트>:<Maintenance.MaintenancePort>`이며, 경로 앞에는 설정값 **`Maintenance.APIPrefix`**(기본 `/api/v1`), **`Maintenance.WebPrefix`**(기본 `/web`)가 붙는다. 아래 표에서는 `{API}`, `{WEB}`로 표기한다.
 
 ---
@@ -20,7 +20,7 @@
 
 ## 일괄 원격 API·CLI
 
-오케스트레이터 **maintenance HTTP**(`Maintenance.MaintenancePort`, 기본 8889)에서 호출한다. Body의 **`hosts[]`** 는 화면 카드 1장 = 호스트 1대(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). **`ips[]`** 는 Discovery 응답별 **`host_ip`**·**`responded_from_ip`** 병합(웹 **IP**·CLI `--discovery` 대괄호와 동일). **`primary_ip`** 는 **`responded_from_ip`** 대표값. body 생략 시 서버 **remoteregistry** fallback(웹·CLI는 Discovery로 만든 `hosts` 전달 권장).
+오케스트레이터 **maintenance HTTP**(`Maintenance.MaintenancePort`, 기본 8889)에서 호출한다. Body의 **`hosts[]`** 는 화면 카드 1장 = 호스트 1대(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). **웹 UI**는 **도달 가능(reachable)** 원격 카드만 수집해 body로 보낸다(`hosts.js` `collectRemoteHostsFromDOM({ reachableOnly: true })`). **`ips[]`** 는 Discovery 응답별 **`host_ip`**·**`responded_from_ip`** 병합(웹 **IP**·CLI `--discovery` 대괄호와 동일). **`primary_ip`** 는 **`responded_from_ip`** 대표값. body 생략 시 서버 **remoteregistry** fallback(웹·CLI는 Discovery로 만든 `hosts` 전달 권장).
 
 | API (`POST {API}/…`) | CLI | 완료 시 `update_history.log` 요약 |
 |----------------------|-----|-----------------------------------|
@@ -29,7 +29,7 @@
 | `apply-update-all` | `agent --apply-update-all-remotes <bundle.tar.gz>` | `apply-update-all finished succeeded=N failed=M skipped=K` |
 | `versions/rollback-all` | `agent --rollback-all-remotes` | `rollback-all finished succeeded=N failed=M skipped=K` |
 
-CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호출한다(`--discovery` 선행 불필요). **REPL** bulk는 **`discover` 캐시**의 `hosts[]` 사용(재-discovery 없음). 공통 플래그: `-apiprefix`, `-maintenance-port`. 상세는 **CLI.md** 「리모트 일괄 CLI (공통)」·**REPL.md**.
+CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호출한다(`--discovery` 선행 불필요). **REPL** bulk는 **`discovery` 캐시**의 `hosts[]` 사용(재-discovery 없음; `discover` 별칭). 공통 플래그·help: **`maintenance/bulkcli/flags.go`** (`-apiprefix`, `-maintenance-port`). 상세는 **CLI.md** 「리모트 일괄 CLI (공통)」·**REPL.md**.
 
 ---
 
@@ -46,7 +46,7 @@ CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호�
 
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
-| **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형, `version`·**`build_variant`** 등). **CLI** `agent --host-info`·REPL `host-info`는 이 응답을 표로 출력하며, **`HOST_IP`**(응답 IP)·**`HOST_IPS`**(발견 IP) 열은 추가 **UDP Discovery**(~3s, REPL은 `discover` 캐시 우선)로 보강 — 웹 카드 **IP**·**응답한 IP** 규칙과 동일. |
+| **GET** | `{API}/self` | 없음 | **200** `status: success`, `data`: 로컬 호스트 정보(DISCOVERY_RESPONSE 형, `version`·**`build_variant`** 등). **CLI** `agent --host-info`·REPL `host-info`는 이 응답을 표로 출력하며, **`HOST_IP`**(응답 IP)·**`HOST_IPS`**(발견 IP) 열은 추가 **UDP Discovery**(~3s, REPL은 **`discovery` 캐시** 우선)로 보강 — 웹 카드 **IP**·**응답한 IP** 규칙과 동일. |
 | **GET** | `{API}/health` | 없음 | **200** `success`, `data`: `{ "ok": true }` — HTTP 헬스(원격 에이전트 `Server.HTTPPort` 경로 동일). |
 | **GET** | `{API}/remote-health-check` | **Query**: `ip` (필수, 원격 호스트 IP). 이 서버가 `http://<ip>:Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃은 `Maintenance.RemoteHealth.TimeoutSeconds`). | **200** `success` (원격 헬스 OK) / `fail` (연결·HTTP·응답 형식 오류). |
 | **GET** | `{API}/host-info` | **Query**: `ip` (선택). 비어 있거나 `self`면 `/self`와 동일. 그 외 해당 IP로 **UDP 유니캐스트** Discovery. | **200** `success` + 단일 호스트 객체, 또는 `fail` + 메시지. |
@@ -103,7 +103,7 @@ CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호�
 | **POST** | `{API}/current-config/push-local` | **Body JSON**: `{ "ip": "<원격 IP>" }` — **이 서버(로컬) `current`의 `agent.local.yml`** 내용을 읽어 해당 원격의 `POST …/current-config`로 전송(`backup_before_write`: true). | **200** `success`, `data`: `{ "message": "…" }` / `fail`. |
 | **POST** | `{API}/current-config/push-local-all` | **Body JSON**(선택): `{ "hosts": [{ "primary_ip", "hostname", "cpu_uuid", "ips":[] }, …] }` — **화면 카드 1장 = 호스트 1대**(권장). `ips`는 해당 카드의 접속 후보 IP(첫 성공 시 종료). 레거시 `{ "ips":[] }` 도 지원. body 생략 시 **remoteregistry**·필요 시 서버 측 Discovery fallback. 완료 시 로컬 `update_history.log`에 **요약 1줄**만 append(`config push-all finished succeeded=N failed=M`). 응답 **`application/x-ndjson`**(호스트별 progress는 스트림·UI 「결과 보기」). **CLI**: `agent --push-config-all-remotes` — UDP Discovery(기본값)로 `hosts` 구성 후 동일 API 호출(`docs/CLI.md`). | **200** NDJSON 스트림 / 사전 검증 실패 시 JSON `fail`. |
 | **GET** | `{API}/discovered-remotes` | 없음. | **200** `success`, `data`: `{ "remotes": [ { "primary_ip", "hostname", "health_dead", … } ] }` — 서버 메모리 레지스트리 스냅샷(헬스 실패 포함). |
-| **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ] }`. |
+| **GET** | `{API}/versions/list` | **Query**: `ip` (선택). | **200** `success`, `data`: `{ "versions": [ { "version", "is_current", "is_previous" }, ... ], "can_rollback": <bool> }`. **`can_rollback`**: `versionsapi.CanRollbackFromEntries` — `previous` 존재且 `current`≠`previous`. 로컬·원격 프록시 응답 모두 enrichment. |
 | **POST** | `{API}/versions/remove` | **Body JSON**: `{ "versions": ["<키>",...], "ip": "<선택>" }` | **200** `success`, `data`: 결과 메시지 문자열(삭제·제외 요약). current/previous 가리키는 버전은 삭제 안 함. |
 | **POST** | `{API}/versions/switch-current` | **Body JSON**: `{ "version": "<버전 키>", "ip": "<선택>" }` — 로컬에서 `versions/`(또는 스테이징)에 있는 버전을 **current**로 두기 위해 내장 `update.sh`를 `systemd-run`으로 실행(`apply-update` 로컬과 동일). `ip`가 원격이면 해당 호스트 API로 프록시. | **200** `success`, `data`: 안내 문자열 / `fail`. |
 | **POST** | `{API}/versions/rollback` | **Body JSON**(선택): `{ "ip": "<선택>" }` — 로컬(또는 원격 프록시)에서 embedded **`rollback.sh`** 실행: `previous` → `current` 심링크 전환·서비스 재시작. `previous` 없으면 `fail`. | **200** `success` / `fail`. |
@@ -116,7 +116,7 @@ CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호�
 | 메서드 | 경로 | 입력 | 응답 |
 |--------|------|------|------|
 | **GET** | `{WEB}/client-runtime.js` | 없음 | **200** `application/javascript`, `Cache-Control: no-store`. 본문: `window.__CONTRABASS_API_PREFIX__`, `window.__CONTRABASS_REMOTE_HEALTH__`(원격 헬스 폴링 간격·타임아웃·임계값·지터, 설정 반영). |
-| **GET** | `{WEB}/` 및 하위 | 경로 = embed된 `web/` 파일 (`index.html`, `app.js`, `style.css` 등) | 정적 파일 서빙 (`StripPrefix`). |
+| **GET** | `{WEB}/` 및 하위 | 경로 = embed된 `web/` 파일 (`index.html`, `style.css`, `js/core.js`, `js/hosts.js`, `js/card-panels.js`, `js/card-apply.js`, `js/card-health.js`, `js/card.js`, `js/discovery.js`, `js/bulk.js`, `js/app.js` 등) | 정적 파일 서빙 (`StripPrefix`). `client-runtime.js`는 API prefix·RemoteHealth 주입 후 위 JS 모듈을 순서대로 로드한다. |
 
 ---
 

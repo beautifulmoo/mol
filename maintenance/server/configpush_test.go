@@ -36,7 +36,7 @@ func TestRemotesForConfigPush_usesUIHosts(t *testing.T) {
 	// Stale second registry row that would duplicate push without UI hosts.
 	s.remoteRegistry.UpsertFromRemoteIP("172.29.236.42")
 
-	remotes := s.remotesForConfigPush(hosts, nil)
+	remotes := s.bulkRemoteHosts(hosts, nil)
 	if len(remotes) != 1 {
 		t.Fatalf("len = %d, want 1", len(remotes))
 	}

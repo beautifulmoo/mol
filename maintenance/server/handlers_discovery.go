@@ -99,6 +99,23 @@ func parseReusePreviousConfig(s string) bool {
 	return parseQueryBoolTrue(s)
 }
 
+func writeDiscoverySSEFail(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", sseContentType)
+	w.Header().Set("Cache-Control", sseNoCache)
+	w.Header().Set("Connection", sseKeepAlive)
+	w.WriteHeader(http.StatusOK)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	payload, _ := json.Marshal(map[string]string{"message": message})
+	if _, err := fmt.Fprintf(w, "event: discoveryfail\ndata: %s\n\n", payload); err != nil {
+		return
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
@@ -132,40 +149,13 @@ func (s *Server) handleDiscoveryStream(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, err := parseDiscoveryRunOptions(r)
 	if err != nil {
-		w.Header().Set("Content-Type", sseContentType)
-		w.Header().Set("Cache-Control", sseNoCache)
-		w.Header().Set("Connection", sseKeepAlive)
-		w.WriteHeader(http.StatusOK)
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		payload, _ := json.Marshal(map[string]string{"message": err.Error()})
-		if _, werr := fmt.Fprintf(w, "event: discoveryfail\ndata: %s\n\n", payload); werr != nil {
-			return
-		}
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
+		writeDiscoverySSEFail(w, err.Error())
 		return
 	}
 	ch, err := s.discovery.DoDiscoveryStream(opts)
 	if err != nil {
-		// EventSource cannot read JSON error bodies on non-2xx; send a one-line SSE error event with 200 OK.
 		log.Printf("discovery: ERROR: DoDiscoveryStream failed: %v", err)
-		w.Header().Set("Content-Type", sseContentType)
-		w.Header().Set("Cache-Control", sseNoCache)
-		w.Header().Set("Connection", sseKeepAlive)
-		w.WriteHeader(http.StatusOK)
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		payload, _ := json.Marshal(map[string]string{"message": err.Error()})
-		if _, werr := fmt.Fprintf(w, "event: discoveryfail\ndata: %s\n\n", payload); werr != nil {
-			return
-		}
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
+		writeDiscoverySSEFail(w, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", sseContentType)

@@ -127,10 +127,7 @@ func (s *Server) handleUpdateLog(w http.ResponseWriter, r *http.Request) {
 		s.send(w, out.Status, out.Data, http.StatusOK)
 		return
 	}
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 	historyPath := filepath.Join(base, "update_history.log")
 	payload, err := updateLogPayloadFromFile(historyPath, isUpdateUnitActive())
 	if err != nil {

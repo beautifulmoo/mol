@@ -117,7 +117,7 @@ contrabass-moleU agent --host-info -h
 
 표준 출력: 한 줄 요약 라벨 후 `TYPE`, `HOSTNAME`, `VERSION`, **`BUILD_VARIANT`**, `CPU_UUID` 등 라벨·값 테이블(영문 헤더).
 
-**`HOST_IP`**: Discovery와 같이 **응답한 IP**(`responded_from_ip` 대표값). **`HOST_IPS`**: 같은 호스트(CPU UUID)에 대해 UDP Discovery로 모은 **발견 IP**(`host_ip`·`responded_from_ip` 합집합). `GET …/self`로 CPU·메모리 등을 가져온 뒤 **약 3초** 브로드캐스트 Discovery로 IP 열을 보강한다(웹 UI **IP**·**응답한 IP** 규칙과 동일). **REPL** `host-info`는 **`discover` 캐시**가 있으면 UDP 없이 캐시로 보강.
+**`HOST_IP`**: Discovery와 같이 **응답한 IP**(`responded_from_ip` 대표값). **`HOST_IPS`**: 같은 호스트(CPU UUID)에 대해 UDP Discovery로 모은 **발견 IP**(`host_ip`·`responded_from_ip` 합집합). `GET …/self`로 CPU·메모리 등을 가져온 뒤 **약 3초** 브로드캐스트 Discovery로 IP 열을 보강한다(웹 UI **IP**·**응답한 IP** 규칙과 동일). **REPL** `host-info`는 **`discovery` 캐시**가 있으면 UDP 없이 캐시로 보강.
 
 구현: `maintenance/hostinfocli` → `maintenance/clirest` + `maintenance/discoverycli`.
 
@@ -267,7 +267,7 @@ contrabass-moleU agent --versions-switch -h
 | **`hosts[]`** | 이번 Discovery 응답을 CPU UUID로 병합(`discoverycli.BulkPushHostsFromDiscovery`). **`host_ip`**·**`responded_from_ip`** 모두 포함, primary는 **`responded_from_ip`**. 로컬·self 제외 |
 | **응답** | `application/x-ndjson` — `start` → 호스트별 `progress` → `done`. stdout에 `[N/M] hostname (ip): …` |
 | **공통 플래그** | **`-apiprefix`**(기본 `/maintenance/api/v1`), **`-maintenance-port`**(기본 `8889`) |
-| **구현** | `maintenance/discoverycli` + `maintenance/clirest` + 각 `*clicli` 패키지 |
+| **구현** | **`maintenance/bulkcli`**(`flags.go` 공통 플래그·help) + `discoverycli` + `clirest` + 각 `*clicli` 패키지. REPL bulk는 `bulkcli.Run`(캐시된 hosts) |
 
 ### 명령·API·웹 UI 대응
 
@@ -433,7 +433,7 @@ Discovery 후 호스트 수, 호스트별 `[N/M] …: rollback requested via …
 
 ## 대화형 REPL
 
-**`contrabass-moleU agent`**(인자 없음) → 프롬프트 `Mole-Agent>`. `discover` 캐시, 세션 `set`, bulk·단일 호스트 명령, readline 히스토리·Tab 완성.
+**`contrabass-moleU agent`**(인자 없음) → 프롬프트 `Mole-Agent>`. **`discovery`** 캐시(`discover` 별칭), 세션 `set`, bulk·단일 호스트 명령, readline 히스토리·Tab 완성.
 
 상세(명령 목록, 세션 키, bulk vs 일회성 CLI, Tab 완성): **[REPL.md](./REPL.md)**.
 

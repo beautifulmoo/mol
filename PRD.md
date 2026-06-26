@@ -29,6 +29,8 @@
 | **`maintenance/scripts/`** | `build-version.sh`(Makefile `VERSION_KEY`), `pack-agent-tarball.sh`(배포 tar.gz 생성) |
 | **`maintenance/packaging/`** | `contrabass.manifest.yaml.template` 등 번들 manifest 참고 |
 | **`maintenance/server`**, **`discovery`**, **`web/`** 등 | HTTP·Discovery·정적 UI |
+| **`maintenance/bulkcli/`** | 일괄 CLI·REPL bulk 공통 runner(`Run`/`RunDiscovery`)·플래그·help(`flags.go`) |
+| **`maintenance/web/js/`** | 정적 UI JavaScript 모듈(`core`, `hosts`, `card-*`, `discovery`, `bulk`, `app`) — §6 |
 
 **`internal` 디렉터리 이름을 쓰지 않는 이유**: Go는 **`…/internal/…`** 패키지를 해당 `internal`의 **부모 디렉터리 이하**에서만 import할 수 있다. 루트 **`main.go`** 가 설정 패키지를 import해야 하므로, 저장소 루트에 `internal/config`를 두면 **가시성 규칙 위반**이 된다. 따라서 **`maintenance/agentcfg`**·**`maintenance/updatescripts`** 로 경로를 통일한다.
 
@@ -192,7 +194,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **프론트엔드 prefix**: `{serverUrl}{WebPrefix}` (기본 `/web`, 설정 `Maintenance.WebPrefix`)
 - **백엔드 API prefix**: `{serverUrl}{APIPrefix}` (기본 `/api/v1`, 설정 `Maintenance.APIPrefix`)
 - **프론트엔드 진입 URL**: `{serverUrl}{WebPrefix}/index.html`
-- prefix는 설정 파일에서 수정할 수 있어야 한다. 브라우저는 하드코딩된 `/api/v1`가 아니라, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)와 **`window.__CONTRABASS_REMOTE_HEALTH__`**(원격 HTTP 헬스 폴링 간격·타임아웃·실패 임계·지터, §7.1 `Maintenance.RemoteHealth`)를 먼저 로드한 뒤 `app.js`가 API를 호출한다.
+- prefix는 설정 파일에서 수정할 수 있어야 한다. 브라우저는 하드코딩된 `/api/v1`가 아니라, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)와 **`window.__CONTRABASS_REMOTE_HEALTH__`**(원격 HTTP 헬스 폴링 간격·타임아웃·실패 임계·지터, §7.1 `Maintenance.RemoteHealth`)를 먼저 로드한 뒤 **`maintenance/web/js/`** 모듈을 순서대로 로드한다(`index.html`: `core` → `hosts` → `card-panels` → `card-apply` → `card-health` → `card` → `discovery` → `bulk` → `app`). 공유 상태·API 호출은 **`window.MolMaintenance`**(`M`) 네임스페이스를 쓴다.
 
 ### 4.1 CLI (명령줄)
 
@@ -227,13 +229,13 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - **`hosts[]`**: 이번 Discovery 응답을 **메모리**에서 CPU UUID로 병합. 각 응답의 **`host_ip`**·**`responded_from_ip`** 를 `ips[]`에 포함, **`primary_ip`** 는 마지막 **`responded_from_ip`**. 로컬·self 제외(`discoverycli.BulkPushHostsFromDiscovery`). `remoteregistry`/웹 DOM에 의존하지 않음.
 - **`-apiprefix`**·**`-maintenance-port`**: 공통(기본 `/maintenance/api/v1`, `8889`).
 - **`--apply-update-all-remotes`**: **`-agent-variant`**(생략 시 CLI `build_variant`, 없으면 `compute`), **`-use-bundle-config`**(`--apply-update` 와 동일 — 미지정 시 각 원격 **current** config 재사용).
-- **구현**: `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli` → `discoverycli` + `clirest`.
+- **구현**: `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli` → **`maintenance/bulkcli`**(`flags.go` 공통 플래그·help, `RunDiscovery`) + `discoverycli` + `clirest`.
 
 #### 4.1.2 대화형 REPL (`agent`)
 
 - **진입**: **`contrabass-moleU agent`**(인자 없음). **`agent repl`** 은 동일 별칭. **`-cfg` 서비스·웹 UI는 대상이 아님**.
 - **프롬프트**: `Mole-Agent>`. **TTY**에서 readline — **↑/↓** 명령 히스토리(캐시 파일 `repl_history`), **Tab** 명령·인자 완성.
-- **Discovery**: `discover` — standalone `--discovery` 와 동일 UDP·출력 형식. 결과를 **메모리 캐시**; **`push-config-all`** 등 bulk는 **재-discovery 없음**.
+- **Discovery**: **`discovery`** — standalone `agent --discovery` 와 동일 UDP·출력 형식(철자 통일). 결과를 **메모리 캐시**; **`push-config-all`** 등 bulk는 **재-discovery 없음**. **`discover`** 는 하위 호환 별칭.
 - **`host-info`**: `GET …/self` 후 IP 열은 **캐시 우선**, 없으면 UDP 보강(일회성 `--host-info` 와 동일 규칙).
 - **세션**: `set apiprefix`·`maintenance-port`·`agent-variant`·`use-bundle-config`; `show`·`hosts`·`clear-hosts`.
 - **로컬 대상**: REPL·일회성 CLI 공통 — **`self`** / **`local`** 동의어.
@@ -441,7 +443,11 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 | 위치 | 역할 |
 |------|------|
 | `maintenance/server/bundleupload.go` | 압축 해제·manifest v1/v2 파싱·해시·ELF·버전 키·`writeBundleTarGz` |
-| `maintenance/server/server.go` | `handleUpload`, `handleApplyUpdate`, 원격 multipart apply |
+| `maintenance/server/handlers_upload.go` | `handleUpload`, `handleApplyUpdate`, 원격 upload/apply 프록시 |
+| `maintenance/server/remotehttp.go` | 원격 Gin JSON 프록시(`fetchRemoteAPI`, `proxyRemoteAPI`), `joinRemoteAPIURL` |
+| `maintenance/server/remoteapply.go` | 원격 apply·rollback·config fetch·multipart 수렴 |
+| `maintenance/server/agentbinary.go` | ELF 검증·`VersionKeyFromAgentBinary` |
+| `maintenance/server/server.go` | `Handler()` 라우팅·embed 정적 파일·`client-runtime.js` |
 | `maintenance/server/agentvariant.go` | `MaterializeCanonicalAgent` — variant→`BinaryName` 복사 |
 | `maintenance/server/applylocal.go` | `ApplyUpdateSelfFromBundleExtract` — CLI/서버 로컬 적용 |
 | `maintenance/appmeta/agentvariant.go` | `ParseAgentVariant`, variant 상수·basename 매핑 |
@@ -555,7 +561,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - **롤백 가능 판단**: 원격 `GET …/versions/list` 응답에서 **`is_previous` 버전 키가 있고**, **`is_current` 버전 키와 다를 때**만 롤백한다 — 즉 `current`·`previous` 심볼릭 링크가 **같은 버전을 가리키면 이미 롤백된 상태**로 보고 **`skipped`**. `previous` 없음도 **`skipped`**.  
   - **동작**: 롤백 가능 호스트에 대해 `POST …/versions/rollback` 프록시(embedded **`rollback.sh`**: `previous`→`current`·서비스 재시작).  
   - **응답**: NDJSON. 완료 시 **`rollback-all finished succeeded=N failed=M skipped=K`** 요약 append.  
-  - **웹 UI**: §6.6 — 호스트별 `GET …/versions/list?ip=` 로 동일 판단을 캐시해 버튼 활성 제어.
+  - **웹 UI**: §6.6 — 호스트별 `GET …/versions/list?ip=` 의 **`can_rollback`**(서버 `versionsapi.CanRollbackFromEntries`)로 버튼 활성; 구버전 에이전트는 `is_current`·`is_previous` 클라이언트 폴백.
 
 #### 5.5.4 업데이트 상태·기록·설정·헬스
 
@@ -577,7 +583,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 - **경로 기준**: `InstallPrefix`(설정, 비면 `DeployBase`) 아래 `versions/` 디렉터리 및 `current`·`previous` 심볼릭 링크를 사용한다. **최초 설치**는 §5.5.0.1 `contrabass-agent-install.sh`, **완전 제거**는 §5.5.0.2 `contrabass-agent-uninstall.sh`, 이후 목록·전환·업데이트는 동일 경로를 사용한다. `InstallPrefix`를 둔다.
 - **목록**: `GET {serverUrl}/api/v1/versions/list?ip=`  
-  - `ip` 비어 있거나 `"self"`: `{InstallPrefix}/versions/` 디렉터리 내 각 **버전 키** 이름의 하위 디렉터리(그 안에 **`appmeta.BinaryName` 실행 파일**이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ] } }` — 여기서 `version` 문자열은 디렉터리명과 동일한 **버전 키**이다.  
+  - `ip` 비어 있거나 `"self"`: `{InstallPrefix}/versions/` 디렉터리 내 각 **버전 키** 이름의 하위 디렉터리(그 안에 **`appmeta.BinaryName` 실행 파일**이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ], "can_rollback": <bool> } }` — `version` 문자열은 디렉터리명과 동일한 **버전 키**이다. **`can_rollback`** 은 `versionsapi.CanRollbackFromEntries`(`previous` 존재且 `current`≠`previous`). 원격 프록시 응답에도 enrichment.  
   - **정렬 순서(표시용)**: **current** 대상을 맨 위 → **previous** 대상 → 그 외는 **버전 키 비교 규칙**(시맨틱 부분을 절 단위 정수로 비교한 뒤, 같으면 `-`(또는 레거시 `_`) 뒤 패치를 정수로 비교)에 따른 **내림차순**(더 “새” 버전이 위). 웹 UI에서 현재·이전·나머지 순으로 한눈에 볼 수 있다.  
   - `ip` 지정: 요청을 받은 서버가 **원격 호스트의 `Server.HTTPPort`(Gin)** 로 `GET .../versions/list` 를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.
 - **삭제**: `POST {serverUrl}/api/v1/versions/remove`  
@@ -595,6 +601,17 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 - **구현 방식**: 정적 파일(HTML, CSS, JavaScript)을 **Go embed**로 단일 실행 파일에 포함.
 - **JavaScript**: **Vanilla JS**만 사용. API 호출은 `fetch`, UI 업데이트는 DOM 조작으로 처리. SPA 프레임워크(React, Vue 등)는 사용하지 않는다.
+- **모듈 구조** (`maintenance/web/js/`, `index.html` 로드 순서):  
+  - **`core.js`**: `API_BASE`, 공유 상태(`lastUpdateStatus`, `remoteHealthState` 등), variant·reuse-config HTML 헬퍼.  
+  - **`hosts.js`**: 카드 IP/`responded_from` 병합, bulk용 `collectRemoteHostsFromDOM({ reachableOnly })`.  
+  - **`card-panels.js`**: config·versions·update-log 패널, `fetchServiceStatus`, config 모달.  
+  - **`card-apply.js`**: per-host apply 버튼·`updateAllHostApplyButtons`, apply 후 refresh 스케줄.  
+  - **`card-health.js`**: 원격 HTTP 헬스 폴링·dead UI.  
+  - **`card.js`**: 호스트 행/카드 렌더, `bindServiceControlButtons`, `loadSelf`.  
+  - **`discovery.js`**: Discovery SSE·도달 가능 판단.  
+  - **`bulk.js`**: 사이드바 일괄 작업 NDJSON.  
+  - **`app.js`**: 초기화·사이드바 업로드·`fetchUpdateStatus`.  
+  모듈 간 공개 API는 **`M.*` export** 로만 노출한다.
 - **레이아웃**
   - 호스트 정보(내 정보·발견된 호스트) 카드는 **가운데 열**에 배치하고, **업데이트** 영역과 **「모든 리모트 호스트 일괄 작업」**(§6.6)은 **화면 오른쪽 sticky 사이드바**에 고정하여 스크롤 시 카드만 스크롤되고 사이드바는 고정된다. 스크롤바가 생겨도 레이아웃이 밀리지 않도록 `scrollbar-gutter: stable`을 사용한다.
   - 호스트 카드의 가로 최대 너비는 610px로 통일하며, 내 정보와 발견된 호스트 카드는 동일한 카드 스타일 한 겹만 사용한다(내 정보 컨테이너는 카드 클래스를 갖지 않고, 렌더된 카드 한 개만 자식으로 둔다).
@@ -694,11 +711,11 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   3. **「리모트 호스트에 일괄 업데이트 적용」** — `POST …/apply-update-all`  
   4. **「리모트 호스트 일괄 롤백」** — `POST …/versions/rollback-all`  
 - **CLI 대응**(§4.1.1): `agent --push-config-all-remotes`, `--restart-all-remotes`, `--apply-update-all-remotes <bundle>`, `--rollback-all-remotes` — 웹과 동일 API, Discovery는 명령 내부(기본값).
-- **대상 호스트 목록**: 화면 **원격 호스트 카드**(`.host-card`, self 제외)에서 **카드 1장 = 물리 호스트 1대**로 수집한다(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). 요청 body `{ hosts: [...] }` 로 전송(레지스트리만 의존하지 않음).
+- **대상 호스트 목록**: 화면 **원격 호스트 카드**에서 **도달 가능(§6.2 가드 통과)** 호스트만 수집한다(`hosts.js` `collectRemoteHostsFromDOM({ reachableOnly: true })`). 카드 1장 = 물리 호스트 1대(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`). 요청 body `{ hosts: [...] }` 로 전송.
 - **버튼 활성 조건**  
-  - **설정 복사·재시작**: 원격 카드 **≥1** (진행 중 해당 버튼은 `data-busy`로 비활성).  
-  - **일괄 업데이트 적용**: 로컬 스테이징에 버전이 있고, **호스트별** `GET …/update-status?ip=` 로 확인한 **`can_apply`** 중 **도달 가능(§6.2 가드 통과) 호스트 ≥1**. 버튼 라벨에 **`(적용가능/전체)`** 표시. 로컬 패널 `can_apply`만으로 켜지 않는다.  
-  - **일괄 롤백**: **호스트별** `GET …/versions/list?ip=` 로 **`is_current`·`is_previous` 버전 키**를 비교 — **`previous` 있고 `current`≠`previous`** 일 때만 롤백 가능. **도달 가능 호스트 중 롤백 가능 ≥1** 일 때만 활성. 롤백 성공 후 `current`·`previous`가 같아지면 비활성 유지(새 업데이트로 다시 갈라지면 활성).
+  - **설정 복사·재시작**: **도달 가능** 원격 카드 **≥1** (진행 중 해당 버튼은 `data-busy`로 비활성).  
+  - **일괄 업데이트 적용**: 로컬 스테이징에 버전이 있고, **호스트별** `GET …/update-status?ip=` 로 확인한 **`can_apply`** 중 **도달 가능 호스트 ≥1**. 버튼 라벨에 **`(적용가능/전체)`** 표시. 로컬 패널 `can_apply`만으로 켜지 않는다.  
+  - **일괄 롤백**: **호스트별** `GET …/versions/list?ip=` 의 **`can_rollback`**(또는 `is_current`·`is_previous` 클라이언트 폴백). **도달 가능 호스트 중 롤백 가능 ≥1** 일 때만 활성. 롤백 성공 후 `current`·`previous`가 같아지면 비활성 유지(새 업데이트로 다시 갈라지면 활성).
 - **일괄 업데이트 확인 모달**: 실행 전 확인 대화상자. **환경설정**은 오른쪽 「업데이트」 패널의 **「이전버전의 환경설정 파일 재사용」** 체크 상태를 **모든 원격에 동일**하게 `reuse_previous_config`로 전달한다(원격 카드별 체크박스는 따르지 않음). 적용 대상 대수·스테이징 버전을 요약한다.
 - **NDJSON 진행**: 공통 `runBulkHostsNDJSON` — 진행 중 버튼 **`N/M`**·비활성. 완료 요약 예: `N대 모두 …` / `완료: 성공 N대, 실패 M대, 건너뜀 K대`.
 - **결과·상태 UX**  
@@ -819,7 +836,7 @@ Maintenance:
 - [ ] Discovery 일괄: `GET {APIPrefix}/discovery`, data 배열(빈 경우 []); 쿼리 `exclude_self`·`timeout`; **웹 UI 미호출**
 - [ ] Discovery SSE: `GET {APIPrefix}/discovery/stream`, 동일 쿼리 지원; 웹 UI는 쿼리 없이 기본만 사용
 - [ ] Gin 프록시(루트 main): **`<bin> -cfg <파일>`**(`IsServiceModeRootCfg`)일 때만 `router.Run`; maintenance는 고루틴 `os.Exit(Run)`; **`agent …` 전체**는 Gin 없음; JSON `Content-Type`은 **전역 미들웨어 금지**·`routerGroupJSON` 그룹만; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
-- [ ] 웹: `client-runtime.js`로 `APIPrefix`·`RemoteHealth` 설정 주입 후 `app.js` API 호출
+- [ ] 웹: `client-runtime.js`로 `APIPrefix`·`RemoteHealth` 설정 주입 후 **`web/js/`** 모듈 순서 로드(`MolMaintenance`)
 - [ ] URL prefix: `WebPrefix`·`APIPrefix`, 설정에서 변경 가능
 - [ ] 진입 URL: /web/index.html, Discovery 버튼
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
@@ -831,8 +848,8 @@ Maintenance:
 - [ ] 발견된 호스트 카드: **로컬과 동일 레이아웃**(오른쪽 컬럼 + 하단 상태 행). 시작·중지 버튼 비노출; 상태 새로고침·서비스 재시작·업데이트 적용. 카드 열릴 때 업데이트 기록·config·버전 목록 자동 로드
 - [ ] 서비스 상태 API: 로컬은 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`). 서비스 제어: 로컬은 systemctl; 원격 start/stop은 SSH, **원격 restart는 원격 에이전트 API 호출**(SSH 키 불필요)
 - [ ] 원격 API 프록시: update-log·current-cfg(GET/POST)·**current-config/push-local**·versions/list·versions/remove 에 `ip` 쿼리 또는 body 지원, 중앙 서버가 원격 에이전트 해당 API 호출 후 응답 전달
-- [ ] **일괄 원격 작업**: **push-local-all**·**restart-all**·**apply-update-all**·**rollback-all** NDJSON(`hosts` body = UI 카드 1장=1대); **CLI 4종**(§4.1.1); **remoteregistry**·**discovered-remotes**; `update_history.log` 요약 1줄; **`recent_rollback`** 이 bulk `failed=N`에 반응하지 않음; 롤백-all은 **current=previous** 시 skipped
-- [ ] **일괄 UI(§6.6)**: 오른쪽 사이드바 4버튼; 상태 줄 **클릭 순 누적**·짧은 접두·「결과 보기」+**×**; apply-all **호스트별 can_apply**·`(N/M)`·확인 모달(로컬 재사용 체크); rollback-all **versions/list** 기반 버튼 비활성; Discovery **미응답**·헬스 dead 가드
+- [ ] **일괄 원격 작업**: **push-local-all**·**restart-all**·**apply-update-all**·**rollback-all** NDJSON(`hosts` body = **도달 가능** UI 카드 1장=1대, `reachableOnly`); **CLI 4종**(§4.1.1); **remoteregistry**·**discovered-remotes**; `update_history.log` 요약 1줄; **`recent_rollback`** 이 bulk `failed=N`에 반응하지 않음; 롤백-all은 **current=previous** 시 skipped; **`versions/list` `can_rollback`**
+- [ ] **일괄 UI(§6.6)**: 오른쪽 사이드바 4버튼; **push/restart도 reachableOnly**; 상태 줄 **클릭 순 누적**·짧은 접두·「결과 보기」+**×**; apply-all **호스트별 can_apply**·`(N/M)`·확인 모달(로컬 재사용 체크); rollback-all **`can_rollback`**(또는 versions/list 폴백); Discovery **미응답**·헬스 dead 가드
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
 - [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
 - [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; **`--host-info` / `--apply-update` / `--versions-list` / `--versions-switch`** 는 **`-apiprefix`**(기본 `/maintenance/api/v1`)·대상 Gin REST·**서비스 필수**(`clirest`); **`--apply-update -use-bundle-config`**(미지정 시 `reuse_previous_config: true`); `agent --nic-brd`; **`agent --discovery`**(UDP만); 번들·ELF 검증은 서버 `POST /upload` 시 **`--version` → `agent --version`** 폴백

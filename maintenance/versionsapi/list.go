@@ -2,6 +2,7 @@
 package versionsapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,6 +94,52 @@ func PreviousVersionKeyFromEntries(rows []VersionEntry) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no previous version")
+}
+
+// CanRollbackFromEntries is true when previous exists and resolves to a different version than current.
+func CanRollbackFromEntries(rows []VersionEntry) bool {
+	var currentKey, previousKey string
+	for _, r := range rows {
+		if r.IsCurrent {
+			currentKey = strings.TrimSpace(r.Version)
+		}
+		if r.IsPrevious {
+			previousKey = strings.TrimSpace(r.Version)
+		}
+	}
+	if previousKey == "" {
+		return false
+	}
+	return currentKey != previousKey
+}
+
+// VersionsListData is the GET /versions/list success payload (local and enriched remote proxy).
+func VersionsListData(list []VersionEntry) map[string]interface{} {
+	return map[string]interface{}{
+		"versions":     list,
+		"can_rollback": CanRollbackFromEntries(list),
+	}
+}
+
+// EnrichVersionsListData adds can_rollback to a proxied versions/list map when absent.
+func EnrichVersionsListData(data interface{}) interface{} {
+	m, ok := data.(map[string]interface{})
+	if !ok {
+		return data
+	}
+	if _, has := m["can_rollback"]; has {
+		return data
+	}
+	raw, err := json.Marshal(m["versions"])
+	if err != nil {
+		return data
+	}
+	var list []VersionEntry
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return data
+	}
+	m["can_rollback"] = CanRollbackFromEntries(list)
+	return m
 }
 
 // ResolveSymlinkVersion returns the top-level version directory name that base/name (e.g. current, previous) points to, or "".

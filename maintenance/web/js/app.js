@@ -54,7 +54,9 @@
         M.remoteRollbackStatusByIP[ip] = {
           pending: false,
           ok: true,
-          can_rollback: M.canRollbackFromVersionsList(body.data.versions)
+          can_rollback: typeof body.data.can_rollback === 'boolean'
+            ? body.data.can_rollback
+            : M.canRollbackFromVersionsList(body.data.versions)
         };
         M.refreshRemoteBulkButtonsState();
       })

@@ -102,7 +102,7 @@ func (s *Server) stagePreparedBundleForRemoteApply(pb *PreparedBundle, reusePrev
 }
 
 func (s *Server) fetchRemoteCurrentConfigContent(ctx context.Context, baseURL, apiPrefix string) (string, error) {
-	u := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/current-config"
+	u := joinRemoteAPIURL(baseURL, apiPrefix, "/current-config")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", err
@@ -156,10 +156,7 @@ func (s *Server) applyUpdateOnRemoteHost(remote remoteregistry.Remote, version, 
 }
 
 func (s *Server) postRollbackToTarget(ctx context.Context, baseURL, apiPrefix string) (status string, data interface{}, err error) {
-	if !strings.HasPrefix(apiPrefix, "/") {
-		apiPrefix = "/" + apiPrefix
-	}
-	rollbackURL := baseURL + apiPrefix + "/versions/rollback"
+	rollbackURL := joinRemoteAPIURL(baseURL, apiPrefix, "/versions/rollback")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rollbackURL, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return "", nil, err
@@ -245,10 +242,10 @@ func (s *Server) remoteCanRollbackAtIP(ip string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if previousKey == "" {
-		return false, nil
-	}
-	return currentKey != previousKey, nil
+	return versionsapi.CanRollbackFromEntries([]versionsapi.VersionEntry{
+		{Version: currentKey, IsCurrent: true},
+		{Version: previousKey, IsPrevious: true},
+	}), nil
 }
 
 func (s *Server) remoteHostCanRollback(remote remoteregistry.Remote) (bool, error) {

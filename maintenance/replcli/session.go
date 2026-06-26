@@ -65,7 +65,7 @@ func (s *Session) clearHosts() {
 
 func (s *Session) requireCachedHosts() ([]clirest.BulkPushHost, error) {
 	if len(s.CachedHosts) == 0 {
-		return nil, fmt.Errorf("no cached remote hosts; run 'discover' first")
+		return nil, fmt.Errorf("no cached remote hosts; run 'discovery' first")
 	}
 	out := make([]clirest.BulkPushHost, len(s.CachedHosts))
 	copy(out, s.CachedHosts)

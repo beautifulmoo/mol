@@ -146,7 +146,7 @@ func (s *Server) handleServiceRestartAll(w http.ResponseWriter, r *http.Request)
 		s.send(w, "fail", "invalid body", http.StatusBadRequest)
 		return
 	}
-	hosts := s.remotesForConfigPush(req.Hosts, req.IPs)
+	hosts := s.bulkRemoteHosts(req.Hosts, req.IPs)
 
 	s.runBulkRemoteNDJSON(w, hosts, bulkNDJSONOptions{
 		HistoryFmt: func(sum bulkRunSummary) string {

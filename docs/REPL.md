@@ -20,7 +20,7 @@ contrabass-moleU agent -h            # REPL이 아니라 agent CLI 도움말(일
 |------|------|
 | **프롬프트** | `Mole-Agent>` |
 | **종료** | `exit` 또는 `quit` |
-| **도움말** | `help` — 전체 목록. `help <명령>` — 해당 명령만(예: `help discover`) |
+| **도움말** | `help` — 전체 목록. `help <명령>` — 해당 명령만(예: `help discovery`) |
 | **버전** | `version` — 빌드 버전 한 줄 |
 
 ---
@@ -29,10 +29,12 @@ contrabass-moleU agent -h            # REPL이 아니라 agent CLI 도움말(일
 
 | 항목 | REPL | `agent --…` (일회성) |
 |------|------|----------------------|
-| **Discovery** | `discover` 후 **캐시**; bulk는 **재-discovery 없음**; `host-info`는 캐시로 IP 보강(없으면 UDP) | bulk마다 내부 discovery |
+| **Discovery** | **`discovery`** 후 **캐시**; bulk는 **재-discovery 없음**; `host-info`는 캐시로 IP 보강(없으면 UDP) | bulk마다 내부 discovery |
 | **기본값** | `set apiprefix` 등 **세션** 유지 | 매 명령 플래그 |
 | **종료** | `exit` / `quit` | 프로세스 종료 |
 | **입력** | TTY: **↑/↓** 명령 히스토리, **Tab** 완성 | — |
+
+CLI standalone 옵션은 **`agent --discovery`** 이다. REPL 명령은 **`discovery`** 로 철자를 맞춘다. **`discover`** 는 하위 호환 별칭이다.
 
 ---
 
@@ -50,11 +52,11 @@ readline 기반. **Tab 한 번** = 공통 접두어까지 확장(후보 1개면 
 
 | 위치 | 완성 대상 |
 |------|-----------|
-| 명령어 | `help`, `discover`, `host-info`, `push-config-all` 등 |
+| 명령어 | `help`, `discovery`, `host-info`, `push-config-all` 등 |
 | `help` | help topic·명령 이름 |
 | `set` | `apiprefix`, `maintenance-port`, `agent-variant`, `use-bundle-config` 및 값 |
-| `discover` | `--dest-port=`, `--src-port=`, `--timeout=`, `--service=` |
-| `host-info` 등 | `self`, `local`, **`discover` 캐시 IP** |
+| `discovery` | `--dest-port=`, `--src-port=`, `--timeout=`, `--service=` |
+| `host-info` 등 | `self`, `local`, **`discovery` 캐시 IP** |
 | `apply-update` / `apply-update-all` | **로컬 파일 경로** — `./dist/…`, `~/…`, 절대 경로. 디렉터리는 `/` 접미 |
 
 **작업 디렉터리**: REPL은 셸과 같이 **프로세스 시작 시점의 CWD**를 쓴다. `~/work/mol$ ./contrabass-moleU agent` 이면 `./dist/…` 는 `~/work/mol/dist/…` 이다. 실행 시 **`~`는 자동 확장**된다.
@@ -78,18 +80,18 @@ readline 기반. **Tab 한 번** = 공통 접두어까지 확장(후보 1개면 
 
 ### `show`
 
-현재 세션 설정과 **캐시된 호스트 수**, 마지막 `discover` 응답 건수를 출력한다.
+현재 세션 설정과 **캐시된 호스트 수**, 마지막 **`discovery`** 응답 건수를 출력한다.
 
 ### `hosts` / `clear-hosts`
 
-- **`hosts`**: 마지막 `discover`의 `primary_ip`, `hostname`, `cpu_uuid`, `ips[]` 표.
+- **`hosts`**: 마지막 **`discovery`** 의 `primary_ip`, `hostname`, `cpu_uuid`, `ips[]` 표.
 - **`clear-hosts`**: Discovery 캐시 비우기.
 
 ---
 
 ## Discovery
 
-### `discover [flags]`
+### `discovery [flags]`
 
 UDP Discovery만 수행(오케스트레이터 `-cfg` **불필요**). 출력 형식·IP 규칙은 **`agent --discovery`** 와 동일 — **[CLI.md](./CLI.md)** 「`--discovery`」.
 
@@ -101,6 +103,8 @@ UDP Discovery만 수행(오케스트레이터 `-cfg` **불필요**). 출력 형�
 | `--service` | `Mole-Discovery` |
 
 성공 시 원격 호스트를 **메모리에 캐시**하고 `Cached N remote host(s) for bulk commands.` 를 출력한다.
+
+**별칭**: `discover` — 동일 동작(하위 호환).
 
 ### `nic-brd`
 
@@ -114,7 +118,7 @@ CLI **`agent --nic-brd`** 와 동일 — Discovery용 `(인터페이스 : brd)` 
 
 | 명령 | 설명 |
 |------|------|
-| **`host-info <self\|local\|ip>`** | `GET …/self` 표 출력. **`HOST_IP`** / **`HOST_IPS`** 는 `discover` 캐시 우선, 없으면 UDP ~3s 보강 |
+| **`host-info <self\|local\|ip>`** | `GET …/self` 표 출력. **`HOST_IP`** / **`HOST_IPS`** 는 **`discovery` 캐시** 우선, 없으면 UDP ~3s 보강 |
 | **`versions-list <self\|local\|ip>`** | `GET …/versions/list` |
 | **`versions-switch <self\|local\|ip> <version-key>`** | `POST …/versions/switch-current` |
 | **`apply-update <self\|local\|ip> <bundle.tar.gz>`** | 업로드 + 적용. 번들 경로는 **`~/…`·`./`·상대/절대** (CWD 기준, 실행 시 `~` 확장). 세션 `agent-variant`·`use-bundle-config` |
@@ -134,13 +138,15 @@ CLI **`agent --nic-brd`** 와 동일 — Discovery용 `(인터페이스 : brd)` 
 | **`apply-update-all <bundle>`** | `--apply-update-all-remotes` | 업로드 → `POST …/apply-update-all`. 번들 경로 규칙은 `apply-update` 와 동일 |
 | **`rollback-all`** | `--rollback-all-remotes` | `POST …/versions/rollback-all` |
 
+구현: `maintenance/bulkcli`(`Run` — REPL은 캐시된 hosts 전달).
+
 ### bulk 동작 요약
 
-1. **`discover`를 먼저 실행**해 호스트를 캐시한다.
+1. **`discovery`를 먼저 실행**해 호스트를 캐시한다.
 2. bulk는 **캐시된 `hosts[]`만** 사용 — **재-discovery 없음**.
 3. `hosts[]`의 `ips[]`·`primary_ip` 규칙은 일회성 CLI·웹 UI와 동일 — **[CLI.md](./CLI.md)** 「리모트 일괄 CLI (공통)」·**[REST_API.md](./REST_API.md)**.
 
-일회성 CLI는 명령마다 내부 Discovery 1회를 수행한다. REPL은 이 단계를 `discover`에 맡긴다.
+일회성 CLI는 명령마다 내부 Discovery 1회를 수행한다. REPL은 이 단계를 **`discovery`** 에 맡긴다.
 
 ---
 
@@ -149,7 +155,7 @@ CLI **`agent --nic-brd`** 와 동일 — Discovery용 `(인터페이스 : brd)` 
 ```text
 Session     set, show, hosts, clear-hosts
 Meta        help, version, exit, quit
-Discovery   discover, nic-brd
+Discovery   discovery, nic-brd          (discover = 별칭)
 Single-host host-info, versions-list, versions-switch, apply-update
 Bulk        push-config-all, restart-all, apply-update-all, rollback-all
 ```

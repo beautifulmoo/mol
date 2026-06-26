@@ -20,8 +20,22 @@ func TestReplCompleter_commands(t *testing.T) {
 func TestReplCompleter_helpTopics(t *testing.T) {
 	c := &replCompleter{}
 	got := c.candidates([]string{"help"}, "disc")
-	if len(got) != 1 || got[0] != "discover" {
+	if len(got) != 2 || got[0] != "discover" || got[1] != "discovery" {
 		t.Fatalf("candidates = %v", got)
+	}
+}
+
+func TestReplCompleter_discoverAlias(t *testing.T) {
+	c := &replCompleter{}
+	got := c.candidates(nil, "discover")
+	wantDiscover := false
+	for _, name := range got {
+		if name == "discover" {
+			wantDiscover = true
+		}
+	}
+	if !wantDiscover {
+		t.Fatalf("discover missing from candidates = %v", got)
 	}
 }
 

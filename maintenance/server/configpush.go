@@ -138,8 +138,8 @@ func (s *Server) syncRemoteRegistryFromPushHosts(hosts []pushHostInput) {
 	}
 }
 
-// remotesForConfigPush returns push targets. When the UI sends hosts (one per card), that list is authoritative.
-func (s *Server) remotesForConfigPush(hosts []pushHostInput, legacyIPs []string) []remoteregistry.Remote {
+// bulkRemoteHosts returns bulk operation targets. When the UI sends hosts (one per card), that list is authoritative.
+func (s *Server) bulkRemoteHosts(hosts []pushHostInput, legacyIPs []string) []remoteregistry.Remote {
 	if len(hosts) > 0 {
 		s.syncRemoteRegistryFromPushHosts(hosts)
 		out := make([]remoteregistry.Remote, 0, len(hosts))
@@ -213,7 +213,7 @@ func (s *Server) handleCurrentConfigPushLocalAll(w http.ResponseWriter, r *http.
 		s.send(w, "fail", err.Error(), http.StatusOK)
 		return
 	}
-	remotes := s.remotesForConfigPush(req.Hosts, req.IPs)
+	remotes := s.bulkRemoteHosts(req.Hosts, req.IPs)
 
 	s.runBulkRemoteNDJSON(w, remotes, bulkNDJSONOptions{
 		HistoryFmt: func(sum bulkRunSummary) string {

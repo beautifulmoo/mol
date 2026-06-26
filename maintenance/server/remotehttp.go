@@ -16,16 +16,24 @@ var remoteHTTPClient = &http.Client{Timeout: 300 * time.Second}
 
 var errRemoteAPIParse = errors.New("failed to parse remote response")
 
+// joinRemoteAPIURL builds baseURL + apiPrefix + apiPath (apiPath must start with "/").
+func joinRemoteAPIURL(baseURL, apiPrefix, apiPath string) string {
+	if !strings.HasPrefix(apiPrefix, "/") {
+		apiPrefix = "/" + apiPrefix
+	}
+	if !strings.HasPrefix(apiPath, "/") {
+		apiPath = "/" + apiPath
+	}
+	return strings.TrimSuffix(baseURL, "/") + apiPrefix + apiPath
+}
+
 // remoteAPIURL builds http://{ip}:{port}{apiPrefix}{apiPath}. apiPath must start with "/".
 func (s *Server) remoteAPIURL(ip, apiPath string) (string, error) {
 	baseURL, err := s.remoteBaseURL(ip)
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(apiPath, "/") {
-		apiPath = "/" + apiPath
-	}
-	return baseURL + s.apiPrefix + apiPath, nil
+	return joinRemoteAPIURL(baseURL, s.apiPrefix, apiPath), nil
 }
 
 func callRemoteAPIAtURL(method, url string, body []byte) (APIResponse, error) {

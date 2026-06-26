@@ -1,5 +1,19 @@
 # 변경 이력 (mol)
 
+## Maintenance 리팩터·문서 현행화 (2026-05)
+
+서버·웹·CLI·REPL 정리(코드 감사 Large/Medium 항목 및 후속 스프린트).
+
+| 영역 | 요약 |
+|------|------|
+| **서버** | `server.go`는 라우팅·핵심만; 핸들러는 `handlers_*.go`. 원격 JSON·URL은 `remotehttp.go`(`fetchRemoteAPI`, `joinRemoteAPIURL`). 원격 apply/rollback은 `remoteapply.go`. ELF·버전 키는 `agentbinary.go`. bulk body 파서는 `bulkhosts.go`. 일괄 호스트 목록 헬퍼는 `bulkRemoteHosts`. Discovery SSE 실패는 `writeDiscoverySSEFail`. |
+| **웹 JS** | 단일 `app.js` → `web/js/` 모듈: `core` → `hosts` → `card-panels` → `card-apply` → `card-health` → `card` → `discovery` → `bulk` → `app` (`window.MolMaintenance`). `hosts.js`: IP 병합·`collectRemoteHostsFromDOM({ reachableOnly })`. |
+| **웹 일괄** | push/restart도 apply/rollback과 같이 **도달 가능(reachable)** 호스트만 body·버튼 카운트. `GET …/versions/list` 응답 **`can_rollback`** 우선(구버전 에이전트는 클라이언트 폴백). |
+| **CLI 일괄** | `bulkcli/flags.go` — 공통 `-apiprefix`/`-maintenance-port`·help(`WriteDiscoveryBuiltInHelp`). 4× `*clicli` + REPL bulk runner가 `bulkcli` 공유. help 문구: **명령 내부 UDP discovery**(standalone `--discovery` 선행 불필요). |
+| **REPL** | Discovery 명령 **`discovery`**(CLI `--discovery`와 동일 철자). **`discover`** 는 하위 호환 별칭. |
+
+**문서**: **PRD.md** §1.1·§4·§6·구현 표, **docs/CLI.md**, **docs/REPL.md**, **docs/REST_API.md**, **docs/OVERVIEW.md**, **README.md**.
+
 ## REPL·CLI 번들 경로 (2026-06)
 
 | 항목 | 요약 |
@@ -17,9 +31,9 @@
 | 항목 | 요약 |
 |------|------|
 | **리모트 일괄 CLI 4종** | `--push-config-all-remotes` 등 — 웹 §6.6과 동일 NDJSON API. Discovery 내부 1회. **docs/CLI.md** 「리모트 일괄 CLI」 |
-| **Discovery IP 표시** | `--discovery`·`discover`: 대괄호 IP = `host_ip`·`responded_from_ip` 병합(웹 **IP**). 대표 IP = **응답한 IP**. 일괄 `hosts[]`·`BulkPushHostsFromDiscovery` 동일 |
-| **REPL** | **`contrabass-moleU agent`**(인자 없음) → `Mole-Agent>`. `discover` 캐시 → bulk·`host-info` IP 보강. TTY: readline(↑/↓ 히스토리, Tab 완성). `agent repl` 별칭 |
-| **`--host-info`** | `HOST_IP`/`HOST_IPS` = 응답 IP / 발견 IP(UDP ~3s 보강). REPL은 **discover 캐시** 우선 |
+| **Discovery IP 표시** | `--discovery`·`discovery`(REPL): 대괄호 IP = `host_ip`·`responded_from_ip` 병합(웹 **IP**). 대표 IP = **응답한 IP**. 일괄 `hosts[]`·`BulkPushHostsFromDiscovery` 동일 |
+| **REPL** | **`contrabass-moleU agent`**(인자 없음) → `Mole-Agent>`. **`discovery`** 캐시 → bulk·`host-info` IP 보강(`discover` 별칭). TTY: readline(↑/↓ 히스토리, Tab 완성). `agent repl` 별칭 |
+| **`--host-info`** | `HOST_IP`/`HOST_IPS` = 응답 IP / 발견 IP(UDP ~3s 보강). REPL은 **discovery 캐시** 우선 |
 | **로컬 대상** | CLI·REPL에서 **`local`** = **`self`** (argv만; REST JSON은 `self`) |
 | **코드 정리** | `discoverycli` 그룹/IP 헬퍼·`DiscoverToStdout` 공유; `replcli`; dead code 제거 |
 
@@ -37,7 +51,7 @@
 | **`--rollback-all-remotes`** | Discovery → `POST …/versions/rollback-all` |
 
 - **공통**: orchestrator **`-cfg`** 필수; **`-apiprefix`**·**`-maintenance-port`**(기본 8889); Discovery는 명령 **내부 1회**(dest 9999, src 9998, timeout 10s) — **`--discovery` 선행 불필요**; `hosts[]`는 메모리 병합(`BulkPushHostsFromDiscovery`).
-- **코드**: `discoverycli`(`Discover`, `RunDefaultDiscoveryToStdout`, `BulkPushHostsFromDiscovery`); `clirest`(`postBulkNDJSON`, `UploadBundleMaintenance`, bulk API 클라이언트); `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli`.
+- **코드**: `maintenance/bulkcli`(`Run`/`RunDiscovery`, **`flags.go`** 공통 플래그·help); `discoverycli`; `clirest`; `configpushclicli` / `restartallclicli` / `applyupdateallclicli` / `rollbackallclicli`.
 - **`--apply-update-all-remotes`**: **`-agent-variant`**, **`-use-bundle-config`**(`--apply-update` 와 동일 의미).
 - **문서**: **docs/CLI.md**(「리모트 일괄 CLI (공통)」), **docs/REST_API.md**, **PRD.md** §4.1.1·§6.6, **README.md**.
 
@@ -50,9 +64,10 @@
 
 - **레이아웃**: **「모든 리모트 호스트 일괄 작업」** 섹션은 Discovery 옆이 아니라 **오른쪽 sticky 사이드바**(「업데이트」 패널 아래)에 둔다. 호스트 카드는 가운데 열, 업데이트·일괄 작업은 오른쪽 열.
 - **일괄 버튼(4개)**: 「**로컬 설정을 리모트 호스트에 일괄 복사**」(`POST …/current-config/push-local-all`), 「**리모트 호스트 일괄 재시작**」(`POST …/service-control/restart-all`), 「**리모트 호스트에 일괄 업데이트 적용**」(`POST …/apply-update-all`), 「**리모트 호스트 일괄 롤백**」(`POST …/versions/rollback-all`). NDJSON per-host 결과, 공용 **「결과 보기」** 모달.
+- **도달 가능 호스트**: push/restart/apply/rollback **모두** HTTP 헬스 dead·이번 Discovery 미응답 카드는 body·버튼 카운트에서 제외(`collectRemoteHostsFromDOM({ reachableOnly: true })`).
 - **결과·상태 UX**: 버튼 클릭 **순서대로** 상태 줄이 `#bulk-remote-status-list`에 **추가**된다(고정 슬롯 없음). 상태 줄 접두는 짧은 라벨(**설정 복사**·**서비스 재시작**·**업데이트 적용**·**롤백**). **「결과 보기」** 와 **×** 는 같은 줄 오른쪽에 배치; × 클릭 시 해당 줄 전체 제거.
 - **일괄 업데이트 적용(버튼)**: 로컬 `can_apply`가 아니라 **호스트별** `GET …/update-status?ip=` 의 `can_apply`로 판단. 스테이징 버전이 있고 **도달 가능한 원격 중 적용 가능 ≥1** 일 때만 활성. 라벨 **`(적용가능/전체)`** 표시. 확인 모달은 **오른쪽 업데이트 패널**의 「이전버전의 환경설정 파일 재사용」을 모든 원격에 동일 적용(카드별 체크박스 무시). 성공 호스트는 완료 후 **카드 자동 갱신**(host-info 폴링·패널 refresh).
-- **일괄 롤백(버튼)**: 호스트별 `GET …/versions/list?ip=` 로 **`is_current`·`is_previous` 버전 키**를 비교. **`previous` 없음** 또는 **`current`와 `previous`가 같으면**(이미 롤백됨) 롤백 불가 — **도달 가능한 롤백 가능 호스트 ≥1** 일 때만 버튼 활성. 롤백 성공 후에는 동일 조건으로 버튼 비활성 유지.
+- **일괄 롤백(버튼)**: 서버 `GET …/versions/list`의 **`can_rollback`**(또는 `is_current`·`is_previous` 비교 폴백). **도달 가능한 롤백 가능 호스트 ≥1** 일 때만 버튼 활성.
 - **일괄 API 공통**: 호스트별 `StagingUpdateAvailable` / 롤백 가능 여부 미충족은 **`skipped`**(실패 아님). 진행 중 해당 버튼 **`N/M`**·비활성. `hosts` body = **화면 카드 1장 = 호스트 1대**(`primary_ip`, `hostname`, `cpu_uuid`, `ips[]`).
 - **호스트 목록**: **`remoteregistry`**(volatile) + **`GET …/discovered-remotes`**; UI는 DOM 카드 목록을 body로 보냄(권장).
 - **재시작 확인**: restart-all — 프록시 restart 후 **2s 대기·최대 45s** 폴링(`GET …/health` 또는 `service-status`의 `Active: active (running)`).

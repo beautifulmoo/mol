@@ -39,7 +39,7 @@ func Run(buildVersionKey, cliBuildVariant string, args []string) int {
 		v = "0.0.0-0"
 	}
 	fmt.Printf("%s %s interactive REPL. Type 'help' for commands, 'exit' to quit.\n", appmeta.BinaryName, v)
-	fmt.Println("Bulk commands use hosts from the last 'discover'. Orchestrator maintenance must be running for bulk.")
+	fmt.Println("Bulk commands use hosts from the last 'discovery'. Orchestrator maintenance must be running for bulk.")
 	if isatty.IsTerminal(os.Stdin.Fd()) {
 		fmt.Println("Arrow keys browse command history; Tab completes commands and paths (bash-like; Tab twice lists choices).")
 	}
@@ -115,8 +115,8 @@ func execLine(s *Session, buildVersionKey, cliBuildVariant, line string) error {
 			return nil
 		}
 		return fmt.Errorf("usage: clear-hosts")
-	case "discover", "discovery":
-		return runDiscover(s, args)
+	case "discovery", "discover":
+		return runDiscovery(s, args)
 	case "nic-brd", "nicbrd":
 		runNicBrd()
 	case "host-info", "hostinfo":

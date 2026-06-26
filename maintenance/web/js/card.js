@@ -1,165 +1,8 @@
 /* eslint-disable */
 (function (M) {
 'use strict';
-  function getRemoteHealthCfg() {
-    var h = typeof window !== 'undefined' && window.__CONTRABASS_REMOTE_HEALTH__;
-    if (h && typeof h.intervalSec === 'number') {
-      return {
-        intervalSec: h.intervalSec,
-        timeoutSec: h.timeoutSec,
-        failureThreshold: h.failureThreshold,
-        jitterSec: h.jitterSec
-      };
-    }
-    return { intervalSec: 10, timeoutSec: 2, failureThreshold: 3, jitterSec: 2 };
-  }
-
-  function setRemoteHealthCardUI(card, dead, message) {
-    if (!card) return;
-    var banner = card.querySelector('.remote-health-banner');
-    var btn = card.querySelector('.remote-health-recheck-btn');
-    if (banner) {
-      banner.hidden = !dead;
-      banner.textContent = dead ? (message || 'HTTP 헬스체크 실패') : '';
-    }
-    if (btn) btn.hidden = !dead;
-    var row = card.closest && card.closest('.host-row');
-    var wasDead = !!(row && row.classList.contains('host-row--remote-health-dead'));
-    if (row) row.classList.toggle('host-row--remote-health-dead', !!dead);
-    if (card.classList.contains('self-card')) return;
-    if (wasDead !== !!dead) {
-      updateAllHostApplyButtons();
-    }
-  }
-
-  function scheduleRemoteHealthTick(ip) {
-    var st = M.remoteHealthState[ip];
-    if (!st) return;
-    if (st.timerId != null) {
-      clearTimeout(st.timerId);
-      st.timerId = null;
-    }
-    if (document.hidden) return;
-    var cfg = getRemoteHealthCfg();
-    var delayMs = cfg.intervalSec * 1000 + Math.random() * cfg.jitterSec * 1000;
-    st.timerId = setTimeout(function () {
-      st.timerId = null;
-      execRemoteHealthCheck(ip, false);
-    }, delayMs);
-  }
-
-  function refreshRemoteHostAfterHealthOk(card, ip) {
-    if (!card || !ip) return;
-    fetch(M.API_BASE + '/host-info?ip=' + encodeURIComponent(ip))
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success' && body.data) {
-          updateHostCardDetails(card, body.data);
-          M.mergeHostIpsFromResponseIntoCard(card, body.data);
-          if (body.data.responded_from_ip) M.mergeRespondedFromIntoCard(card, body.data.responded_from_ip);
-          var row = card.closest && card.closest('.host-row');
-          if (row) updateHostRowLabel(row, body.data, false);
-          fetchUpdateLogForCard(card, ip);
-          fetchCurrentConfigForCard(card, ip);
-          fetchVersionsListForCard(card, ip);
-          fetchServiceStatus(card, ip);
-          M.fetchUpdateStatus();
-          updateAllHostApplyButtons();
-        }
-      })
-      .catch(function () {});
-  }
-
-  function onRemoteHealthTransportFail(ip, card, detail) {
-    var st = M.remoteHealthState[ip];
-    if (!st) return;
-    st.failures += 1;
-    var cfg = getRemoteHealthCfg();
-    if (st.failures >= cfg.failureThreshold) {
-      st.dead = true;
-      setRemoteHealthCardUI(
-        card,
-        true,
-        'HTTP 헬스체크가 ' + cfg.failureThreshold + '회 연속 실패했습니다. 원격 API(' + (detail || '응답 없음') + ')에 연결할 수 없습니다.'
-      );
-    }
-  }
-
-  function execRemoteHealthCheck(ip, manual) {
-    var list = M.el('discovered-hosts');
-    var card = list ? findHostCardByIp(list, ip) : null;
-    if (!card) {
-      delete M.remoteHealthState[ip];
-      return;
-    }
-    var btn = card.querySelector('.remote-health-recheck-btn');
-    if (manual && btn) btn.disabled = true;
-    fetch(M.API_BASE + '/remote-health-check?ip=' + encodeURIComponent(ip))
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        var st = M.remoteHealthState[ip];
-        if (body.status === 'success') {
-          if (st) {
-            st.failures = 0;
-            st.dead = false;
-          }
-          setRemoteHealthCardUI(card, false, '');
-          if (manual) {
-            refreshRemoteHostAfterHealthOk(card, ip);
-          }
-        } else {
-          onRemoteHealthTransportFail(ip, card, typeof body.data === 'string' ? body.data : '');
-        }
-      })
-      .catch(function () {
-        onRemoteHealthTransportFail(ip, card, '요청 실패');
-      })
-      .finally(function () {
-        if (manual && btn) btn.disabled = false;
-        if (!document.hidden) {
-          scheduleRemoteHealthTick(ip);
-        }
-      });
-  }
-
-  function ensureRemoteHealthForIp(ip) {
-    if (!ip) return;
-    if (!M.remoteHealthState[ip]) {
-      M.remoteHealthState[ip] = { failures: 0, timerId: null, dead: false };
-      scheduleRemoteHealthTick(ip);
-    }
-  }
-
-  function registerRemoteHealthMonitoring(card) {
-    if (!card || card.classList.contains('self-card')) return;
-    var ip = card.getAttribute('data-host-ip');
-    if (!ip) return;
-    ensureRemoteHealthForIp(ip);
-  }
-
-  function bindRemoteHealthForCard(cardEl) {
-    if (!cardEl || cardEl.classList.contains('self-card')) return;
-    var ip = cardEl.getAttribute('data-host-ip') || '';
-    var recheckBtn = cardEl.querySelector('.remote-health-recheck-btn');
-    if (recheckBtn) {
-      recheckBtn.addEventListener('click', function () {
-        if (!ip) return;
-        execRemoteHealthCheck(ip, true);
-      });
-    }
-    registerRemoteHealthMonitoring(cardEl);
-  }
-
-  function enumerateDiscoveredRemoteHealth() {
-    var list = M.el('discovered-hosts');
-    if (!list) return;
-    var cards = list.querySelectorAll('.host-card');
-    for (var i = 0; i < cards.length; i++) {
-      registerRemoteHealthMonitoring(cards[i]);
-    }
-  }
-
   const serverIconSvg = '<svg class="host-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="4" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="16" width="20" height="4" rx="1"/><circle cx="6" cy="6" r="0.8"/><circle cx="6" cy="12" r="0.8"/><circle cx="6" cy="18" r="0.8"/></svg>';
+
   function renderHostRow(host, isSelf) {
     var row = document.createElement('div');
     row.className = 'host-row' + (isSelf ? ' host-row--local' : '');
@@ -169,7 +12,7 @@
     row.innerHTML =
       '<div class="host-row__header" role="button" tabindex="0" aria-expanded="false">' +
       '<span class="host-row__dot" aria-hidden="true"></span>' +
-      '<span class="host-row__label">' + escapeHtml(label) + '</span>' +
+      '<span class="host-row__label">' + M.escapeHtml(label) + '</span>' +
       (isSelf ? '' : '<span class="host-row__discovery-miss-badge" hidden>이번 Discovery 미응답</span>') +
       '<span class="host-row__expand-icon" aria-hidden="true">▶</span>' +
       '</div>' +
@@ -192,9 +35,9 @@
         if (card && !card.classList.contains('self-card')) {
           var ip = card.getAttribute('data-host-ip');
           if (ip) {
-            fetchUpdateLogForCard(card, ip);
-            fetchCurrentConfigForCard(card, ip);
-            fetchVersionsListForCard(card, ip);
+            M.fetchUpdateLogForCard(card, ip);
+            M.fetchCurrentConfigForCard(card, ip);
+            M.fetchVersionsListForCard(card, ip);
           }
         }
       }
@@ -329,14 +172,14 @@
     div.setAttribute('data-host-ips', ipsAttr);
     div.setAttribute('data-responded-from-ips', host.responded_from_ip || '');
     var hostDetailsDl = '<dl class="host-details">' +
-      '<dt>CPU UUID</dt><dd>' + escapeHtml(host.cpu_uuid || '-') + '</dd>' +
-      '<dt>버전</dt><dd>' + escapeHtml(host.version || '-') + (host.build_variant ? ' <span class="build-variant-badge">(' + escapeHtml(host.build_variant) + ')</span>' : '') + '</dd>' +
-      '<dt>IP</dt><dd>' + escapeHtml(ipsDisplay) + '</dd>' +
-      '<dt>응답한 IP</dt><dd>' + escapeHtml(respondedFromDisplay) + '</dd>' +
-      '<dt>호스트명</dt><dd>' + escapeHtml(host.hostname || '-') + '</dd>' +
+      '<dt>CPU UUID</dt><dd>' + M.escapeHtml(host.cpu_uuid || '-') + '</dd>' +
+      '<dt>버전</dt><dd>' + M.escapeHtml(host.version || '-') + (host.build_variant ? ' <span class="build-variant-badge">(' + M.escapeHtml(host.build_variant) + ')</span>' : '') + '</dd>' +
+      '<dt>IP</dt><dd>' + M.escapeHtml(ipsDisplay) + '</dd>' +
+      '<dt>응답한 IP</dt><dd>' + M.escapeHtml(respondedFromDisplay) + '</dd>' +
+      '<dt>호스트명</dt><dd>' + M.escapeHtml(host.hostname || '-') + '</dd>' +
       '<dt>서비스 포트</dt><dd>' + (host.service_port != null ? host.service_port : '-') + '</dd>' +
-      '<dt>CPU</dt><dd>' + escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '') + '</dd>' +
-      '<dt>메모리</dt><dd>' + formatMemory(host) + '</dd>' +
+      '<dt>CPU</dt><dd>' + M.escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '') + '</dd>' +
+      '<dt>메모리</dt><dd>' + M.formatMemory(host) + '</dd>' +
       '</dl>';
     var topContent = '<div class="updating-indicator" role="status" aria-label="업데이트 적용 중"></div>' +
       '<div class="host-icon">' + serverIconSvg + '</div>' +
@@ -406,19 +249,19 @@
           .then(function (res) { return res.json(); })
           .then(function (body) {
             if (body.status === 'success' && body.data) {
-              updateHostCardDetails(cardEl, body.data);
+              M.updateHostCardDetails(cardEl, body.data);
               if (!isSelf) {
                 M.fetchUpdateStatusForRemote(ip);
-                updateAllHostApplyButtons();
+                M.updateAllHostApplyButtons();
               }
             } else {
               if (summary) summary.textContent = isSelf ? (body.data || '내 정보를 불러올 수 없습니다.') : (body.data || '호스트 정보를 불러올 수 없습니다.');
             }
-            fetchServiceStatus(cardEl, isSelf ? '' : ip);
+            M.fetchServiceStatus(cardEl, isSelf ? '' : ip);
           })
           .catch(function () {
             if (summary) summary.textContent = isSelf ? '내 정보 요청 실패.' : '호스트 정보 요청 실패.';
-            fetchServiceStatus(cardEl, isSelf ? '' : ip);
+            M.fetchServiceStatus(cardEl, isSelf ? '' : ip);
           });
       });
     }
@@ -436,8 +279,8 @@
           var delay = isSelf ? 2000 : 3500;
           var targetIp = isSelf ? '' : ip;
           setTimeout(function () {
-            refreshHostCardDetails(cardEl, targetIp);
-            fetchServiceStatus(cardEl, targetIp);
+            M.refreshHostCardDetails(cardEl, targetIp);
+            M.fetchServiceStatus(cardEl, targetIp);
           }, delay);
         }
         function isRestartInProgressError(msg) {
@@ -459,7 +302,7 @@
                 afterRestartMaybeRefresh();
               } else {
                 if (summary) summary.textContent = body.data || '재시작 실패.';
-                if (isSelf) fetchServiceStatus(cardEl, '');
+                if (isSelf) M.fetchServiceStatus(cardEl, '');
               }
             }
           })
@@ -471,26 +314,26 @@
     }
     if (!isSelf) {
       var logRefreshBtn = cardEl.querySelector('.card-update-log-refresh-btn');
-      if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { fetchUpdateLogForCard(cardEl, ip); });
+      if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { M.fetchUpdateLogForCard(cardEl, ip); });
       var configLoadBtn = cardEl.querySelector('.card-current-config-load-btn');
       var configSaveBtn = cardEl.querySelector('.card-current-config-save-btn');
       var configExpandBtn = cardEl.querySelector('.card-current-config-expand-btn');
-      if (configLoadBtn) configLoadBtn.addEventListener('click', function () { fetchCurrentConfigForCard(cardEl, ip); });
-      if (configSaveBtn) configSaveBtn.addEventListener('click', function () { saveCurrentConfigForCard(cardEl, ip); });
-      if (configExpandBtn) configExpandBtn.addEventListener('click', function () { openConfigEditorModal(cardEl, ip); });
+      if (configLoadBtn) configLoadBtn.addEventListener('click', function () { M.fetchCurrentConfigForCard(cardEl, ip); });
+      if (configSaveBtn) configSaveBtn.addEventListener('click', function () { M.saveCurrentConfigForCard(cardEl, ip); });
+      if (configExpandBtn) configExpandBtn.addEventListener('click', function () { M.openConfigEditorModal(cardEl, ip); });
       var versionsRefreshBtn = cardEl.querySelector('.card-versions-list-refresh-btn');
       var versionsRemoveBtn = cardEl.querySelector('.card-versions-remove-btn');
-      if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', function () { fetchVersionsListForCard(cardEl, ip); });
-      if (versionsRemoveBtn) versionsRemoveBtn.addEventListener('click', function () { doVersionsRemoveForCard(cardEl, ip); });
+      if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', function () { M.fetchVersionsListForCard(cardEl, ip); });
+      if (versionsRemoveBtn) versionsRemoveBtn.addEventListener('click', function () { M.doVersionsRemoveForCard(cardEl, ip); });
       var swSel = cardEl.querySelector('.card-versions-switch-select');
       var swBtn = cardEl.querySelector('.card-versions-switch-btn');
       if (swSel) {
         swSel.addEventListener('change', function () {
-          updateVersionsSwitchButtonFromSelect(cardEl);
-          setVersionsSwitchHint(cardEl, swSel.value);
+          M.updateVersionsSwitchButtonFromSelect(cardEl);
+          M.setVersionsSwitchHint(cardEl, swSel.value);
         });
       }
-      if (swBtn) swBtn.addEventListener('click', function () { doVersionsSwitch(cardEl, ip); });
+      if (swBtn) swBtn.addEventListener('click', function () { M.doVersionsSwitch(cardEl, ip); });
     }
     if (isSelf) return;
     function doControl(action) {
@@ -503,7 +346,7 @@
         .then(function (res) { return res.json(); })
         .then(function (body) {
           if (body.status === 'success') {
-            fetchServiceStatus(cardEl, ip);
+            M.fetchServiceStatus(cardEl, ip);
           } else {
             updateStatusUI(cardEl, null, body.data || '실패');
           }
@@ -531,7 +374,7 @@
         } else if (M.hasUploadableSelection()) {
           canProceed = true;
         } else {
-          canProceed = canApplyToThisRemoteHostLegacy(hostVersion);
+          canProceed = M.canApplyToThisRemoteHostLegacy(hostVersion);
         }
         if (!canProceed) {
           if (summary) summary.textContent = '이 호스트에 적용할 스테이징 버전이 없거나 이미 동일 버전입니다.';
@@ -544,7 +387,7 @@
         M.confirmApplyConfigChoice(reusePreviousConfig, reuseCheckboxVisible, function () {
           applyHostBtn.disabled = true;
           if (summary) summary.textContent = '업데이트 적용 중…';
-          if (card) toggleCardVariantSelector(card, false);
+          if (card) M.toggleCardVariantSelector(card, false);
 
           function recheckApplyButton() {
             var c = applyHostBtn.closest && applyHostBtn.closest('.host-card');
@@ -552,12 +395,12 @@
             if (hip) {
               M.fetchUpdateStatusForRemote(hip);
             } else {
-              updateAllHostApplyButtons();
+              M.updateAllHostApplyButtons();
             }
           }
 
           function doApplyToHost(version) {
-            showCardUpdating(cardEl, true);
+            M.showCardUpdating(cardEl, true);
             fetch(M.API_BASE + '/apply-update', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -571,21 +414,21 @@
               .then(function (res) { return res.json(); })
               .then(function (body) {
                 if (body.status === 'success') {
-                  scheduleRefreshAfterApply(cardEl, ip, summary, body.data, version);
+                  M.scheduleRefreshAfterApply(cardEl, ip, summary, body.data, version);
                 } else {
                   updateStatusUI(cardEl, null, body.data || '적용 실패');
-                  showCardUpdating(cardEl, false);
+                  M.showCardUpdating(cardEl, false);
                 }
               })
               .catch(function () {
                 updateStatusUI(cardEl, null, '요청 실패');
-                showCardUpdating(cardEl, false);
+                M.showCardUpdating(cardEl, false);
               })
               .finally(recheckApplyButton);
           }
 
           var stV = M.remoteUpdateStatusByIP[ip];
-          var applicableVersion = (stV && stV.ok && stV.apply_version) ? stV.apply_version : getApplicableVersion();
+          var applicableVersion = (stV && stV.ok && stV.apply_version) ? stV.apply_version : M.getApplicableVersion();
           if (applicableVersion) {
             doApplyToHost(applicableVersion);
             return;
@@ -603,7 +446,7 @@
           formData.append('bundle', bundleInput.files[0]);
           formData.append('agent_variant', M.getCardAgentVariant(cardEl));
           formData.append('reuse_previous_config', reusePreviousConfig ? 'true' : 'false');
-          showCardUpdating(cardEl, true);
+          M.showCardUpdating(cardEl, true);
           fetch(M.API_BASE + '/apply-update', {
             method: 'POST',
             body: formData
@@ -616,507 +459,21 @@
                   var m = body.data.match(/version\s+(\S+)\s+applied on remote/i);
                   if (m) ver = m[1];
                 }
-                scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);
+                M.scheduleRefreshAfterApply(cardEl, ip, summary, body.data, ver);
               } else {
                 updateStatusUI(cardEl, null, body.data || '적용 실패');
-                showCardUpdating(cardEl, false);
+                M.showCardUpdating(cardEl, false);
               }
             })
             .catch(function () {
               updateStatusUI(cardEl, null, '요청 실패');
-              showCardUpdating(cardEl, false);
+              M.showCardUpdating(cardEl, false);
             })
             .finally(recheckApplyButton);
         });
       });
     }
-    bindRemoteHealthForCard(cardEl);
-  }
-
-  function getApplicableVersion() {
-    if (M.lastUpdateStatus.apply_version) {
-      return M.lastUpdateStatus.apply_version;
-    }
-    if (M.lastUpdateStatus.staging_versions && M.lastUpdateStatus.staging_versions.length > 0) {
-      return M.lastUpdateStatus.staging_versions[0];
-    }
-    return M.lastUploadedVersion || '';
-  }
-
-  /** Fallback when /update-status?ip= failed: approximate using newest staging vs card version (may disagree with server). */
-  function canApplyToThisRemoteHostLegacy(hostVersion) {
-    if (M.hasUploadableSelection()) return true;
-    var applicable = getApplicableVersion();
-    if (!applicable) return false;
-    return applicable !== (hostVersion || '');
-  }
-
-  function getApplyButtonTitle(hostVersion, canApply, applicableVersion) {
-    if (canApply && applicableVersion) {
-      return applicableVersion + ' 버전으로 업데이트 가능합니다';
-    }
-    if (!applicableVersion) {
-      return '먼저 업데이트 영역에서 버전을 업로드하세요';
-    }
-    return '최신 버전입니다';
-  }
-
-  /** After apply-update: reload panels. Skip update log while startUpdateLogPolling is active (avoid stale overwrite). */
-  var activeLogPollVersion = '';
-
-  function refreshAllPanelsAfterUpdate(cardEl, ip) {
-    if (ip) {
-      if (!cardEl) return;
-      if (!activeLogPollVersion) fetchUpdateLogForCard(cardEl, ip);
-      fetchCurrentConfigForCard(cardEl, ip);
-      fetchVersionsListForCard(cardEl, ip);
-      fetchServiceStatus(cardEl, ip);
-      M.fetchUpdateStatusForRemote(ip);
-      M.fetchRollbackStatusForRemote(ip);
-    } else {
-      if (!activeLogPollVersion) fetchUpdateLog(true);
-      fetchCurrentConfig();
-      fetchVersionsList();
-      if (cardEl) fetchServiceStatus(cardEl, '');
-    }
-    M.fetchUpdateStatus();
-  }
-
-  /**
-   * Poll url until JSON returns status success + data, or maxAttempts exhausted.
-   * onGiveUp(networkFailure): networkFailure true if last failure was fetch/parse error.
-   */
-  function pollUntilHostJsonOk(url, maxAttempts, firstDelayMs, retryDelayMs, onOk, onGiveUp) {
-    function step(attempt) {
-      setTimeout(function () {
-        fetch(url)
-          .then(function (res) { return res.json(); })
-          .then(function (body) {
-            if (body.status === 'success' && body.data) {
-              onOk(body);
-              return;
-            }
-            if (attempt + 1 < maxAttempts) step(attempt + 1);
-            else if (onGiveUp) onGiveUp(false);
-          })
-          .catch(function () {
-            if (attempt + 1 < maxAttempts) step(attempt + 1);
-            else if (onGiveUp) onGiveUp(true);
-          });
-      }, attempt === 0 ? firstDelayMs : retryDelayMs);
-    }
-    step(0);
-  }
-
-  function scheduleRefreshAfterApply(cardEl, ip, summary, successMessage, appliedVersion, onDone, opts) {
-    opts = opts || {};
-    if (summary && !opts.skipInitialSummary) {
-      summary.textContent = successMessage || '적용 완료. 잠시 후 상태를 다시 읽어옵니다.';
-    }
-    if (appliedVersion && cardEl) {
-      cardEl.setAttribute('data-host-version', appliedVersion);
-      var dds = cardEl.querySelectorAll('.host-details > dd');
-      if (dds && dds.length >= 8) {
-        dds[1].textContent = appliedVersion;
-      }
-      startUpdateLogPolling(appliedVersion, cardEl, ip || '');
-    }
-    var url = M.API_BASE + '/host-info?ip=' + encodeURIComponent(ip);
-    pollUntilHostJsonOk(url, 8, 5000, 2000, function (body) {
-      updateHostCardDetails(cardEl, body.data);
-      refreshAllPanelsAfterUpdate(cardEl, ip);
-      if (summary) summary.textContent = successMessage || '적용 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
-      showCardUpdating(cardEl, false);
-      if (onDone) onDone();
-    }, function () {
-      refreshAllPanelsAfterUpdate(cardEl, ip);
-      showCardUpdating(cardEl, false);
-      if (onDone) onDone();
-    });
-  }
-
-  /** After switch-current: same panel refresh as apply-update (log, config, versions, service, update-status). */
-  function scheduleRefreshAfterSwitchCurrent(cardEl, ip, switchedVersion, statusEl) {
-    if (!ip) {
-      var selfCard = M.el('self-info') && M.el('self-info').querySelector('.host-card');
-      if (selfCard) showCardUpdating(selfCard, true);
-      if (statusEl) statusEl.textContent = '전환 반영 중… 재시작 후 정보를 자동으로 불러옵니다.';
-      startUpdateLogPolling(switchedVersion, selfCard, '');
-      M.fetchUpdateStatus();
-      pollUntilHostJsonOk(M.API_BASE + '/self', 15, 4000, 2000, function (body2) {
-        if (selfCard) updateHostCardDetails(selfCard, body2.data);
-        refreshAllPanelsAfterUpdate(selfCard, '');
-        updateAllHostApplyButtons();
-        if (selfCard) showCardUpdating(selfCard, false);
-        if (statusEl) statusEl.textContent = '전환 완료. 업데이트 기록·config·버전·상태를 반영했습니다.';
-        M.fetchUpdateStatus();
-        updateVersionsSwitchButtonFromSelect(null);
-      }, function (networkFailure) {
-        refreshAllPanelsAfterUpdate(selfCard, '');
-        if (selfCard) showCardUpdating(selfCard, false);
-        if (statusEl) {
-          statusEl.textContent = networkFailure
-            ? '연결 실패. 페이지를 새로고침해 보세요.'
-            : '서버 응답이 지연됩니다. 잠시 후 정보를 새로고침하세요.';
-        }
-        M.fetchUpdateStatus();
-        updateVersionsSwitchButtonFromSelect(null);
-      });
-      return;
-    }
-    if (cardEl) showCardUpdating(cardEl, true);
-    if (statusEl) statusEl.textContent = '전환 반영 중… 잠시 후 상태를 다시 읽어옵니다.';
-    scheduleRefreshAfterApply(
-      cardEl,
-      ip,
-      statusEl,
-      '전환 완료. 업데이트 기록·config·버전·상태를 반영했습니다.',
-      switchedVersion,
-      function () {
-        updateVersionsSwitchButtonFromSelect(cardEl);
-        M.fetchUpdateStatus();
-      },
-      { skipInitialSummary: true }
-    );
-  }
-
-  function updateAllHostApplyButtons() {
-    var localApplicable = getApplicableVersion();
-    var btns = document.querySelectorAll('.apply-update-host');
-    /** Remote card: show compute/control only when apply is enabled and dual-agent (or file multipart) applies. */
-    function showRemoteVariantSelector(btn, card) {
-      if (!btn || !card || btn.disabled) return false;
-      if (card.classList.contains('is-updating')) return false;
-      return !!(M.lastUpdateStatus.staging_dual_agents || M.hasUploadableSelection());
-    }
-    for (var i = 0; i < btns.length; i++) {
-      var btn = btns[i];
-      var card = btn.closest && btn.closest('.host-card');
-      if (!card) continue;
-      if (!card.classList.contains('self-card') && !M.isRemoteHostReachableForControl(card)) {
-        btn.disabled = true;
-        btn.title = M.remoteHostUnreachableReason(card);
-        toggleCardVariantSelector(card, false);
-        continue;
-      }
-      var hostVersion = card.getAttribute('data-host-version') || '';
-      var ip = card.getAttribute('data-host-ip') || '';
-      var st = M.remoteUpdateStatusByIP[ip];
-
-      if (!st || st.pending) {
-        btn.disabled = true;
-        btn.title = '로컬 스테이징과 원격 버전 비교 중…';
-        toggleCardVariantSelector(card, false);
-        continue;
-      }
-
-      var applicableVersion;
-      var canApply;
-      if (st.ok) {
-        canApply = !!(st.can_apply && st.apply_version);
-        applicableVersion = st.apply_version || '';
-        btn.disabled = !canApply;
-        if (!canApply) {
-          var rv = st.remote_version || hostVersion || '';
-          if (applicableVersion && rv && applicableVersion === rv) {
-            btn.title = '원격이 이미 스테이징 버전(' + applicableVersion + ')과 같습니다. 동일 버전 재적용은 AllowSameVersionUpdate가 필요합니다.';
-          } else {
-            btn.title = getApplyButtonTitle(hostVersion, false, applicableVersion || localApplicable);
-          }
-        } else {
-          btn.title = getApplyButtonTitle(hostVersion, true, applicableVersion || localApplicable);
-        }
-        toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
-        continue;
-      }
-
-      if (M.hasUploadableSelection()) {
-        btn.disabled = false;
-        btn.title = localApplicable
-          ? (localApplicable + ' 번들로 원격 전송 가능')
-          : 'tar.gz 번들로 원격 적용';
-        toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
-        continue;
-      }
-
-      applicableVersion = localApplicable;
-      canApply = canApplyToThisRemoteHostLegacy(hostVersion);
-      btn.disabled = !canApply;
-      btn.title = (st && st.err ? '원격 상태 확인 실패 — 표시는 추정입니다. ' : '') +
-        getApplyButtonTitle(hostVersion, canApply, applicableVersion);
-      toggleCardVariantSelector(card, showRemoteVariantSelector(btn, card));
-    }
-    M.updateReuseConfigVisibility();
-    M.updateAllRemoteServiceControlButtons();
-    M.refreshRemoteBulkButtonsState();
-  }
-
-  function toggleCardVariantSelector(card, show) {
-    if (!card) return;
-    var sel = card.querySelector('.card-variant-selector');
-    if (!sel) return;
-    sel.hidden = !show;
-    if (show) {
-      M.setVariantRadioSelection(sel, card.getAttribute('data-build-variant'));
-    }
-  }
-
-  function doRemoveUpload() {
-    var version = M.lastUpdateStatus.remove_version;
-    if (!version) return;
-    var status = M.el('upload-status');
-    var removeBtn = M.el('remove-upload-btn');
-    if (removeBtn) removeBtn.disabled = true;
-    status.textContent = '스테이징에서 버전 삭제 중…';
-    fetch(M.API_BASE + '/upload/remove', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: version })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success') {
-          status.textContent = body.data || '스테이징에서 삭제되었습니다.';
-          M.lastUpdateStatus = {
-            can_apply: false,
-            apply_version: '',
-            staging_versions: [],
-            remove_version: '',
-            staging_dual_agents: false
-          };
-          var variantFs = M.el('agent-variant-fieldset');
-          if (variantFs) variantFs.hidden = true;
-          var applyBtn = M.el('apply-update-btn');
-          if (applyBtn) applyBtn.disabled = true;
-          var stagingDisplay = M.el('staging-version-display');
-          if (stagingDisplay) stagingDisplay.textContent = '';
-          M.updateReuseConfigVisibility();
-          updateAllHostApplyButtons();
-          M.fetchUpdateStatus();
-        } else {
-          status.textContent = body.data || '삭제 실패.';
-          M.fetchUpdateStatus();
-        }
-      })
-      .catch(function () {
-        status.textContent = '요청 실패.';
-        M.fetchUpdateStatus();
-      });
-  }
-
-  function fetchServiceStatus(cardEl, ip) {
-    var summary = cardEl && cardEl.querySelector('.service-status-summary');
-    if (!summary) return;
-    var url = M.API_BASE + '/service-status';
-    if (ip) {
-      url += '?ip=' + encodeURIComponent(ip);
-    }
-    fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success' && body.data && body.data.output) {
-          var output = body.data.output;
-          var active = parseActiveFromOutput(output);
-          var label = active ? '[정상 서비스 상태]' : '[서비스 중지 상태]';
-          updateStatusUI(cardEl, output, label);
-        } else {
-          updateStatusUI(cardEl, body.data || '상태를 불러올 수 없습니다.', body.data || '상태를 불러올 수 없습니다.');
-        }
-      })
-      .catch(function () {
-        updateStatusUI(cardEl, null, '상태를 불러올 수 없습니다.');
-      });
-  }
-
-  function escapeHtml(s) {
-    if (s == null) return '';
-    const t = document.createElement('div');
-    t.textContent = s;
-    return t.innerHTML;
-  }
-
-  var UPDATE_LOG_ROLLBACK_WARNING_HTML = '<span class="update-warning-title">⚠ 최근 업데이트 실패·롤백</span><br><span class="update-warning-desc">위 기록에서 failed 또는 rollback 항목을 확인하세요.</span>';
-
-  function fetchUpdateLogJSON(ip) {
-    var url = M.API_BASE + '/update-log';
-    if (ip) url += '?ip=' + encodeURIComponent(ip);
-    url += (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + Date.now();
-    return fetch(url, { cache: 'no-store' }).then(function (res) {
-      return res.json();
-    });
-  }
-
-  /** API tail is oldest-first; UI shows newest-first (reversed lines). */
-  function formatUpdateLogDisplay(output) {
-    if (output === undefined || output === null) return '(비어 있음)';
-    var s = String(output);
-    if (s === '') return '(비어 있음)';
-    if (s.indexOf('\n') === -1) return s;
-    var lines = s.split('\n');
-    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-    lines.reverse();
-    return lines.join('\n');
-  }
-
-  /**
-   * Log file is append-newest-at-bottom. Complete when we've seen this run's started, then the last line is success/failed.
-   */
-  function updateLogRunComplete(output, version, runStartedSeen) {
-    if (!output || !version || !runStartedSeen) return false;
-    var lines = output.split('\n');
-    var last = '';
-    for (var i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].trim()) {
-        last = lines[i];
-        break;
-      }
-    }
-    var needleSuccess = 'update ' + version + ' success';
-    var needleFailed = 'update ' + version + ' failed';
-    return last.indexOf(needleSuccess) !== -1 || last.indexOf(needleFailed) !== -1;
-  }
-
-  /** 2s poll until this run's success/failed (independent of /self; not stopped when host responds). */
-  function startUpdateLogPolling(version, cardEl, ip) {
-    if (!version) return function () {};
-    var intervalMs = 2000;
-    var maxMs = intervalMs * 450;
-    var timer = null;
-    var maxTimer = null;
-    var needleStarted = 'update ' + version + ' started';
-    var runStartedSeen = false;
-    activeLogPollVersion = version;
-
-    function stop() {
-      activeLogPollVersion = '';
-      if (timer) { clearInterval(timer); timer = null; }
-      if (maxTimer) { clearTimeout(maxTimer); maxTimer = null; }
-    }
-
-    function tick() {
-      var pre;
-      var warningEl;
-      if (ip) {
-        if (!cardEl) return;
-        pre = cardEl.querySelector('.card-right-log-output');
-        warningEl = cardEl.querySelector('.card-update-rollback-warning');
-      } else {
-        pre = M.el('self-update-log-output');
-        warningEl = M.el('self-update-rollback-warning');
-      }
-      if (!pre) return;
-      fetchUpdateLogJSON(ip)
-        .then(function (body) {
-          if (warningEl) warningEl.hidden = true;
-          applyUpdateLogResponse(pre, warningEl, body);
-          if (body.status === 'success' && body.data && body.data.output) {
-            var out = body.data.output;
-            if (out.indexOf(needleStarted) !== -1) runStartedSeen = true;
-            if (updateLogRunComplete(out, version, runStartedSeen)) {
-              stop();
-            }
-          }
-        })
-        .catch(function () {});
-    }
-
-    tick();
-    timer = setInterval(tick, intervalMs);
-    maxTimer = setTimeout(stop, maxMs);
-    return stop;
-  }
-
-  function extractUpdateLogOutput(data) {
-    if (data === undefined || data === null) return '';
-    if (typeof data === 'string') return data;
-    if (typeof data === 'object' && data.output !== undefined && data.output !== null) {
-      return String(data.output);
-    }
-    return '';
-  }
-
-  function applyUpdateLogResponse(pre, warningEl, body) {
-    if (body.status === 'success' && body.data !== undefined && body.data !== null) {
-      pre.textContent = formatUpdateLogDisplay(extractUpdateLogOutput(body.data));
-      if (warningEl && typeof body.data === 'object' && body.data.recent_rollback) {
-        warningEl.hidden = false;
-        warningEl.innerHTML = UPDATE_LOG_ROLLBACK_WARNING_HTML;
-      }
-    } else {
-      pre.textContent = body.data || '로그를 불러올 수 없습니다.';
-    }
-  }
-
-  function formatMemory(host) {
-    if (host.memory_total_mb != null && host.memory_used_mb != null) {
-      const pct = host.memory_usage_percent != null ? host.memory_usage_percent.toFixed(1) + '%' : '';
-      return host.memory_used_mb + ' / ' + host.memory_total_mb + ' MB' + (pct ? ' (' + pct + ')' : '');
-    }
-    return '-';
-  }
-
-  function updateHostCardDetails(cardEl, host) {
-    if (!cardEl || !host) return;
-    cardEl.setAttribute('data-host-version', host.version || '');
-    if (host.build_variant != null && String(host.build_variant).trim() !== '') {
-      cardEl.setAttribute('data-build-variant', M.defaultAgentVariantFromBuild(host.build_variant));
-    }
-    cardEl.setAttribute('data-hostname', host.hostname || '');
-    var existingIps = (cardEl.getAttribute('data-host-ips') || '').trim();
-    var ipDisplay;
-    var ipsAttr;
-    var primaryIp;
-    if (existingIps.indexOf(',') !== -1) {
-      ipsAttr = existingIps;
-      ipDisplay = existingIps.split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(', ');
-      primaryIp = cardEl.getAttribute('data-host-ip') || host.host_ip || '';
-    } else {
-      ipDisplay = (host.host_ips && host.host_ips.length) ? host.host_ips.join(', ') : (host.host_ip || '-');
-      ipsAttr = (host.host_ips && host.host_ips.length) ? host.host_ips.join(',') : (host.host_ip || '');
-      primaryIp = host.host_ip || (host.host_ips && host.host_ips[0]) || '';
-    }
-    cardEl.setAttribute('data-host-ip', primaryIp);
-    cardEl.setAttribute('data-host-ips', ipsAttr);
-    if (host.responded_from_ip) {
-      var rf = (cardEl.getAttribute('data-responded-from-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-      if (rf.indexOf(host.responded_from_ip) === -1) rf.push(host.responded_from_ip);
-      cardEl.setAttribute('data-responded-from-ips', rf.join(','));
-    }
-    var respondedFromDisplay = (cardEl.getAttribute('data-responded-from-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(', ') || '-';
-    var dds = cardEl.querySelectorAll('.host-details > dd');
-    if (dds.length >= 8) {
-      dds[0].textContent = host.cpu_uuid || '-';
-      dds[1].innerHTML = escapeHtml(host.version || '-') + (host.build_variant ? ' <span class="build-variant-badge">(' + escapeHtml(host.build_variant) + ')</span>' : '');
-      dds[2].textContent = ipDisplay;
-      dds[3].textContent = respondedFromDisplay;
-      dds[4].textContent = host.hostname || '-';
-      dds[5].textContent = host.service_port != null ? host.service_port : '-';
-      dds[6].innerHTML = escapeHtml(host.cpu_info || '-') + (host.cpu_usage_percent != null ? ' (' + host.cpu_usage_percent.toFixed(1) + '%)' : '');
-      dds[7].textContent = formatMemory(host);
-    }
-    var row = cardEl.closest && cardEl.closest('.host-row');
-    if (row) updateHostRowLabel(row, host, cardEl.classList.contains('self-card'));
-    var variantSel = cardEl.querySelector('.card-variant-selector');
-    if (variantSel && !variantSel.hidden) {
-      M.setVariantRadioSelection(variantSel, cardEl.getAttribute('data-build-variant'));
-    }
-    if (cardEl.classList.contains('self-card')) {
-      M.applyLocalVariantDefault();
-    }
-  }
-
-  function refreshHostCardDetails(cardEl, ip) {
-    if (!cardEl) return;
-    var url = (ip === '') ? (M.API_BASE + '/self') : (M.API_BASE + '/host-info?ip=' + encodeURIComponent(ip));
-    fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success' && body.data) {
-          updateHostCardDetails(cardEl, body.data);
-          if (ip !== '') updateAllHostApplyButtons();
-        }
-      })
-      .catch(function () {});
+    M.bindRemoteHealthForCard(cardEl);
   }
 
   function loadSelf() {
@@ -1132,31 +489,31 @@
             container.appendChild(row);
             var card = row.querySelector('.host-card');
             bindServiceControlButtons(card);
-            fetchServiceStatus(card, '');
+            M.fetchServiceStatus(card, '');
             var logRefreshBtn = M.el('self-update-log-refresh-btn');
             var versionsRefreshBtn = M.el('self-versions-list-refresh-btn');
             var versionsRemoveBtn = M.el('self-versions-remove-btn');
-            if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { fetchUpdateLog(); });
-            if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', fetchVersionsList);
-            if (versionsRemoveBtn) versionsRemoveBtn.addEventListener('click', doVersionsRemove);
+            if (logRefreshBtn) logRefreshBtn.addEventListener('click', function () { M.fetchUpdateLog(); });
+            if (versionsRefreshBtn) versionsRefreshBtn.addEventListener('click', M.fetchVersionsList);
+            if (versionsRemoveBtn) versionsRemoveBtn.addEventListener('click', M.doVersionsRemove);
             var swSelSelf = M.el('self-versions-switch-select');
             var swBtnSelf = M.el('self-versions-switch-btn');
             if (swSelSelf) {
               swSelSelf.addEventListener('change', function () {
-                updateVersionsSwitchButtonFromSelect(null);
-                setVersionsSwitchHint(null, swSelSelf.value);
+                M.updateVersionsSwitchButtonFromSelect(null);
+                M.setVersionsSwitchHint(null, swSelSelf.value);
               });
             }
-            if (swBtnSelf) swBtnSelf.addEventListener('click', function () { doVersionsSwitch(null, ''); });
+            if (swBtnSelf) swBtnSelf.addEventListener('click', function () { M.doVersionsSwitch(null, ''); });
             var configLoadBtn = M.el('self-current-config-load-btn');
             var configSaveBtn = M.el('self-current-config-save-btn');
             var configExpandBtn = M.el('self-current-config-expand-btn');
-            if (configLoadBtn) configLoadBtn.addEventListener('click', fetchCurrentConfig);
-            if (configSaveBtn) configSaveBtn.addEventListener('click', saveCurrentConfig);
-            if (configExpandBtn) configExpandBtn.addEventListener('click', function () { openConfigEditorModal(null, ''); });
-            fetchUpdateLog();
-            fetchCurrentConfig();
-            fetchVersionsList();
+            if (configLoadBtn) configLoadBtn.addEventListener('click', M.fetchCurrentConfig);
+            if (configSaveBtn) configSaveBtn.addEventListener('click', M.saveCurrentConfig);
+            if (configExpandBtn) configExpandBtn.addEventListener('click', function () { M.openConfigEditorModal(null, ''); });
+            M.fetchUpdateLog();
+            M.fetchCurrentConfig();
+            M.fetchVersionsList();
           } else {
             container.innerHTML = '<div class="host-error">내 정보를 불러올 수 없습니다.</div>';
           }
@@ -1170,616 +527,15 @@
       });
   }
 
-  function showCardUpdating(card, show) {
-    if (!card) return;
-    card.classList.toggle('is-updating', !!show);
-  }
-
-  function findHostCardByIp(container, ip) {
-    if (!container || !ip) return null;
-    var cards = container.querySelectorAll('.host-card[data-host-ip]');
-    for (var i = 0; i < cards.length; i++) {
-      var c = cards[i];
-      if (c.getAttribute('data-host-ip') === ip) return c;
-      var ips = (c.getAttribute('data-host-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-      if (ips.indexOf(ip) !== -1) return c;
-    }
-    return null;
-  }
-
-  function findHostCardByCpuUuid(container, cpuUuid) {
-    if (!container || !cpuUuid) return null;
-    var cards = container.querySelectorAll('.host-card[data-cpu-uuid]');
-    for (var i = 0; i < cards.length; i++) {
-      if (cards[i].getAttribute('data-cpu-uuid') === cpuUuid) return cards[i];
-    }
-    return null;
-  }
-
-  function findHostCardForBulkProgressResult(list, r) {
-    if (!list || !r) return null;
-    var tryIps = [];
-    if (r.connect_ip) tryIps.push(r.connect_ip);
-    if (r.ip) tryIps.push(r.ip);
-    for (var i = 0; i < tryIps.length; i++) {
-      var byIp = findHostCardByIp(list, tryIps[i]);
-      if (byIp) return byIp;
-    }
-    if (r.cpu_uuid) return findHostCardByCpuUuid(list, r.cpu_uuid);
-    return null;
-  }
-
-  function mergeHostIpsIntoCard(cardEl, newIp) {
-    if (!cardEl || !newIp) return;
-    var ips = (cardEl.getAttribute('data-host-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-    if (ips.indexOf(newIp) === -1) ips.push(newIp);
-    cardEl.setAttribute('data-host-ips', ips.join(','));
-    var dds = cardEl.querySelectorAll('.host-details > dd');
-    if (dds.length >= 8) dds[2].textContent = ips.join(', ');
-  }
-
-  function mergeHostIpsFromResponseIntoCard(cardEl, host) {
-    if (!cardEl || !host) return;
-    if (host.host_ips && host.host_ips.length) {
-      for (var i = 0; i < host.host_ips.length; i++) M.mergeHostIpsIntoCard(cardEl, host.host_ips[i]);
-    } else if (host.host_ip) {
-      M.mergeHostIpsIntoCard(cardEl, host.host_ip);
-    }
-  }
-
-  function mergeRespondedFromIntoCard(cardEl, newRespondedFromIp) {
-    if (!cardEl || !newRespondedFromIp) return;
-    var ips = (cardEl.getAttribute('data-responded-from-ips') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-    if (ips.indexOf(newRespondedFromIp) === -1) ips.push(newRespondedFromIp);
-    cardEl.setAttribute('data-responded-from-ips', ips.join(','));
-    var dds = cardEl.querySelectorAll('.host-details > dd');
-    if (dds.length >= 8) dds[3].textContent = ips.join(', ');
-  }
-
-  function resolveConfigContext(cardEl, ip) {
-    if (!cardEl || ip === undefined || ip === null || ip === '') {
-      return {
-        cardEl: document.querySelector('#self-info .host-card') || null,
-        ip: '',
-        editor: M.el('self-current-config-editor'),
-        statusEl: M.el('self-current-config-status')
-      };
-    }
-    return {
-      cardEl: cardEl,
-      ip: ip,
-      editor: cardEl.querySelector('.card-right-config-editor'),
-      statusEl: cardEl.querySelector('.card-current-config-status')
-    };
-  }
-
-  var configModalContext = null;
-
-  function fetchCurrentConfigForContext(ctx, targetEditor, targetStatusEl) {
-    var editor = targetEditor || ctx.editor;
-    var statusEl = targetStatusEl !== undefined ? targetStatusEl : ctx.statusEl;
-    if (!editor) return Promise.resolve();
-    if (statusEl) statusEl.textContent = '';
-    editor.placeholder = '불러오는 중…';
-    var url = M.API_BASE + '/current-config';
-    if (ctx.ip) url += '?ip=' + encodeURIComponent(ctx.ip);
-    return fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
-        if (body.status === 'success' && body.data && body.data.content !== undefined) {
-          editor.value = body.data.content;
-          if (ctx.editor && editor !== ctx.editor) ctx.editor.value = body.data.content;
-          if (statusEl) statusEl.textContent = '불러왔습니다.';
-        } else {
-          editor.value = '';
-          if (ctx.editor && editor !== ctx.editor) ctx.editor.value = '';
-          if (statusEl) statusEl.textContent = body.data || '불러오기 실패.';
-        }
-      })
-      .catch(function () {
-        editor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
-        editor.value = '';
-        if (ctx.editor && editor !== ctx.editor) ctx.editor.value = '';
-        if (statusEl) statusEl.textContent = '불러오기 실패.';
-      });
-  }
-
-  function saveCurrentConfigForContext(ctx, content, targetStatusEl) {
-    var statusEl = targetStatusEl !== undefined ? targetStatusEl : ctx.statusEl;
-    var payload = { content: content !== undefined ? content : (ctx.editor ? ctx.editor.value : '') };
-    if (ctx.ip) payload.ip = ctx.ip;
-    if (statusEl) statusEl.textContent = '저장 중…';
-    return fetch(M.API_BASE + '/current-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status === 'success' && ctx.editor && content !== undefined) {
-          ctx.editor.value = content;
-        }
-        if (statusEl) {
-          statusEl.textContent = body.status === 'success' ? '저장했습니다.' : (body.data || '저장 실패.');
-        }
-        return body;
-      })
-      .catch(function () {
-        if (statusEl) statusEl.textContent = '저장 요청 실패.';
-      });
-  }
-
-  function openConfigEditorModal(cardEl, ip) {
-    configModalContext = { cardEl: cardEl || null, ip: ip || '' };
-    var ctx = resolveConfigContext(cardEl, ip);
-    var modal = M.el('config-editor-modal');
-    var modalEditor = M.el('config-editor-modal-textarea');
-    var title = M.el('config-editor-modal-title');
-    var modalStatus = M.el('config-editor-modal-status');
-    if (title) {
-      title.textContent = ip ? ('agent.local.yml (current) — ' + ip) : 'agent.local.yml (current)';
-    }
-    if (modalEditor) {
-      modalEditor.value = ctx.editor ? ctx.editor.value : '';
-      modalEditor.placeholder = '불러오기로 current 버전의 agent.local.yml을 불러옵니다.';
-    }
-    if (modalStatus) modalStatus.textContent = '';
-    if (modal) {
-      modal.hidden = false;
-      modal.setAttribute('aria-hidden', 'false');
-    }
-    document.body.classList.add('config-modal-open');
-    if (modalEditor) modalEditor.focus();
-  }
-
-  function closeConfigEditorModal() {
-    var modalEditor = M.el('config-editor-modal-textarea');
-    if (configModalContext && modalEditor) {
-      var ctx = resolveConfigContext(configModalContext.cardEl, configModalContext.ip);
-      if (ctx.editor) ctx.editor.value = modalEditor.value;
-    }
-    var modal = M.el('config-editor-modal');
-    if (modal) {
-      modal.hidden = true;
-      modal.setAttribute('aria-hidden', 'true');
-    }
-    document.body.classList.remove('config-modal-open');
-    configModalContext = null;
-  }
-
-  function loadConfigEditorModal() {
-    if (!configModalContext) return;
-    var ctx = resolveConfigContext(configModalContext.cardEl, configModalContext.ip);
-    fetchCurrentConfigForContext(ctx, M.el('config-editor-modal-textarea'), M.el('config-editor-modal-status'))
-      .then(function () {
-        var modalStatus = M.el('config-editor-modal-status');
-        if (ctx.statusEl && modalStatus) ctx.statusEl.textContent = modalStatus.textContent;
-      });
-  }
-
-  function saveConfigEditorModal() {
-    if (!configModalContext) return;
-    var ctx = resolveConfigContext(configModalContext.cardEl, configModalContext.ip);
-    var modalEditor = M.el('config-editor-modal-textarea');
-    var content = modalEditor ? modalEditor.value : '';
-    saveCurrentConfigForContext(ctx, content, M.el('config-editor-modal-status'))
-      .then(function () {
-        var modalStatus = M.el('config-editor-modal-status');
-        if (ctx.statusEl && modalStatus) ctx.statusEl.textContent = modalStatus.textContent;
-      });
-  }
-
-  function initConfigEditorModal() {
-    var modal = M.el('config-editor-modal');
-    if (!modal || modal.getAttribute('data-bound')) return;
-    modal.setAttribute('data-bound', '1');
-    var backdrop = modal.querySelector('.config-editor-modal-backdrop');
-    var closeBtn = M.el('config-editor-modal-close-btn');
-    var dismissBtn = M.el('config-editor-modal-dismiss-btn');
-    var loadBtn = M.el('config-editor-modal-load-btn');
-    var saveBtn = M.el('config-editor-modal-save-btn');
-    if (backdrop) backdrop.addEventListener('click', closeConfigEditorModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeConfigEditorModal);
-    if (dismissBtn) dismissBtn.addEventListener('click', closeConfigEditorModal);
-    if (loadBtn) loadBtn.addEventListener('click', loadConfigEditorModal);
-    if (saveBtn) saveBtn.addEventListener('click', saveConfigEditorModal);
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && configModalContext) closeConfigEditorModal();
-    });
-  }
-
-  function fetchCurrentConfig() {
-    fetchCurrentConfigForContext(resolveConfigContext(null, ''));
-  }
-
-  function saveCurrentConfig() {
-    saveCurrentConfigForContext(resolveConfigContext(null, ''));
-  }
-
-  function fetchUpdateLog(silent) {
-    var pre = M.el('self-update-log-output');
-    var warningEl = M.el('self-update-rollback-warning');
-    if (!pre) return;
-    if (!silent) pre.textContent = '불러오는 중…';
-    if (warningEl) warningEl.hidden = true;
-    fetchUpdateLogJSON('')
-      .then(function (body) { applyUpdateLogResponse(pre, warningEl, body); })
-      .catch(function () {
-        pre.textContent = '로그를 불러올 수 없습니다.';
-      });
-  }
-
-  function fetchVersionsList() {
-    var container = M.el('self-versions-list-container');
-    var statusEl = M.el('self-versions-status');
-    var removeBtn = M.el('self-versions-remove-btn');
-    if (!container) return Promise.resolve();
-    container.innerHTML = '<div class="versions-loading">불러오는 중…</div>';
-    if (statusEl) statusEl.textContent = '';
-    if (removeBtn) removeBtn.disabled = true;
-    return fetch(M.API_BASE + '/versions/list')
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status !== 'success' || !body.data || !body.data.versions) {
-          container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
-          return;
-        }
-        var versions = body.data.versions;
-        if (versions.length === 0) {
-          container.innerHTML = '<div class="versions-loading">설치된 버전이 없습니다.</div>';
-          fillVersionsSwitchSelect(M.el('self-versions-switch-select'), []);
-          setVersionsSwitchHint(null, '');
-          return;
-        }
-        renderVersionsListIntoContainer(container, versions, null);
-        var wrapper = container.querySelector('.versions-list-wrapper');
-        if (wrapper) {
-          wrapper.addEventListener('change', updateVersionsRemoveButtonState);
-          updateVersionsRemoveButtonState();
-        }
-      })
-      .catch(function () {
-        container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
-      })
-      .finally(function () {
-        updateVersionsSwitchButtonFromSelect(null);
-        var s = M.el('self-versions-switch-select');
-        setVersionsSwitchHint(null, s && s.value ? s.value : '');
-      });
-  }
-
-  function syncVersionsRemoveButton(removeBtn, listContainer) {
-    if (!removeBtn || !listContainer) return;
-    var checked = listContainer.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
-    removeBtn.disabled = checked.length === 0;
-  }
-
-  function updateVersionsRemoveButtonState() {
-    syncVersionsRemoveButton(M.el('self-versions-remove-btn'), M.el('self-versions-list-container'));
-  }
-
-  function updateVersionsRemoveButtonStateForCard(cardEl) {
-    if (!cardEl) return;
-    syncVersionsRemoveButton(
-      cardEl.querySelector('.card-versions-remove-btn'),
-      cardEl.querySelector('.card-right-versions-list-container'));
-  }
-
-  function fetchUpdateLogForCard(cardEl, ip) {
-    if (!cardEl || !ip) return;
-    var pre = cardEl.querySelector('.card-right-log-output');
-    var warningEl = cardEl.querySelector('.card-update-rollback-warning');
-    if (!pre) return;
-    pre.textContent = '불러오는 중…';
-    if (warningEl) warningEl.hidden = true;
-    fetchUpdateLogJSON(ip)
-      .then(function (body) { applyUpdateLogResponse(pre, warningEl, body); })
-      .catch(function () {
-        pre.textContent = '로그를 불러올 수 없습니다.';
-      });
-  }
-
-  function fetchCurrentConfigForCard(cardEl, ip) {
-    if (!cardEl || !ip) return;
-    fetchCurrentConfigForContext(resolveConfigContext(cardEl, ip));
-  }
-
-  function saveCurrentConfigForCard(cardEl, ip) {
-    if (!cardEl || !ip) return;
-    saveCurrentConfigForContext(resolveConfigContext(cardEl, ip));
-  }
-
-  function renderVersionsListIntoContainer(container, versions, cardEl) {
-    if (!container || !versions || !Array.isArray(versions)) return;
-    if (versions.length === 0) {
-      container.innerHTML = '<div class="versions-loading">설치된 버전이 없습니다.</div>';
-      return;
-    }
-    var mid = Math.ceil(versions.length / 2);
-    var col0 = versions.slice(0, mid);
-    var col1 = versions.slice(mid);
-    function makeList(part, offset) {
-      var ul = document.createElement('ul');
-      ul.className = 'versions-list';
-      for (var i = 0; i < part.length; i++) {
-        var v = part[i];
-        var idx = offset + i;
-        var li = document.createElement('li');
-        var canDelete = !v.is_current && !v.is_previous;
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.id = 'versions-cb-' + (cardEl ? cardEl.getAttribute('data-host-ip') + '-' : '') + idx;
-        cb.setAttribute('data-version', v.version);
-        cb.disabled = !canDelete;
-        var label = document.createElement('label');
-        label.htmlFor = cb.id;
-        label.textContent = v.version;
-        var badge = document.createElement('span');
-        badge.className = 'version-badge';
-        if (v.is_current) badge.className += ' is-current';
-        else if (v.is_previous) badge.className += ' is-previous';
-        badge.textContent = v.is_current ? '현재' : (v.is_previous ? '이전' : '');
-        li.appendChild(cb);
-        li.appendChild(badge);
-        li.appendChild(label);
-        ul.appendChild(li);
-      }
-      return ul;
-    }
-    var wrapper = document.createElement('div');
-    wrapper.className = 'versions-list-wrapper';
-    wrapper.appendChild(makeList(col0, 0));
-    wrapper.appendChild(makeList(col1, mid));
-    container.innerHTML = '';
-    container.appendChild(wrapper);
-    if (cardEl) {
-      wrapper.addEventListener('change', function () { updateVersionsRemoveButtonStateForCard(cardEl); });
-      updateVersionsRemoveButtonStateForCard(cardEl);
-    }
-    var switchSel = cardEl ? cardEl.querySelector('.card-versions-switch-select') : M.el('self-versions-switch-select');
-    fillVersionsSwitchSelect(switchSel, versions);
-    updateVersionsSwitchButtonFromSelect(cardEl);
-    setVersionsSwitchHint(cardEl, switchSel && switchSel.value ? switchSel.value : '');
-  }
-
-  function fillVersionsSwitchSelect(selectEl, versions) {
-    if (!selectEl || !versions || !Array.isArray(versions)) return;
-    selectEl.innerHTML = '';
-    var z = document.createElement('option');
-    z.value = '';
-    z.textContent = '버전 선택…';
-    selectEl.appendChild(z);
-    for (var i = 0; i < versions.length; i++) {
-      var v = versions[i];
-      if (v.is_current) continue;
-      var o = document.createElement('option');
-      o.value = v.version;
-      o.textContent = v.version + (v.is_previous ? ' (이전)' : '');
-      selectEl.appendChild(o);
-    }
-  }
-
-  function setVersionsSwitchHint(cardEl, versionKey) {
-    var hint = cardEl ? cardEl.querySelector('.versions-switch-hint') : M.el('self-versions-switch-hint');
-    if (!hint) return;
-    hint.textContent = versionKey ? ('버전 ' + versionKey + ' 을(를) 선택했습니다.') : '';
-  }
-
-  function updateVersionsSwitchButtonFromSelect(cardEl) {
-    var sel = cardEl ? cardEl.querySelector('.card-versions-switch-select') : M.el('self-versions-switch-select');
-    var btn = cardEl ? cardEl.querySelector('.card-versions-switch-btn') : M.el('self-versions-switch-btn');
-    if (!sel || !btn) return;
-    btn.disabled = !sel.value;
-  }
-
-  function fetchVersionsListForCard(cardEl, ip) {
-    if (!cardEl || !ip) return Promise.resolve();
-    var container = cardEl.querySelector('.card-right-versions-list-container');
-    var statusEl = cardEl.querySelector('.card-versions-status');
-    var removeBtn = cardEl.querySelector('.card-versions-remove-btn');
-    if (!container) return Promise.resolve();
-    container.innerHTML = '<div class="versions-loading">불러오는 중…</div>';
-    if (statusEl) statusEl.textContent = '';
-    if (removeBtn) removeBtn.disabled = true;
-    return fetch(M.API_BASE + '/versions/list?ip=' + encodeURIComponent(ip))
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (body.status !== 'success' || !body.data || !body.data.versions) {
-          container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
-          return;
-        }
-        var vers = body.data.versions;
-        if (vers.length === 0) {
-          container.innerHTML = '<div class="versions-loading">설치된 버전이 없습니다.</div>';
-          fillVersionsSwitchSelect(cardEl.querySelector('.card-versions-switch-select'), []);
-          setVersionsSwitchHint(cardEl, '');
-          return;
-        }
-        renderVersionsListIntoContainer(container, vers, cardEl);
-      })
-      .catch(function () {
-        container.innerHTML = '<div class="versions-loading">목록을 불러올 수 없습니다.</div>';
-      })
-      .finally(function () {
-        updateVersionsSwitchButtonFromSelect(cardEl);
-        var s = cardEl.querySelector('.card-versions-switch-select');
-        setVersionsSwitchHint(cardEl, s && s.value ? s.value : '');
-      });
-  }
-
-  function doVersionsRemoveForCard(cardEl, ip) {
-    if (!cardEl || !ip) return;
-    var container = cardEl.querySelector('.card-right-versions-list-container');
-    var statusEl = cardEl.querySelector('.card-versions-status');
-    var removeBtn = cardEl.querySelector('.card-versions-remove-btn');
-    if (!container || !removeBtn || removeBtn.disabled) return;
-    var checked = container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
-    if (checked.length === 0) return;
-    var versions = [];
-    for (var i = 0; i < checked.length; i++) {
-      versions.push(checked[i].getAttribute('data-version'));
-    }
-    if (statusEl) statusEl.textContent = '삭제 중…';
-    removeBtn.disabled = true;
-    fetch(M.API_BASE + '/versions/remove', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ versions: versions, ip: ip })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (statusEl) statusEl.textContent = body.data || (body.status === 'success' ? '삭제 요청 완료.' : '');
-        fetchVersionsListForCard(cardEl, ip);
-      })
-      .catch(function () {
-        if (statusEl) statusEl.textContent = '삭제 요청 실패.';
-        if (removeBtn) removeBtn.disabled = false;
-      });
-  }
-
-  function doVersionsSwitch(cardEl, ip) {
-    var sel = cardEl ? cardEl.querySelector('.card-versions-switch-select') : M.el('self-versions-switch-select');
-    var statusEl = cardEl ? cardEl.querySelector('.card-versions-status') : M.el('self-versions-status');
-    var btn = cardEl ? cardEl.querySelector('.card-versions-switch-btn') : M.el('self-versions-switch-btn');
-    if (!sel || !btn || btn.disabled) return;
-    var version = sel.value;
-    if (!version) return;
-    var payload = { version: version };
-    if (ip) payload.ip = ip;
-    if (statusEl) statusEl.textContent = '전환 적용 중…';
-    btn.disabled = true;
-    fetch(M.API_BASE + '/versions/switch-current', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (statusEl) {
-          if (body.status === 'success') {
-            statusEl.textContent = typeof body.data === 'string'
-              ? body.data
-              : '전환 작업이 시작되었습니다. systemd-run으로 update.sh가 실행 중이며, 완료·실패는 수십 초 내에 반영됩니다. 실패 시 업데이트 로그를 확인하세요.';
-          } else {
-            statusEl.textContent = (typeof body.data === 'string' && body.data) ? body.data : '전환 실패.';
-          }
-        }
-        if (body.status === 'success') {
-          scheduleRefreshAfterSwitchCurrent(cardEl, ip, version, statusEl);
-        } else if (btn) {
-          btn.disabled = false;
-        }
-      })
-      .catch(function () {
-        if (statusEl) statusEl.textContent = '요청 실패.';
-        if (btn) btn.disabled = false;
-      });
-  }
-
-  function doVersionsRemove() {
-    var container = M.el('self-versions-list-container');
-    var statusEl = M.el('self-versions-status');
-    var removeBtn = M.el('self-versions-remove-btn');
-    if (!container || !removeBtn || removeBtn.disabled) return;
-    var checked = container.querySelectorAll('.versions-list-wrapper .versions-list input[type="checkbox"]:not(:disabled):checked');
-    if (checked.length === 0) return;
-    var versions = [];
-    for (var i = 0; i < checked.length; i++) {
-      versions.push(checked[i].getAttribute('data-version'));
-    }
-    if (statusEl) statusEl.textContent = '삭제 중…';
-    removeBtn.disabled = true;
-    fetch(M.API_BASE + '/versions/remove', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ versions: versions })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
-        if (statusEl) statusEl.textContent = body.data || (body.status === 'success' ? '삭제 요청 완료.' : '');
-        fetchVersionsList();
-      })
-      .catch(function () {
-        if (statusEl) statusEl.textContent = '요청 실패.';
-        fetchVersionsList();
-      });
-  }
-
   // exports
-  M.applyUpdateLogResponse = applyUpdateLogResponse;
   M.bindHostRowToggle = bindHostRowToggle;
-  M.bindRemoteHealthForCard = bindRemoteHealthForCard;
   M.bindServiceControlButtons = bindServiceControlButtons;
   M.bindStatusToggle = bindStatusToggle;
-  M.canApplyToThisRemoteHostLegacy = canApplyToThisRemoteHostLegacy;
-  M.closeConfigEditorModal = closeConfigEditorModal;
-  M.doRemoveUpload = doRemoveUpload;
-  M.doVersionsRemove = doVersionsRemove;
-  M.doVersionsRemoveForCard = doVersionsRemoveForCard;
-  M.doVersionsSwitch = doVersionsSwitch;
-  M.ensureRemoteHealthForIp = ensureRemoteHealthForIp;
-  M.enumerateDiscoveredRemoteHealth = enumerateDiscoveredRemoteHealth;
-  M.escapeHtml = escapeHtml;
-  M.execRemoteHealthCheck = execRemoteHealthCheck;
-  M.extractUpdateLogOutput = extractUpdateLogOutput;
-  M.fetchCurrentConfig = fetchCurrentConfig;
-  M.fetchCurrentConfigForCard = fetchCurrentConfigForCard;
-  M.fetchCurrentConfigForContext = fetchCurrentConfigForContext;
-  M.fetchServiceStatus = fetchServiceStatus;
-  M.fetchUpdateLog = fetchUpdateLog;
-  M.fetchUpdateLogForCard = fetchUpdateLogForCard;
-  M.fetchUpdateLogJSON = fetchUpdateLogJSON;
-  M.fetchVersionsList = fetchVersionsList;
-  M.fetchVersionsListForCard = fetchVersionsListForCard;
-  M.fillVersionsSwitchSelect = fillVersionsSwitchSelect;
-  M.findHostCardByCpuUuid = findHostCardByCpuUuid;
-  M.findHostCardByIp = findHostCardByIp;
-  M.findHostCardForBulkProgressResult = findHostCardForBulkProgressResult;
-  M.formatMemory = formatMemory;
-  M.formatUpdateLogDisplay = formatUpdateLogDisplay;
-  M.getApplicableVersion = getApplicableVersion;
-  M.getApplyButtonTitle = getApplyButtonTitle;
-  M.getRemoteHealthCfg = getRemoteHealthCfg;
-  M.initConfigEditorModal = initConfigEditorModal;
-  M.loadConfigEditorModal = loadConfigEditorModal;
   M.loadSelf = loadSelf;
-  M.mergeHostIpsFromResponseIntoCard = mergeHostIpsFromResponseIntoCard;
-  M.mergeHostIpsIntoCard = mergeHostIpsIntoCard;
-  M.mergeRespondedFromIntoCard = mergeRespondedFromIntoCard;
-  M.onRemoteHealthTransportFail = onRemoteHealthTransportFail;
-  M.openConfigEditorModal = openConfigEditorModal;
   M.parseActiveFromOutput = parseActiveFromOutput;
-  M.pollUntilHostJsonOk = pollUntilHostJsonOk;
-  M.refreshAllPanelsAfterUpdate = refreshAllPanelsAfterUpdate;
-  M.refreshHostCardDetails = refreshHostCardDetails;
-  M.refreshRemoteHostAfterHealthOk = refreshRemoteHostAfterHealthOk;
-  M.registerRemoteHealthMonitoring = registerRemoteHealthMonitoring;
   M.renderHostCard = renderHostCard;
   M.renderHostRow = renderHostRow;
-  M.renderVersionsListIntoContainer = renderVersionsListIntoContainer;
-  M.resolveConfigContext = resolveConfigContext;
-  M.saveConfigEditorModal = saveConfigEditorModal;
-  M.saveCurrentConfig = saveCurrentConfig;
-  M.saveCurrentConfigForCard = saveCurrentConfigForCard;
-  M.saveCurrentConfigForContext = saveCurrentConfigForContext;
-  M.scheduleRefreshAfterApply = scheduleRefreshAfterApply;
-  M.scheduleRefreshAfterSwitchCurrent = scheduleRefreshAfterSwitchCurrent;
-  M.scheduleRemoteHealthTick = scheduleRemoteHealthTick;
-  M.setRemoteHealthCardUI = setRemoteHealthCardUI;
-  M.setVersionsSwitchHint = setVersionsSwitchHint;
-  M.showCardUpdating = showCardUpdating;
-  M.startUpdateLogPolling = startUpdateLogPolling;
-  M.syncVersionsRemoveButton = syncVersionsRemoveButton;
-  M.toggleCardVariantSelector = toggleCardVariantSelector;
-  M.updateAllHostApplyButtons = updateAllHostApplyButtons;
-  M.updateHostCardDetails = updateHostCardDetails;
   M.updateHostRowDot = updateHostRowDot;
   M.updateHostRowLabel = updateHostRowLabel;
-  M.updateLogRunComplete = updateLogRunComplete;
   M.updateStatusUI = updateStatusUI;
-  M.updateVersionsRemoveButtonState = updateVersionsRemoveButtonState;
-  M.updateVersionsRemoveButtonStateForCard = updateVersionsRemoveButtonStateForCard;
-  M.updateVersionsSwitchButtonFromSelect = updateVersionsSwitchButtonFromSelect;
-
 })(window.MolMaintenance = window.MolMaintenance || {});

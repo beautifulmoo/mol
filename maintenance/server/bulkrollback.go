@@ -16,7 +16,7 @@ func (s *Server) handleRollbackAll(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "invalid body", http.StatusBadRequest)
 		return
 	}
-	hosts := s.remotesForConfigPush(req.Hosts, req.IPs)
+	hosts := s.bulkRemoteHosts(req.Hosts, req.IPs)
 
 	s.runBulkRemoteNDJSON(w, hosts, bulkNDJSONOptions{
 		DoneExtra: func(sum bulkRunSummary) map[string]interface{} {

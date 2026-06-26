@@ -15,6 +15,7 @@ var replCommands = []string{
 	"apply-update-all",
 	"clear-hosts",
 	"discover",
+	"discovery",
 	"exit",
 	"help",
 	"host-info",
@@ -98,7 +99,7 @@ func (c *replCompleter) candidates(tokens []string, word string) []string {
 		if len(tokens) == 1 {
 			return prefixMatches([]string{"hosts"}, word)
 		}
-	case "discover", "discovery":
+	case "discovery", "discover":
 		if len(tokens) >= 1 {
 			return prefixMatches(replDiscoverFlags, word)
 		}

@@ -1,10 +1,7 @@
 package server
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -12,32 +9,6 @@ import (
 	"contrabass-agent/maintenance/appmeta"
 	"contrabass-agent/maintenance/server/remoteregistry"
 )
-
-type bulkApplyUpdateRequest struct {
-	Hosts               []pushHostInput `json:"hosts"`
-	IPs                 []string        `json:"ips"`
-	Version             string          `json:"version"`
-	AgentVariant        string          `json:"agent_variant"`
-	ReusePreviousConfig *bool           `json:"reuse_previous_config"`
-}
-
-func parseBulkApplyUpdateRequest(r *http.Request) (bulkApplyUpdateRequest, error) {
-	var req bulkApplyUpdateRequest
-	if r.Body == nil {
-		return req, nil
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 65536))
-	if err != nil {
-		return req, err
-	}
-	if len(bytes.TrimSpace(body)) == 0 {
-		return req, nil
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return req, err
-	}
-	return req, nil
-}
 
 func (s *Server) handleApplyUpdateAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -82,7 +53,7 @@ func (s *Server) handleApplyUpdateAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hosts := s.remotesForConfigPush(req.Hosts, req.IPs)
+	hosts := s.bulkRemoteHosts(req.Hosts, req.IPs)
 
 	s.runBulkRemoteNDJSON(w, hosts, bulkNDJSONOptions{
 		StartExtra: map[string]interface{}{"version": version},

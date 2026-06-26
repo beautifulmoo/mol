@@ -24,10 +24,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
 	mr, err := r.MultipartReader()
@@ -120,10 +117,7 @@ func (s *Server) handleRemoveUpload(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "version contains invalid characters", http.StatusBadRequest)
 		return
 	}
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 	stagingParent := filepath.Join(base, "staging")
 	stagingVersionDir := filepath.Join(stagingParent, version)
 	clean := filepath.Clean(stagingVersionDir)
@@ -199,7 +193,7 @@ func (s *Server) postUploadBundlePath(ctx context.Context, baseURL, apiPrefix, b
 		return err
 	}
 
-	uploadURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/upload"
+	uploadURL := joinRemoteAPIURL(baseURL, apiPrefix, "/upload")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
 	if err != nil {
 		return err
@@ -233,7 +227,7 @@ func (s *Server) runUpdateViaEmbeddedScript(base, version, agentVariant string, 
 }
 
 func (s *Server) postApplyUpdateToTarget(ctx context.Context, baseURL, apiPrefix, version, agentVariant string, reusePreviousConfig bool) (status string, data interface{}, err error) {
-	applyURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(apiPrefix, "/") + "/apply-update"
+	applyURL := joinRemoteAPIURL(baseURL, apiPrefix, "/apply-update")
 	if _, err := appmeta.ParseAgentVariant(agentVariant); err != nil {
 		return "", nil, err
 	}
@@ -270,10 +264,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", nil, http.StatusMethodNotAllowed)
 		return
 	}
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 
 	// 원격 전용: multipart(실행 파일+config+ip) → 원격 업로드 API로 전송 후 원격 apply-update API 호출 (로컬 스테이징·SCP 미사용)
 	if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {

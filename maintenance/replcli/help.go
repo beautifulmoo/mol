@@ -15,6 +15,9 @@ const prompt = "Mole-Agent> "
 
 func printHelp(topic string) {
 	topic = strings.ToLower(strings.TrimSpace(topic))
+	if topic == "discover" {
+		topic = "discovery"
+	}
 	if topic != "" {
 		if line, ok := helpTopics[topic]; ok {
 			fmt.Println(line)
@@ -33,7 +36,7 @@ Prompt: Mole-Agent>
 Session
   set <key> <value>     Session defaults (persist until exit)
   show                  Print session settings and cached host count
-  hosts                 List remotes from last 'discover' (bulk targets)
+  hosts                 List remotes from last 'discovery' (bulk targets)
   clear-hosts           Clear discovery cache
 
 Meta
@@ -42,12 +45,12 @@ Meta
   exit, quit            Leave REPL
 
 Discovery (UDP, no orchestrator service required)
-  discover [flags]      Run discovery and cache remotes for bulk commands
+  discovery [flags]     Run discovery and cache remotes for bulk commands
                         Flags: --dest-port=N --src-port=N --timeout=N --service=name
   nic-brd               Print NIC broadcast addresses (same rules as CLI)
 
 Single-host (target Gin HTTP, default port 8888)
-  host-info <self|local|ip>   Uses last 'discover' cache for HOST_IP/HOST_IPS when available
+  host-info <self|local|ip>   Uses last 'discovery' cache for HOST_IP/HOST_IPS when available
   versions-list <self|local|ip>
   versions-switch <self|local|ip> <version-key|previous>
                         Use "previous" for the version marked PREVIOUS in versions-list
@@ -69,20 +72,20 @@ Session keys for 'set'
   use-bundle-config on|off      Default off (reuse each remote's current config)
 
 Notes
-  - Bulk commands use hosts from the last successful 'discover', not rediscovery.
-  - Run 'discover' before push-config-all, restart-all, apply-update-all, rollback-all.
+  - Bulk commands use hosts from the last successful 'discovery', not rediscovery.
+  - Run 'discovery' before push-config-all, restart-all, apply-update-all, rollback-all.
   - Single-host commands use -apiprefix from session when set.
-  - Command-line flags on apply-update / discover override session for that line only.
-  - Tab completes commands, help topics, set keys, discover flags, targets (self/local/cached IPs), bundle paths.
+  - Command-line flags on apply-update / discovery override session for that line only.
+  - Tab completes commands, help topics, set keys, discovery flags, targets (self/local/cached IPs), bundle paths.
 
 `
 
 var helpTopics = map[string]string{
-	"discover": `discover [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name]
+	"discovery": `discovery [--dest-port=N] [--src-port=N] [--timeout=N] [--service=name]
   UDP discovery (defaults: dest 9999, src 9998, timeout 10s, service Mole-Discovery).
   Results are printed and cached for bulk commands.`,
 	"hosts": `hosts
-  Show primary_ip, hostname, cpu_uuid, and ips[] from the last discover.`,
+  Show primary_ip, hostname, cpu_uuid, and ips[] from the last discovery.`,
 	"set": `set <key> <value>
   Keys: apiprefix, maintenance-port, agent-variant, use-bundle-config (on|off|true|false)`,
 	"push-config-all": `push-config-all
@@ -113,7 +116,7 @@ func printSession(s *Session) {
 
 func printHosts(s *Session) {
 	if len(s.CachedHosts) == 0 {
-		fmt.Println("No cached remote hosts. Run 'discover' first.")
+		fmt.Println("No cached remote hosts. Run 'discovery' first.")
 		return
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -161,7 +164,7 @@ func runSet(s *Session, args []string) error {
 	return nil
 }
 
-func runDiscover(s *Session, args []string) error {
+func runDiscovery(s *Session, args []string) error {
 	opts, err := discoverycli.ParseDiscoverArgs(args)
 	if err != nil {
 		return err

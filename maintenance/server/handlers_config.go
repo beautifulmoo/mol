@@ -12,10 +12,7 @@ import (
 
 // currentConfigPath returns the path to deploy_base/current/<config file> (current symlink resolved), or "" if not available.
 func (s *Server) currentConfigPath() string {
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 	linkPath := filepath.Join(base, "current")
 	resolved, err := filepath.EvalSymlinks(linkPath)
 	if err != nil {

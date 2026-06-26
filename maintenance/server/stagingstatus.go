@@ -4,13 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/versionsapi"
 )
 
 func (s *Server) deployBaseOrDefault() string {
-	base := s.deployBase
+	base := strings.TrimSuffix(s.deployBase, "/")
 	if base == "" {
 		base = "/var/lib/contrabass/mole"
 	}

@@ -79,7 +79,7 @@ Discovery는 **JSON over UDP**로 hostname, IP, CPU UUID, 버전, control/comput
 
 ### 1. Discovery (호스트 탐색)
 
-- 버튼 한 번(웹) 또는 `agent --discovery` / REPL `discover`로 **같은 LAN의 에이전트**를 찾는다.
+- 버튼 한 번(웹) 또는 `agent --discovery` / REPL **`discovery`**(`discover` 별칭)로 **같은 LAN의 에이전트**를 찾는다.
 - 같은 호스트가 NIC 여러 개로 응답하면 **IP 목록을 합쳐** 카드 한 장으로 보여 준다.
 - 이번 탐색에 **응답하지 않은 기존 카드**는 “미응답” 표시를 남긴다(카드는 유지).
 
@@ -108,7 +108,7 @@ Discovery는 **JSON over UDP**로 hostname, IP, CPU UUID, 버전, control/comput
 
 ### 6. 일괄 원격 작업 (웹 사이드바·CLI 4종)
 
-한 orchestrator에서 Discovery 후 아래를 **모든(또는 화면에 있는) 원격**에 실행한다.
+한 orchestrator에서 Discovery 후 아래를 **도달 가능한 원격**(웹 §6.2 가드)에 실행한다.
 
 | 작업 | 요약 |
 |------|------|
@@ -124,7 +124,7 @@ Discovery는 **JSON over UDP**로 hostname, IP, CPU UUID, 버전, control/comput
 서비스 없이도 쓸 수 있는 **일회성 명령**과, **`contrabass-moleU agent`만** 실행하면 들어가는 **대화형 REPL**이 있다.
 
 - Discovery, host-info, 단일 호스트 업데이트·버전 전환  
-- REPL: `discover` 후 캐시된 목록으로 bulk 명령 (재-discovery 없음)  
+- REPL: **`discovery`** 후 캐시된 목록으로 bulk 명령 (재-discovery 없음; `discover` 별칭)  
 - 일괄 4종 CLI: orchestrator `-cfg` 서비스가 떠 있어야 함  
 
 자동화·스크립트·SSH 세션 안에서 웹과 **동일 API**를 호출하는 용도에 맞다.
@@ -167,13 +167,13 @@ Discovery는 **JSON over UDP**로 hostname, IP, CPU UUID, 버전, control/comput
 **터미널 선호**
 
 - `agent --discovery`, `agent --apply-update`, 일괄 `*all-remotes`  
-- 또는 `agent` → REPL에서 `discover` → `apply-update-all ./dist/….tar.gz`  
+- 또는 `agent` → REPL에서 **`discovery`** → `apply-update-all ./dist/….tar.gz`  
 
 ---
 
 ## 기술 스택 (한 줄)
 
-- **Go** 단일 바이너리, 표준 **net/http**, **UDP Discovery**, embed **웹(HTML/JS/CSS)**  
+- **Go** 단일 바이너리, 표준 **net/http**, **UDP Discovery**, embed **웹(HTML/JS/CSS)** — UI 스크립트는 `maintenance/web/js/` 모듈(`MolMaintenance`)  
 - 선택적으로 호스트 앱에 **Gin**을 붙여 maintenance를 **리버스 프록시**  
 - **Linux** (`/proc` 등), **systemd** 연동  
 

@@ -20,7 +20,16 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if ip != "" && ip != "self" {
-		s.proxyRemoteAPI(w, ip, "remote versions list request failed: ", "", http.MethodGet, "/versions/list", nil)
+		out, err := s.fetchRemoteAPI(ip, http.MethodGet, "/versions/list", nil)
+		if err != nil {
+			sendRemoteAPIError(w, s.send, "remote versions list request failed: ", err)
+			return
+		}
+		if out.Status == "success" {
+			s.send(w, "success", versionsapi.EnrichVersionsListData(out.Data), http.StatusOK)
+			return
+		}
+		s.send(w, out.Status, out.Data, http.StatusOK)
 		return
 	}
 	base := s.versionsBase()
@@ -29,7 +38,7 @@ func (s *Server) handleVersionsList(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "fail", "cannot read versions directory: "+err.Error(), http.StatusOK)
 		return
 	}
-	s.send(w, "success", map[string]interface{}{"versions": list}, http.StatusOK)
+	s.send(w, "success", versionsapi.VersionsListData(list), http.StatusOK)
 }
 
 // resolveSymlinkVersion returns the version name (dir under base/versions/) that the symlink base/name points to, or "".
@@ -157,10 +166,7 @@ func (s *Server) handleVersionsSwitchCurrent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	base := s.deployBase
-	if base == "" {
-		base = "/var/lib/contrabass/mole"
-	}
+	base := s.deployBaseOrDefault()
 	if dir, _ := s.resolveVersionDir(base, version); dir == "" {
 		s.send(w, "fail", "version not found in staging or versions/: "+version, http.StatusOK)
 		return

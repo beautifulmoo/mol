@@ -2,8 +2,8 @@ package server
 
 import (
 	"fmt"
-	"log"
 	"net/http"
+	"contrabass-agent/maintenance/server/remoteregistry"
 )
 
 func (s *Server) handleRollbackAll(w http.ResponseWriter, r *http.Request) {
@@ -18,74 +18,34 @@ func (s *Server) handleRollbackAll(w http.ResponseWriter, r *http.Request) {
 	}
 	hosts := s.remotesForConfigPush(req.Hosts, req.IPs)
 
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
-	total := len(hosts)
-	if err := writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":  "start",
-		"total": total,
-	}); err != nil {
-		return
-	}
-
-	succeeded := 0
-	failed := 0
-	skipped := 0
-	for i, remote := range hosts {
-		displayIP := bulkDisplayIP(remote)
-		evt := map[string]interface{}{
-			"type":     "progress",
-			"current":  i + 1,
-			"total":    total,
-			"ip":       displayIP,
-			"hostname": remote.Hostname,
-			"cpu_uuid": remote.CPUUUID,
-		}
-
+	s.runBulkRemoteNDJSON(w, hosts, bulkNDJSONOptions{
+		DoneExtra: func(sum bulkRunSummary) map[string]interface{} {
+			return map[string]interface{}{"skipped": sum.Skipped}
+		},
+		HistoryFmt: func(sum bulkRunSummary) string {
+			return fmt.Sprintf("rollback-all finished succeeded=%d failed=%d skipped=%d", sum.Succeeded, sum.Failed, sum.Skipped)
+		},
+	}, func(remote remoteregistry.Remote, evt map[string]interface{}) bulkHostOutcome {
 		canRollback, rbCheckErr := s.remoteHostCanRollback(remote)
 		if rbCheckErr != nil {
-			failed++
-			evt["status"] = "fail"
-			evt["message"] = "rollback eligibility check failed: " + rbCheckErr.Error()
-			_ = writeNDJSONLine(w, flusher, evt)
-			continue
+			return bulkHostOutcome{
+				Status:               bulkHostFail,
+				Message:              "rollback eligibility check failed: " + rbCheckErr.Error(),
+				ContinueOnWriteError: true,
+			}
 		}
 		if !canRollback {
-			skipped++
-			evt["status"] = "skipped"
-			evt["message"] = "롤백 불가 (current·previous 동일 또는 previous 없음)"
-			_ = writeNDJSONLine(w, flusher, evt)
-			continue
+			return bulkHostOutcome{
+				Status:               bulkHostSkipped,
+				Message:              "롤백 불가 (current·previous 동일 또는 previous 없음)",
+				ContinueOnWriteError: true,
+			}
 		}
 
 		connectIP, tried, rbErr := s.rollbackOnRemoteHost(remote)
-		if len(tried) > 0 {
-			evt["tried_ips"] = tried
-		}
 		if rbErr != nil {
-			failed++
-			evt["status"] = "fail"
-			evt["message"] = rbErr.Error()
-		} else {
-			succeeded++
-			evt["status"] = "success"
-			evt["connect_ip"] = connectIP
+			return bulkHostOutcome{Status: bulkHostFail, Message: rbErr.Error(), TriedIPs: tried}
 		}
-		if err := writeNDJSONLine(w, flusher, evt); err != nil {
-			return
-		}
-	}
-	if err := s.appendDeployHistory(fmt.Sprintf("rollback-all finished succeeded=%d failed=%d skipped=%d", succeeded, failed, skipped)); err != nil {
-		log.Printf("update_history: rollback-all finish: %v", err)
-	}
-	_ = writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":      "done",
-		"total":     total,
-		"succeeded": succeeded,
-		"failed":    failed,
-		"skipped":   skipped,
+		return bulkHostOutcome{Status: bulkHostSuccess, ConnectIP: connectIP, TriedIPs: tried}
 	})
 }

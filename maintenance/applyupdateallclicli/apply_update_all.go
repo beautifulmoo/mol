@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/maintenance/bulkcli"
 	"contrabass-agent/maintenance/clirest"
 	"contrabass-agent/maintenance/discoverycli"
 )
@@ -68,128 +68,22 @@ func Run(cliBuildVariant string, args []string) int {
 	if installedBV == "" {
 		installedBV = "compute"
 	}
-	agentVariant, err := clirest.ResolveAgentVariantForTarget(*agentVariantFlag, installedBV)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-	reusePreviousConfig := !*useBundleConfigFlag
-
-	checkClient := clirest.DefaultHTTPClient(5 * time.Second)
-	if err := clirest.EnsureMaintenanceRunning(checkClient, *apiPrefixFlag, *maintenancePortFlag); err != nil {
+	if _, err := clirest.ResolveAgentVariantForTarget(*agentVariantFlag, installedBV); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
 
-	fmt.Printf("Uploading bundle %s to local staging...\n", bundlePath)
-	uploadClient := clirest.DefaultHTTPClient(300 * time.Second)
-	versionKey, err := clirest.UploadBundleMaintenance(uploadClient, *apiPrefixFlag, *maintenancePortFlag, bundlePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: upload: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-	fmt.Printf("Staged version %s (variant %s, reuse_previous_config=%v).\n", versionKey, agentVariant, reusePreviousConfig)
-
-	list, err := discoverycli.RunDefaultDiscoveryToStdout()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: discovery: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-
-	hosts := discoverycli.BulkPushHostsFromDiscovery(list)
-	if len(hosts) == 0 {
-		fmt.Println("No remote hosts found; nothing to apply.")
-		return 1
-	}
-	fmt.Printf("Found %d remote host(s) for apply-update.\n", len(hosts))
-	fmt.Printf("Applying version %s to %d remote host(s)...\n", versionKey, len(hosts))
-
-	var succeeded, failed, skipped int
-	var doneTotal int
-	streamClient := clirest.DefaultHTTPClient(0)
-	err = clirest.ApplyUpdateAll(streamClient, *apiPrefixFlag, *maintenancePortFlag, hosts, clirest.ApplyUpdateAllOptions{
-		Version:             versionKey,
-		AgentVariant:        agentVariant,
-		ReusePreviousConfig: reusePreviousConfig,
-	}, func(evt map[string]interface{}) error {
-		typ, _ := evt["type"].(string)
-		switch typ {
-		case "start":
-			if t, ok := evt["total"].(float64); ok {
-				doneTotal = int(t)
-			}
-			if v, _ := evt["version"].(string); strings.TrimSpace(v) != "" {
-				versionKey = strings.TrimSpace(v)
-			}
-		case "progress":
-			status, _ := evt["status"].(string)
-			ip, _ := evt["ip"].(string)
-			hostname, _ := evt["hostname"].(string)
-			label := clirest.FormatBulkHostLabel(hostname, ip)
-			cur, _ := evt["current"].(float64)
-			tot, _ := evt["total"].(float64)
-			prefix := fmt.Sprintf("[%d/%d] %s: ", int(cur), int(tot), label)
-			switch status {
-			case "success":
-				succeeded++
-				ver := ""
-				if v, _ := evt["version"].(string); strings.TrimSpace(v) != "" {
-					ver = " (" + strings.TrimSpace(v) + ")"
-				}
-				suffix := ""
-				if connectIP, _ := evt["connect_ip"].(string); strings.TrimSpace(connectIP) != "" {
-					suffix = " via " + strings.TrimSpace(connectIP)
-				}
-				fmt.Println(prefix + "update apply requested" + ver + suffix)
-			case "skipped":
-				skipped++
-				msg, _ := evt["message"].(string)
-				if strings.TrimSpace(msg) == "" {
-					msg = "not applicable"
-				}
-				fmt.Println(prefix + "skipped — " + msg)
-			case "fail":
-				failed++
-				msg, _ := evt["message"].(string)
-				if strings.TrimSpace(msg) == "" {
-					msg = "unknown error"
-				}
-				fmt.Println(prefix + "fail — " + msg)
-			default:
-				fmt.Println(prefix + status)
-			}
-		case "done":
-			if s, ok := evt["succeeded"].(float64); ok {
-				succeeded = int(s)
-			}
-			if f, ok := evt["failed"].(float64); ok {
-				failed = int(f)
-			}
-			if sk, ok := evt["skipped"].(float64); ok {
-				skipped = int(sk)
-			}
-			if t, ok := evt["total"].(float64); ok {
-				doneTotal = int(t)
-			}
-		}
-		return nil
+	return bulkcli.RunApplyDiscovery(bulkcli.ApplyDiscoveryConfig{
+		APIPrefix:        *apiPrefixFlag,
+		MaintenancePort:  *maintenancePortFlag,
+		BundlePath:       bundlePath,
+		AgentVariantFlag: *agentVariantFlag,
+		CLIBuildVariant:  installedBV,
+		UseBundleConfig:  *useBundleConfigFlag,
+		CmdName:          appmeta.BinaryName,
+		EmptyHostsMsg:    "No remote hosts found; nothing to apply.",
+		FoundHostsFmt:    "Found %d remote host(s) for apply-update.\n",
+		StartFmt:         "Applying version %s to %d remote host(s)...\n",
+		StreamErrLabel:   "apply-update-all",
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: apply-update-all: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-
-	if doneTotal == 0 {
-		fmt.Println("No hosts were processed.")
-		return 1
-	}
-	if skipped > 0 || failed > 0 {
-		fmt.Printf("Done: succeeded=%d failed=%d skipped=%d (total %d).\n", succeeded, failed, skipped, doneTotal)
-	} else {
-		fmt.Printf("Done: all %d host(s) received update apply.\n", succeeded)
-	}
-	if failed > 0 || succeeded == 0 {
-		return 1
-	}
-	return 0
 }

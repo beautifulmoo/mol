@@ -49,7 +49,8 @@ Discovery (UDP, no orchestrator service required)
 Single-host (target Gin HTTP, default port 8888)
   host-info <self|local|ip>   Uses last 'discover' cache for HOST_IP/HOST_IPS when available
   versions-list <self|local|ip>
-  versions-switch <self|local|ip> <version-key>
+  versions-switch <self|local|ip> <version-key|previous>
+                        Use "previous" for the version marked PREVIOUS in versions-list
   apply-update <self|local|ip> <bundle.tar.gz>
                         Honors session agent-variant and use-bundle-config unless
                         overridden with flags on the command line

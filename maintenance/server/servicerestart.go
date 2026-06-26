@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -158,25 +157,7 @@ func (s *Server) restartRemoteAtIP(ip string) (verifyDetail string, err error) {
 }
 
 func (s *Server) restartRemoteHost(remote remoteregistry.Remote) (connectIP string, tried []string, verifyDetail string, err error) {
-	ips := remoteregistry.ConnectIPs(remote)
-	if len(ips) == 0 {
-		return "", nil, "", fmt.Errorf("no connect ip for host")
-	}
-	var lastErr error
-	var lastDetail string
-	for _, ip := range ips {
-		tried = append(tried, ip)
-		detail, restartErr := s.restartRemoteAtIP(ip)
-		if restartErr == nil {
-			return ip, tried, detail, nil
-		}
-		lastErr = restartErr
-		lastDetail = detail
-	}
-	if lastDetail != "" && lastErr != nil {
-		return "", tried, lastDetail, lastErr
-	}
-	return "", tried, lastDetail, lastErr
+	return tryRemoteHostWithDetail(remote, s.restartRemoteAtIP)
 }
 
 func (s *Server) handleServiceRestartAll(w http.ResponseWriter, r *http.Request) {
@@ -191,67 +172,27 @@ func (s *Server) handleServiceRestartAll(w http.ResponseWriter, r *http.Request)
 	}
 	hosts := s.remotesForConfigPush(req.Hosts, req.IPs)
 
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
-	total := len(hosts)
-	if err := writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":  "start",
-		"total": total,
-	}); err != nil {
-		return
-	}
-
-	succeeded := 0
-	failed := 0
-	for i, remote := range hosts {
-		displayIP := strings.TrimSpace(remote.PrimaryIP)
-		if displayIP == "" {
-			ips := remoteregistry.ConnectIPs(remote)
-			if len(ips) > 0 {
-				displayIP = ips[0]
-			}
-		}
-		evt := map[string]interface{}{
-			"type":     "progress",
-			"current":  i + 1,
-			"total":    total,
-			"ip":       displayIP,
-			"hostname": remote.Hostname,
-			"cpu_uuid": remote.CPUUUID,
-		}
+	s.runBulkRemoteNDJSON(w, hosts, bulkNDJSONOptions{
+		HistoryFmt: func(sum bulkRunSummary) string {
+			return fmt.Sprintf("service restart-all finished succeeded=%d failed=%d", sum.Succeeded, sum.Failed)
+		},
+	}, func(remote remoteregistry.Remote, evt map[string]interface{}) bulkHostOutcome {
 		connectIP, tried, verifyDetail, restartErr := s.restartRemoteHost(remote)
-		if len(tried) > 0 {
-			evt["tried_ips"] = tried
-		}
 		if restartErr != nil {
-			failed++
-			evt["status"] = "fail"
-			evt["verify_ok"] = false
-			evt["message"] = restartErr.Error()
+			extra := map[string]interface{}{"verify_ok": false}
 			if verifyDetail != "" {
-				evt["verify_detail"] = verifyDetail
+				extra["verify_detail"] = verifyDetail
 			}
-		} else {
-			succeeded++
-			evt["status"] = "success"
-			evt["verify_ok"] = true
-			evt["connect_ip"] = connectIP
-			evt["verify_detail"] = verifyDetail
+			return bulkHostOutcome{Status: bulkHostFail, Message: restartErr.Error(), TriedIPs: tried, Extra: extra}
 		}
-		if err := writeNDJSONLine(w, flusher, evt); err != nil {
-			return
+		return bulkHostOutcome{
+			Status:    bulkHostSuccess,
+			ConnectIP: connectIP,
+			TriedIPs:  tried,
+			Extra: map[string]interface{}{
+				"verify_ok":     true,
+				"verify_detail": verifyDetail,
+			},
 		}
-	}
-	if err := s.appendDeployHistory(fmt.Sprintf("service restart-all finished succeeded=%d failed=%d", succeeded, failed)); err != nil {
-		log.Printf("update_history: service restart-all finish: %v", err)
-	}
-	_ = writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":      "done",
-		"total":     total,
-		"succeeded": succeeded,
-		"failed":    failed,
 	})
 }

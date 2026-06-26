@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
@@ -85,107 +84,61 @@ func (s *Server) handleApplyUpdateAll(w http.ResponseWriter, r *http.Request) {
 
 	hosts := s.remotesForConfigPush(req.Hosts, req.IPs)
 
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
-	total := len(hosts)
-	if err := writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":    "start",
-		"total":   total,
-		"version": version,
-	}); err != nil {
-		return
-	}
-
-	succeeded := 0
-	failed := 0
-	skipped := 0
-	for i, remote := range hosts {
-		displayIP := bulkDisplayIP(remote)
-		evt := map[string]interface{}{
-			"type":     "progress",
-			"current":  i + 1,
-			"total":    total,
-			"ip":       displayIP,
-			"hostname": remote.Hostname,
-			"cpu_uuid": remote.CPUUUID,
-			"version":  version,
-		}
+	s.runBulkRemoteNDJSON(w, hosts, bulkNDJSONOptions{
+		StartExtra: map[string]interface{}{"version": version},
+		DoneExtra: func(sum bulkRunSummary) map[string]interface{} {
+			return map[string]interface{}{
+				"skipped": sum.Skipped,
+				"version": version,
+			}
+		},
+		HistoryFmt: func(sum bulkRunSummary) string {
+			return fmt.Sprintf("apply-update-all finished succeeded=%d failed=%d skipped=%d", sum.Succeeded, sum.Failed, sum.Skipped)
+		},
+	}, func(remote remoteregistry.Remote, evt map[string]interface{}) bulkHostOutcome {
+		evt["version"] = version
 
 		remoteVersion, verErr := s.fetchRemoteVersionKeyForHost(remote)
 		if verErr != nil {
-			failed++
-			evt["status"] = "fail"
-			evt["message"] = "remote version query failed: " + verErr.Error()
-			_ = writeNDJSONLine(w, flusher, evt)
-			continue
+			return bulkHostOutcome{
+				Status:               bulkHostFail,
+				Message:              "remote version query failed: " + verErr.Error(),
+				ContinueOnWriteError: true,
+			}
 		}
 		if !agentcfg.StagingUpdateAvailable(version, remoteVersion, s.allowSameVersionUpdate) {
-			skipped++
-			evt["status"] = "skipped"
-			evt["message"] = fmt.Sprintf("원격 버전(%s)에 스테이징 %s 적용 불가", remoteVersion, version)
-			evt["remote_version"] = remoteVersion
-			_ = writeNDJSONLine(w, flusher, evt)
-			continue
+			return bulkHostOutcome{
+				Status:               bulkHostSkipped,
+				Message:              fmt.Sprintf("원격 버전(%s)에 스테이징 %s 적용 불가", remoteVersion, version),
+				ContinueOnWriteError: true,
+				Extra:                map[string]interface{}{"remote_version": remoteVersion},
+			}
 		}
 
 		connectIP, tried, applyErr := s.applyUpdateOnRemoteHost(remote, version, versionDir, agentVariant, reusePreviousConfig)
-		if len(tried) > 0 {
-			evt["tried_ips"] = tried
-		}
 		if applyErr != nil {
-			failed++
-			evt["status"] = "fail"
-			evt["message"] = applyErr.Error()
-		} else {
-			succeeded++
-			evt["status"] = "success"
-			evt["connect_ip"] = connectIP
-			evt["remote_version"] = remoteVersion
+			return bulkHostOutcome{
+				Status:  bulkHostFail,
+				Message: applyErr.Error(),
+				TriedIPs: tried,
+				Extra:   map[string]interface{}{"remote_version": remoteVersion},
+			}
 		}
-		if err := writeNDJSONLine(w, flusher, evt); err != nil {
-			return
+		return bulkHostOutcome{
+			Status:    bulkHostSuccess,
+			ConnectIP: connectIP,
+			TriedIPs:  tried,
+			Extra:     map[string]interface{}{"remote_version": remoteVersion},
 		}
-	}
-	if err := s.appendDeployHistory(fmt.Sprintf("apply-update-all finished succeeded=%d failed=%d skipped=%d", succeeded, failed, skipped)); err != nil {
-		log.Printf("update_history: apply-update-all finish: %v", err)
-	}
-	_ = writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":      "done",
-		"total":     total,
-		"succeeded": succeeded,
-		"failed":    failed,
-		"skipped":   skipped,
-		"version":   version,
 	})
 }
 
-func bulkDisplayIP(remote remoteregistry.Remote) string {
-	displayIP := strings.TrimSpace(remote.PrimaryIP)
-	if displayIP == "" {
-		ips := remoteregistry.ConnectIPs(remote)
-		if len(ips) > 0 {
-			displayIP = ips[0]
-		}
-	}
-	return displayIP
-}
-
 func (s *Server) fetchRemoteVersionKeyForHost(remote remoteregistry.Remote) (string, error) {
-	ips := remoteregistry.ConnectIPs(remote)
-	var lastErr error
-	for _, ip := range ips {
+	return tryRemoteHostFirstReachable(remote, func(ip string) (string, error) {
 		rv, err := s.fetchRemoteVersionKey(ip)
 		if err == nil {
 			s.remoteRegistry.UpsertFromRemoteIP(ip)
-			return strings.TrimSpace(rv), nil
 		}
-		lastErr = err
-	}
-	if lastErr != nil {
-		return "", lastErr
-	}
-	return "", fmt.Errorf("no connect ip for host")
+		return strings.TrimSpace(rv), err
+	})
 }

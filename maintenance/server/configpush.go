@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -200,20 +199,9 @@ func (s *Server) remotesForConfigPush(hosts []pushHostInput, legacyIPs []string)
 }
 
 func (s *Server) pushConfigToRemoteHost(content string, remote remoteregistry.Remote) (connectIP string, tried []string, err error) {
-	ips := remoteregistry.ConnectIPs(remote)
-	if len(ips) == 0 {
-		return "", nil, fmt.Errorf("no connect ip for host")
-	}
-	var lastErr error
-	for _, ip := range ips {
-		tried = append(tried, ip)
-		if pushErr := s.pushConfigContentToRemote(content, ip); pushErr == nil {
-			return ip, tried, nil
-		} else {
-			lastErr = pushErr
-		}
-	}
-	return "", tried, lastErr
+	return tryRemoteHostVoid(remote, func(ip string) error {
+		return s.pushConfigContentToRemote(content, ip)
+	})
 }
 
 func (s *Server) handleDiscoveredRemotes(w http.ResponseWriter, r *http.Request) {
@@ -256,62 +244,16 @@ func (s *Server) handleCurrentConfigPushLocalAll(w http.ResponseWriter, r *http.
 	}
 	remotes := s.remotesForConfigPush(req.Hosts, req.IPs)
 
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
-	total := len(remotes)
-	if err := writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":  "start",
-		"total": total,
-	}); err != nil {
-		return
-	}
-
-	succeeded := 0
-	failed := 0
-	for i, remote := range remotes {
-		displayIP := strings.TrimSpace(remote.PrimaryIP)
-		if displayIP == "" {
-			ips := remoteregistry.ConnectIPs(remote)
-			if len(ips) > 0 {
-				displayIP = ips[0]
-			}
-		}
-		evt := map[string]interface{}{
-			"type":      "progress",
-			"current":   i + 1,
-			"total":     total,
-			"ip":        displayIP,
-			"hostname":  remote.Hostname,
-			"cpu_uuid":  remote.CPUUUID,
-		}
+	s.runBulkRemoteNDJSON(w, remotes, bulkNDJSONOptions{
+		HistoryFmt: func(sum bulkRunSummary) string {
+			return fmt.Sprintf("config push-all finished succeeded=%d failed=%d", sum.Succeeded, sum.Failed)
+		},
+	}, func(remote remoteregistry.Remote, evt map[string]interface{}) bulkHostOutcome {
 		connectIP, tried, pushErr := s.pushConfigToRemoteHost(content, remote)
-		if len(tried) > 0 {
-			evt["tried_ips"] = tried
-		}
 		if pushErr != nil {
-			failed++
-			evt["status"] = "fail"
-			evt["message"] = pushErr.Error()
-		} else {
-			succeeded++
-			evt["status"] = "success"
-			evt["connect_ip"] = connectIP
+			return bulkHostOutcome{Status: bulkHostFail, Message: pushErr.Error(), TriedIPs: tried}
 		}
-		if err := writeNDJSONLine(w, flusher, evt); err != nil {
-			return
-		}
-	}
-	if err := s.appendDeployHistory(fmt.Sprintf("config push-all finished succeeded=%d failed=%d", succeeded, failed)); err != nil {
-		log.Printf("update_history: config push-all finish: %v", err)
-	}
-	_ = writeNDJSONLine(w, flusher, map[string]interface{}{
-		"type":      "done",
-		"total":     total,
-		"succeeded": succeeded,
-		"failed":    failed,
+		return bulkHostOutcome{Status: bulkHostSuccess, ConnectIP: connectIP, TriedIPs: tried}
 	})
 }
 

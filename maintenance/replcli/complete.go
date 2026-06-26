@@ -102,12 +102,19 @@ func (c *replCompleter) candidates(tokens []string, word string) []string {
 		if len(tokens) >= 1 {
 			return prefixMatches(replDiscoverFlags, word)
 		}
-	case "host-info", "hostinfo", "versions-list", "versions-switch", "apply-update":
+	case "host-info", "hostinfo", "versions-list", "apply-update":
 		if len(tokens) == 1 {
 			return prefixMatches(c.targetCandidates(), word)
 		}
 		if cmd == "apply-update" && completingBundlePath(tokens) {
 			return filePathCandidates(word)
+		}
+	case "versions-switch":
+		if len(tokens) == 1 {
+			return prefixMatches(c.targetCandidates(), word)
+		}
+		if len(tokens) == 2 {
+			return prefixMatches([]string{"previous"}, word)
 		}
 	case "apply-update-all", "apply-update-all-remotes":
 		if completingApplyUpdateAllBundle(tokens) {

@@ -2,6 +2,7 @@
 package versionsapi
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -81,6 +82,19 @@ func ListInstalledVersions(base string) ([]VersionEntry, error) {
 	return list, nil
 }
 
+// PreviousVersionKeyFromEntries returns the version key marked is_previous in a versions list.
+func PreviousVersionKeyFromEntries(rows []VersionEntry) (string, error) {
+	for _, r := range rows {
+		if r.IsPrevious {
+			v := strings.TrimSpace(r.Version)
+			if v != "" {
+				return v, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no previous version")
+}
+
 // ResolveSymlinkVersion returns the top-level version directory name that base/name (e.g. current, previous) points to, or "".
 func ResolveSymlinkVersion(base, name string) string {
 	linkPath := filepath.Join(base, name)
@@ -103,7 +117,7 @@ func ResolveSymlinkVersion(base, name string) string {
 	return ""
 }
 
-func dirHasAgentBinary(dir string) bool {
+func DirHasAgentBinary(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, appmeta.BinaryName))
 	return err == nil
 }

@@ -139,7 +139,7 @@ func execLine(s *Session, buildVersionKey, cliBuildVariant, line string) error {
 		}
 	case "versions-switch":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: versions-switch <self|local|ip> <version-key>")
+			return fmt.Errorf("usage: versions-switch <self|local|ip> <version-key|previous>")
 		}
 		code := versionscli.RunSwitch(s.ginArgs(args[0], args[1]))
 		if code != 0 {

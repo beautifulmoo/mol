@@ -5,10 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
-	"time"
 
 	"contrabass-agent/maintenance/appmeta"
+	"contrabass-agent/maintenance/bulkcli"
 	"contrabass-agent/maintenance/clirest"
 	"contrabass-agent/maintenance/discoverycli"
 )
@@ -53,89 +52,14 @@ func Run(args []string) int {
 		return 1
 	}
 
-	list, err := discoverycli.RunDefaultDiscoveryToStdout()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: discovery: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-
-	hosts := discoverycli.BulkPushHostsFromDiscovery(list)
-	if len(hosts) == 0 {
-		fmt.Println("No remote hosts found; nothing to push.")
-		return 1
-	}
-	fmt.Printf("Found %d remote host(s) for config push.\n", len(hosts))
-
-	checkClient := clirest.DefaultHTTPClient(5 * time.Second)
-	if err := clirest.EnsureMaintenanceRunning(checkClient, *apiPrefixFlag, *maintenancePortFlag); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-
-	fmt.Printf("Pushing local current config to %d host(s)...\n", len(hosts))
-
-	var succeeded, failed int
-	var doneTotal int
-	streamClient := clirest.DefaultHTTPClient(0)
-	err = clirest.PushLocalConfigAll(streamClient, *apiPrefixFlag, *maintenancePortFlag, hosts, func(evt map[string]interface{}) error {
-		typ, _ := evt["type"].(string)
-		switch typ {
-		case "start":
-			if t, ok := evt["total"].(float64); ok {
-				doneTotal = int(t)
-			}
-		case "progress":
-			status, _ := evt["status"].(string)
-			ip, _ := evt["ip"].(string)
-			hostname, _ := evt["hostname"].(string)
-			label := clirest.FormatBulkHostLabel(hostname, ip)
-			cur, _ := evt["current"].(float64)
-			tot, _ := evt["total"].(float64)
-			prefix := fmt.Sprintf("[%d/%d] %s: ", int(cur), int(tot), label)
-			switch status {
-			case "success":
-				succeeded++
-				suffix := ""
-				if connectIP, _ := evt["connect_ip"].(string); strings.TrimSpace(connectIP) != "" {
-					suffix = " via " + strings.TrimSpace(connectIP)
-				}
-				fmt.Println(prefix + "success" + suffix)
-			case "fail":
-				failed++
-				msg, _ := evt["message"].(string)
-				if strings.TrimSpace(msg) == "" {
-					msg = "unknown error"
-				}
-				fmt.Println(prefix + "fail — " + msg)
-			default:
-				fmt.Println(prefix + status)
-			}
-		case "done":
-			if s, ok := evt["succeeded"].(float64); ok {
-				succeeded = int(s)
-			}
-			if f, ok := evt["failed"].(float64); ok {
-				failed = int(f)
-			}
-			if t, ok := evt["total"].(float64); ok {
-				doneTotal = int(t)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: push-local-all: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
-
-	if doneTotal == 0 {
-		fmt.Println("No hosts were processed.")
-		return 1
-	}
-	if failed > 0 {
-		fmt.Printf("Done: succeeded=%d failed=%d (total %d).\n", succeeded, failed, doneTotal)
-		return 1
-	}
-	fmt.Printf("Done: all %d host(s) succeeded.\n", succeeded)
-	return 0
+	return bulkcli.RunDiscovery(bulkcli.DiscoveryConfig{
+		APIPrefix:       *apiPrefixFlag,
+		MaintenancePort: *maintenancePortFlag,
+		Operation:       bulkcli.OpPushConfig,
+		CmdName:         appmeta.BinaryName,
+		EmptyHostsMsg:   "No remote hosts found; nothing to push.",
+		FoundHostsFmt:   "Found %d remote host(s) for config push.\n",
+		StartFmt:        "Pushing local current config to %d host(s)...\n",
+		StreamErrLabel:  "push-local-all",
+	}, clirest.PushLocalConfigAll)
 }

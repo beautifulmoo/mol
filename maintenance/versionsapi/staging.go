@@ -23,7 +23,7 @@ func StagingHasDualAgents(dir string) bool {
 
 // DirHasStagedAgents is true when a staging/version dir can be applied: canonical binary and/or dual bundle agents.
 func DirHasStagedAgents(dir string) bool {
-	if dirHasAgentBinary(dir) {
+	if DirHasAgentBinary(dir) {
 		return true
 	}
 	return StagingHasDualAgents(dir)

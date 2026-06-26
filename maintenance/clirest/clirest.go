@@ -214,8 +214,7 @@ func GetHostInfo(client *http.Client, target, apiPrefix string) (discovery.Disco
 	return data, nil
 }
 
-// UploadBundle posts multipart bundle to POST {apiBase}/upload; returns version key.
-func UploadBundle(client *http.Client, target, apiPrefix, bundlePath string) (string, error) {
+func uploadBundleMultipart(client *http.Client, uploadURL, bundlePath string) (string, error) {
 	resolved, err := ExpandLocalPath(bundlePath)
 	if err != nil {
 		return "", err
@@ -239,8 +238,7 @@ func UploadBundle(client *http.Client, target, apiPrefix, bundlePath string) (st
 		return "", err
 	}
 
-	base := APIBaseURL(target, apiPrefix)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/upload", &buf)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, uploadURL, &buf)
 	if err != nil {
 		return "", err
 	}
@@ -265,6 +263,12 @@ func UploadBundle(client *http.Client, target, apiPrefix, bundlePath string) (st
 		return "", fmt.Errorf("upload succeeded but version key is empty")
 	}
 	return version, nil
+}
+
+// UploadBundle posts multipart bundle to POST {apiBase}/upload; returns version key.
+func UploadBundle(client *http.Client, target, apiPrefix, bundlePath string) (string, error) {
+	base := APIBaseURL(target, apiPrefix)
+	return uploadBundleMultipart(client, base+"/upload", bundlePath)
 }
 
 // ApplyUpdateJSON posts POST {apiBase}/apply-update with version, agent_variant, and reuse_previous_config.

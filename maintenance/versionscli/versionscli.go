@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -103,6 +104,7 @@ func RunSwitch(args []string) int {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s agent --versions-switch [-apiprefix <path>] <self|local|remote-ip> <version-key>\n\n", appmeta.BinaryName)
 		fmt.Fprintf(os.Stderr, "  POST {APIPrefix}/versions/switch-current on the target agent (Gin port %d).\n", clirest.DefaultHTTPPort)
+		fmt.Fprintf(os.Stderr, "  <version-key> may be \"previous\" to switch to the version marked PREVIOUS in versions-list.\n")
 		fmt.Fprintf(os.Stderr, "  Default -apiprefix: %s\n", clirest.DefaultAPIPrefix)
 		fmt.Fprintf(os.Stderr, "  The target agent HTTP service must be running.\n\n")
 		fs.PrintDefaults()
@@ -118,7 +120,7 @@ func RunSwitch(args []string) int {
 	}
 	pos := fs.Args()
 	if len(pos) != 2 {
-		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|local|remote-ip> <version-key>\n", appmeta.BinaryName)
+		fmt.Fprintf(os.Stderr, "%s: expected two arguments: <self|local|remote-ip> <version-key|previous>\n", appmeta.BinaryName)
 		fs.Usage()
 		return 1
 	}
@@ -133,10 +135,6 @@ func RunSwitch(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
 		return 1
 	}
-	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: invalid version key: %v\n", appmeta.BinaryName, err)
-		return 1
-	}
 
 	client := clirest.DefaultHTTPClient(300 * time.Second)
 	apiPrefix := *apiPrefixFlag
@@ -146,6 +144,20 @@ func RunSwitch(args []string) int {
 	}
 
 	base := clirest.APIBaseURL(target, apiPrefix)
+	resolved, err := resolveSwitchVersion(client, base, version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
+	if strings.EqualFold(version, "previous") && resolved != version {
+		fmt.Printf("Switching to previous version %s\n", resolved)
+	}
+	version = resolved
+	if err := agentcfg.ValidateVersionKeyPath(version); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: invalid version key: %v\n", appmeta.BinaryName, err)
+		return 1
+	}
+
 	body := map[string]string{"version": version}
 	var msg string
 	if err := clirest.PostJSON(client, base+"/versions/switch-current", body, &msg); err != nil {
@@ -158,4 +170,18 @@ func RunSwitch(args []string) int {
 		fmt.Println("Switch-current requested successfully.")
 	}
 	return 0
+}
+
+func resolveSwitchVersion(client *http.Client, base, versionArg string) (string, error) {
+	versionArg = strings.TrimSpace(versionArg)
+	if !strings.EqualFold(versionArg, "previous") {
+		return versionArg, nil
+	}
+	var payload struct {
+		Versions []versionsapi.VersionEntry `json:"versions"`
+	}
+	if err := clirest.GetJSON(client, base+"/versions/list", &payload); err != nil {
+		return "", err
+	}
+	return versionsapi.PreviousVersionKeyFromEntries(payload.Versions)
 }

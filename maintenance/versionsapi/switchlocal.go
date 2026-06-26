@@ -59,7 +59,7 @@ func MaterializeCanonicalAgent(versionDir, agentVariant string) error {
 		return fmt.Errorf("version directory is empty")
 	}
 	if !StagingHasDualAgents(versionDir) {
-		if !dirHasAgentBinary(versionDir) {
+		if !DirHasAgentBinary(versionDir) {
 			return fmt.Errorf("version directory missing %s or %s/%s",
 				appmeta.BinaryName, appmeta.BundleAgentControlName, appmeta.BundleAgentComputeName)
 		}

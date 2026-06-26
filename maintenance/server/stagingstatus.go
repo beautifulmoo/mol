@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"contrabass-agent/maintenance/agentcfg"
 	"contrabass-agent/maintenance/versionsapi"
@@ -37,14 +36,4 @@ func (s *Server) localStagingVersions() []string {
 		return agentcfg.CompareVersionKeys(stagingVersions[i], stagingVersions[j]) > 0
 	})
 	return stagingVersions
-}
-
-func (s *Server) stagingApplyDecisionForCompareKey(compareKey string) (canApply bool, applyVersion string) {
-	compareKey = strings.TrimSpace(compareKey)
-	for _, v := range s.localStagingVersions() {
-		if agentcfg.StagingUpdateAvailable(v, compareKey, s.allowSameVersionUpdate) {
-			return true, v
-		}
-	}
-	return false, ""
 }

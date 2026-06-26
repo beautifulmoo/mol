@@ -7,10 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -134,55 +131,8 @@ func RollbackAllRemotes(client *http.Client, apiPrefix string, maintenancePort i
 
 // UploadBundleMaintenance posts multipart bundle to local maintenance POST {base}/upload; returns version key.
 func UploadBundleMaintenance(client *http.Client, apiPrefix string, maintenancePort int, bundlePath string) (string, error) {
-	resolved, err := ExpandLocalPath(bundlePath)
-	if err != nil {
-		return "", err
-	}
-	f, err := os.Open(resolved)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	part, err := w.CreateFormFile(bundleFormField, filepath.Base(bundlePath))
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return "", err
-	}
-	if err := w.Close(); err != nil {
-		return "", err
-	}
-
 	base := MaintenanceBaseURL(apiPrefix, maintenancePort)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/upload", &buf)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	var payload struct {
-		Version string `json:"version"`
-	}
-	if err := decodeSuccess(respBody, &payload); err != nil {
-		return "", err
-	}
-	version := strings.TrimSpace(payload.Version)
-	if version == "" {
-		return "", fmt.Errorf("upload succeeded but version key is empty")
-	}
-	return version, nil
+	return uploadBundleMultipart(client, base+"/upload", bundlePath)
 }
 
 // FormatBulkHostLabel returns "hostname (ip)" for progress output.

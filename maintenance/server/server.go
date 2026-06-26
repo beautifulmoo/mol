@@ -45,11 +45,6 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	return err
 }
 
-func dirHasAgentBinary(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, appmeta.BinaryName))
-	return err == nil
-}
-
 // elfMagic is the first 4 bytes of an ELF executable.
 var elfMagic = []byte{0x7f, 'E', 'L', 'F'}
 

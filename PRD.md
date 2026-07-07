@@ -38,7 +38,7 @@
 
 ## 2. 아키텍처 요약
 
-- **서비스 포트(maintenance HTTP)**: 설정 `Maintenance.MaintenancePort` (HTTP — 웹 UI + API). 기본적으로 `Maintenance.MaintenanceListenAddress = "127.0.0.1"` 로 **로컬호스트에만 바인딩**한다. **외부 접근**(브라우저·원격이 쓰는 `Server.HTTPPort`)은 **`<bin> -cfg …` 로 기동했을 때만** 루트 `main.go`의 **Gin**이 메인 고루틴에서 **`router.Run`** 으로 리슨하며 **`Maintenance.WebPrefix`·`Maintenance.APIPrefix`**(기본 `/web`, `/api/v1`) 경로를 maintenance로 **리버스 프록시**한다(프록시 구현 **`maintenance/ginproxy`**, 등록 **`maintenance.RegisterMaintenanceProxy`**). **`<bin> agent -cfg …`** 는 `main`이 **`IsAgentSubcommand`** 로 먼저 분기하므로 **Gin 없이** `Run`만 실행한다(HTTP·Discovery는 `Run` 안에서 동일). API가 웹 prefix 아래에 중첩된 경우(예: `WebPrefix=/maintenance`, `APIPrefix=/maintenance/api/v1`) Gin 라우터 제약으로 **와일드카드 한 트리**만 등록하고, 백엔드는 동일 URL 경로로 요청을 받는다. 프록시는 전달 전 **`Form`/`PostForm`을 비우고**, `URL.RawQuery`가 비어 있으면 **`RequestURI`의 쿼리**로 복구하여(표준 `ReverseProxy`+선행 파싱으로 쿼리가 유실되는 경우 방지) API **쿼리 파라미터**가 maintenance 핸들러까지 전달되도록 한다. 필요 시 `Maintenance.MaintenanceListenAddress = "0.0.0.0"` 로 외부 바인딩도 가능하다.
+- **서비스 포트(maintenance HTTP)**: 설정 `Maintenance.MaintenancePort` (HTTP — 웹 UI + API). 기본적으로 `Maintenance.MaintenanceListenAddress = "127.0.0.1"` 로 **로컬호스트에만 바인딩**한다. **외부 접근**(브라우저·원격이 쓰는 `Server.HTTPPort`)은 **`<bin> -cfg …` 로 기동했을 때만** 루트 `main.go`의 **Gin**이 메인 고루틴에서 **`router.Run`** 으로 리슨하며 **`Maintenance.WebPrefix`·`Maintenance.APIPrefix`**(기본 **`/maintenance`**, **`/maintenance/api/v1`** — `maintenance/agentcfg`, `ginproxy.RegisterMaintenanceProxy`) 경로를 maintenance로 **리버스 프록시**한다(프록시 구현 **`maintenance/ginproxy`**, 등록 **`maintenance.RegisterMaintenanceProxy`**). **`<bin> agent -cfg …`** 는 `main`이 **`IsAgentSubcommand`** 로 먼저 분기하므로 **Gin 없이** `Run`만 실행한다(HTTP·Discovery는 `Run` 안에서 동일). API가 웹 prefix 아래에 중첩된 경우(예: `WebPrefix=/maintenance`, `APIPrefix=/maintenance/api/v1`) Gin 라우터 제약으로 **와일드카드 한 트리**만 등록하고, 백엔드는 동일 URL 경로로 요청을 받는다. 프록시는 전달 전 **`Form`/`PostForm`을 비우고**, `URL.RawQuery`가 비어 있으면 **`RequestURI`의 쿼리**로 복구하여(표준 `ReverseProxy`+선행 파싱으로 쿼리가 유실되는 경우 방지) API **쿼리 파라미터**가 maintenance 핸들러까지 전달되도록 한다. 필요 시 `Maintenance.MaintenanceListenAddress = "0.0.0.0"` 로 외부 바인딩도 가능하다.
 - **원격 호출 포트(Gin)**: 원격 호스트의 업데이트 로그(`update-log`), config(`current-cfg`), versions(list/remove), service-status 등은 **maintenance 포트가 아니라** 설정 `Server.HTTPPort`(외부 노출 포트, Gin)로 호출한다. (maintenance가 loopback-only인 경우 `http://<ip>:<MaintenancePort>`는 연결 거부가 정상이다.)
 - **Discovery 포트**: **9999** (UDP — broadcast 수신·송신 및 응답 수신)
 - 동일한 **contrabass-moleU** 에이전트 바이너리가 여러 서버 호스트에 분산 배포되며, **Discovery**를 통해 서로를 찾는다.
@@ -173,7 +173,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 - Discovery 결과를 **타임아웃 만료를 기다리지 않고** 응답이 도착하는 대로 화면에 반영한다.
 - **백엔드**: `GET {APIPrefix}/discovery/stream` 엔드포인트를 두고, **Server-Sent Events(SSE)** 로 스트리밍한다. Discovery 요청을 보낸 뒤, 각 DISCOVERY_RESPONSE가 올 때마다 `data: {JSON}\n\n` 형식으로 한 건씩 전송하고 즉시 flush한다. 타임아웃이 되면 `event: done\ndata: {}\n\n` 를 보내고 스트림을 종료한다. 내부적으로는 **DoDiscoveryStream** 과 같이 요청 시 pending 등록 → 브로드캐스트 전송 → 수신 채널에서 응답을 하나씩 읽어 **includeInDiscoveryResults**(기본: 자기 응답 포함·`self`: true, **쿼리 `exclude_self`로 자기 제외 가능**)·중복 제거 후 SSE로 내보내는 방식을 사용한다. 쿼리 파라미터는 **§5.3**과 동일.
 - **스트림 시작 전 실패**(예: DISCOVERY_REQUEST JSON 크기 제한 위반, 브로드캐스트 주소 없음 등): 브라우저 **EventSource** 는 HTTP 4xx/5xx 응답 본문을 읽지 못하므로, 서버는 **HTTP 200** 으로 SSE 헤더를 연 뒤 **`event: discoveryfail`** 한 번만 보내고 `data` 에 JSON `{"message":"…"}` 형태로 상세 사유를 실은 다음 스트림을 닫는다. 동일 실패는 **표준 로그**에 `discovery: ERROR: DoDiscoveryStream failed: …` 처럼 남겨 **`journalctl -u contrabass-mole.service`** 등으로 확인할 수 있다.
-- **프론트엔드**: Discovery 버튼 클릭 시 **EventSource** 로 `{APIPrefix}/discovery/stream` 에 연결한다(설정 기본은 `/api/v1/discovery/stream`). **`discoveryfail` 이벤트**가 오면 `data.message` 를 읽어 상태 영역에 **「Discovery 요청 실패:」+ 서버 메시지**를 표시하고 스트림을 닫는다. 일반 메시지 이벤트가 올 때마다 수신한 JSON을 파싱해, **같은 CPU UUID**가 이미 있으면 해당 카드에 IP·응답한 IP를 병합·갱신하고, 없으면 **같은 IP**가 있는 카드를 찾아 갱신하고, 그 외에는 **새 카드**를 추가한다. 기존 카드 매칭은 cpu_uuid → IP 순서만 사용하며 hostname은 사용하지 않는다. **`event: done`** 수신 시 **이번 run에 UDP 응답이 없었던 기존 카드**에는 **「이번 Discovery 미응답」** 표시(한 줄 요약 배지·펼친 카드 안내 배너)를 남기고, 응답한 카드는 표시를 제거한다. 카드 자체는 삭제하지 않는다. 완료 문구 예: `호스트 3개 표시 · 이번 Discovery 응답 2대 · 미응답 1대.`
+- **프론트엔드**: Discovery 버튼 클릭 시 **EventSource** 로 `{APIPrefix}/discovery/stream` 에 연결한다(설정 기본은 **`/maintenance/api/v1/discovery/stream`**). **`discoveryfail` 이벤트**가 오면 `data.message` 를 읽어 상태 영역에 **「Discovery 요청 실패:」+ 서버 메시지**를 표시하고 스트림을 닫는다. 일반 메시지 이벤트가 올 때마다 수신한 JSON을 파싱해, **같은 CPU UUID**가 이미 있으면 해당 카드에 IP·응답한 IP를 병합·갱신하고, 없으면 **같은 IP**가 있는 카드를 찾아 갱신하고, 그 외에는 **새 카드**를 추가한다. 기존 카드 매칭은 cpu_uuid → IP 순서만 사용하며 hostname은 사용하지 않는다. **`event: done`** 수신 시 **이번 run에 UDP 응답이 없었던 기존 카드**에는 **「이번 Discovery 미응답」** 표시(한 줄 요약 배지·펼친 카드 안내 배너)를 남기고, 응답한 카드는 표시를 제거한다. 카드 자체는 삭제하지 않는다. 완료 문구 예: `호스트 3개 표시 · 이번 Discovery 응답 2대 · 미응답 1대.`
 
 ### 3.7 유니캐스트 Discovery (단일 호스트 조회)
 
@@ -185,16 +185,16 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 ### 3.8 로깅 (구현 참고)
 
 - 디버깅·운영 시 다음을 로그로 남길 수 있다: DISCOVERY_REQUEST 수신(발신지 주소), DISCOVERY_RESPONSE 전송(대상 주소), DISCOVERY_RESPONSE 수신(발신지, request_id, delivered / no pending waiter / channel full).
-- **Discovery 오류(요청 측)**: 일괄 API `GET /api/v1/discovery`·유니캐스트 `host-info`·스트림 `DoDiscoveryStream` 이 실패하면 **`discovery: ERROR:`** 접두가 붙은 한 줄을 표준 로그로 남긴다. systemd·`journalctl -u <contrabass-mole.service>` 에서 동일 문구를 검색할 수 있다.
+- **Discovery 오류(요청 측)**: 일괄 API `GET /maintenance/api/v1/discovery`·유니캐스트 `host-info`·스트림 `DoDiscoveryStream` 이 실패하면 **`discovery: ERROR:`** 접두가 붙은 한 줄을 표준 로그로 남긴다. systemd·`journalctl -u <contrabass-mole.service>` 에서 동일 문구를 검색할 수 있다.
 
 ---
 
 ## 4. URL 및 라우팅
 
-- **프론트엔드 prefix**: `{serverUrl}{WebPrefix}` (기본 `/web`, 설정 `Maintenance.WebPrefix`)
-- **백엔드 API prefix**: `{serverUrl}{APIPrefix}` (기본 `/api/v1`, 설정 `Maintenance.APIPrefix`)
-- **프론트엔드 진입 URL**: `{serverUrl}{WebPrefix}/index.html`
-- prefix는 설정 파일에서 수정할 수 있어야 한다. 브라우저는 하드코딩된 `/api/v1`가 아니라, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)와 **`window.__CONTRABASS_REMOTE_HEALTH__`**(원격 HTTP 헬스 폴링 간격·타임아웃·실패 임계·지터, §7.1 `Maintenance.RemoteHealth`)를 먼저 로드한 뒤 **`maintenance/web/js/`** 모듈을 순서대로 로드한다(`index.html`: `core` → `hosts` → `card-panels` → `card-apply` → `card-health` → `card` → `discovery` → `bulk` → `app`). 공유 상태·API 호출은 **`window.MolMaintenance`**(`M`) 네임스페이스를 쓴다.
+- **프론트엔드 prefix**: `{serverUrl}{WebPrefix}` (기본 **`/maintenance`**, `maintenance/agentcfg`·`ginproxy`)
+- **백엔드 API prefix**: `{serverUrl}{APIPrefix}` (기본 **`/maintenance/api/v1`**, 동일)
+- **프론트엔드 진입 URL**: `{serverUrl}{WebPrefix}/index.html` (Gin 경유 시 `http://<host>:Server.HTTPPort/maintenance/index.html`)
+- prefix는 YAML에서 바꿀 수 있으나, **로컬·모든 원격이 동일한 값**이 아니면 Gin 프록시·웹 UI·CLI·호스트 간 HTTP가 깨진다. 예시 설정 **`cfg/agent.local.yml`** 은 코드 기본값을 쓰기 위해 **`WebPrefix`·`APIPrefix`를 의도적으로 주석 처리**해 두었다(§7.1). 브라우저는 API 경로를 하드코딩하지 않고, 서버가 `{WebPrefix}/client-runtime.js`로 내려주는 **`window.__CONTRABASS_API_PREFIX__`**(실제 `APIPrefix`)와 **`window.__CONTRABASS_REMOTE_HEALTH__`**(원격 HTTP 헬스 폴링 간격·타임아웃·실패 임계·지터, §7.1 `Maintenance.RemoteHealth`)를 먼저 로드한 뒤 **`maintenance/web/js/`** 모듈을 순서대로 로드한다(`index.html`: `core` → `hosts` → `card-panels` → `card-apply` → `card-health` → `card` → `discovery` → `bulk` → `app`). 공유 상태·API 호출은 **`window.MolMaintenance`**(`M`) 네임스페이스를 쓴다.
 
 ### 4.1 CLI (명령줄)
 
@@ -256,7 +256,7 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 ### 5.2 자기 정보 API
 
 - **목적**: 초기 화면에 “내 정보”를 표시하기 위함.
-- **엔드포인트**: `GET {serverUrl}/api/v1/self`
+- **엔드포인트**: `GET {serverUrl}/maintenance/api/v1/self`
 - **응답**: 위 공통 형식(`status`, `data`)을 따르며, `data`에는 DISCOVERY_RESPONSE와 동일한 구조의 호스트 정보를 넣는다.
   - 버전, IP, 호스트명, service_port, CPU 정보, MEMORY 정보 등.
 - **IP 표시**: "내 정보"의 IP는 **브로드캐스트 대역에서 사용하는 로컬 IP**로 노출한다. Discovery에 사용하는 broadcast 주소로 나갈 때의 outbound IP를 사용하며, 구할 수 없을 때만 hostinfo 기본 IP를 사용한다.
@@ -264,9 +264,9 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 ### 5.2.1 호스트 정보 API (원격 단일 호스트)
 
 - **목적**: 발견된 호스트 카드에서 "상태 새로고침" 시 해당 호스트의 최신 정보(버전, CPU, 메모리 등)를 가져오기 위함.
-- **엔드포인트**: `GET {serverUrl}/api/v1/host-info?ip=`
+- **엔드포인트**: `GET {serverUrl}/maintenance/api/v1/host-info?ip=`
 - **동작**  
-  - `ip`가 비어 있거나 `"self"`: `/api/v1/self`와 동일하게 로컬 호스트 정보를 반환한다.  
+  - `ip`가 비어 있거나 `"self"`: `/maintenance/api/v1/self`와 동일하게 로컬 호스트 정보를 반환한다.  
   - `ip`가 지정됨: 해당 IP로 **Discovery 유니캐스트** 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 받아 `data`에 넣어 반환한다.
 - **응답**: 공통 형식. 성공 시 `data`는 DISCOVERY_RESPONSE와 동일한 구조. 타임아웃 또는 응답 없음 시 `status: "fail"`, `data`에 에러 메시지.
 
@@ -282,17 +282,17 @@ Discovery에 쓸 IPv4 브로드캐스트(brd) 주소는 **설정이 아니라** 
 
 ### 5.4 서비스 상태·제어 API
 
-- **서비스 상태**: `GET {serverUrl}/api/v1/service-status?ip=`  
+- **서비스 상태**: `GET {serverUrl}/maintenance/api/v1/service-status?ip=`  
   - `ip` 비어 있거나 `"self"`: 로컬에서 `systemctl status <systemctl_service_name>` 실행( **sudo 없음**, contrabass-mole.service는 root로 실행), 결과를 `{ "status": "success", "data": { "output": "..." } }` 로 반환.
   - `ip` 지정: 요청을 받은 서버가 **원격 호스트의 `Server.HTTPPort`(Gin)** 로 `GET .../service-status` 를 호출한다. 원격 에이전트는 자기 서버에서 `systemctl status` 를 실행한 뒤 그 결과를 응답으로 반환하고, 요청자는 그 응답을 그대로 클라이언트에 전달한다.
   - 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
-- **서비스 제어**: `POST {serverUrl}/api/v1/service-control`  
+- **서비스 제어**: `POST {serverUrl}/maintenance/api/v1/service-control`  
   - Body: `{ "ip": "" | "self" | "<host_ip>", "action": "start" | "stop" | "restart" }`.  
   - `ip` 비어 있거나 `"self"`: 로컬 `systemctl start/stop/restart <systemctl_service_name>` (contrabass-mole.service는 root로 실행).  
   - **원격 start/stop**: 요청을 받은 서버가 대상 호스트로 **SSH** 접속(`SSHPort`·`SSHUser` 설정 사용, 미지정 시 22·root)하여 `systemctl start` 또는 `stop <서비스명>`을 실행한다. 원격 에이전트가 중지된 상태여도 SSH로 시작할 수 있다.  
   - **원격 restart**: SSH를 사용하지 않고, 요청을 받은 서버가 **원격 `Server.HTTPPort`(Gin)** 로 `POST .../service-control` (Body: `{ "ip": "self", "action": "restart" }`)를 호출한다. 원격 에이전트는 자기 서버에서 `systemctl restart` 를 실행한 뒤 응답을 반환한다. SSH 공개키 등록 없이 재시작 가능하다.  
   - 성공 시 `{ "status": "success", "data": null }`, 실패 시 `{ "status": "fail", "data": "에러 메시지" }`.
-- **원격 일괄 재시작**: `POST {serverUrl}/api/v1/service-control/restart-all`  
+- **원격 일괄 재시작**: `POST {serverUrl}/maintenance/api/v1/service-control/restart-all`  
   - **Body**(선택): `{ "hosts": [ { "primary_ip", "hostname", "cpu_uuid", "ips": [] }, … ] }` — **웹 UI 카드 1장 = 호스트 1대**(권장). `ips`는 해당 카드의 접속 후보 IP 목록이며, 호스트마다 순서대로 시도해 **첫 성공 시** 다음 호스트로 넘어간다. 레거시 `{ "ips": [] }` 도 지원.  
   - **동작**: 호스트별로 위 **원격 restart** 프록시(`POST …/service-control`, `ip: self`, `action: restart`)를 호출한 뒤, **2초 대기** 후 **최대 45초·2초 간격**으로 재기동을 확인한다 — `GET …/health`(JSON `success`) 또는 `GET …/service-status` 출력의 `Active: active (running)`. 연결 끊김(connection reset·EOF·broken pipe 등)은 **재시작 진행 중**으로 간주(단일 카드 「서비스 재시작」과 동일).  
   - **응답**: `Content-Type: application/x-ndjson`. `start` → 호스트별 `progress`(`verify_ok`, `verify_detail`, `connect_ip`, `tried_ips`) → `done`. 완료 시 `{DeployBase}/update_history.log`에 **요약 1줄**만 append: `service restart-all finished succeeded=N failed=M`.  
@@ -530,7 +530,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 
 #### 5.5.3 업로드·삭제·적용
 
-- **업로드** `POST {serverUrl}/api/v1/upload`  
+- **업로드** `POST {serverUrl}/maintenance/api/v1/upload`  
   - **multipart**: 필드 **`bundle`** 하나 — **tar.gz** 배포 번들(구성·manifest·패키징·검증은 **§5.5.0**). **브라우저·CLI·다른 에이전트가 원격에 배포할 때도 동일 경로·동일 필드명**으로 호출한다.  
   - **본문 크기**: `http.MaxBytesReader`로 **`Maintenance.MaxUploadBytes`**(기본 `64 << 20` 바이트) 상한. 서버는 번들을 임시 디렉터리에 **안전하게 압축 해제**(경로 탈출·심볼릭 링크 등 차단, GNU tar의 `./` 디렉터리 항목 등은 건너뜀, 항목 수·압축 해제 총량 한도)한 뒤 **`contrabass.manifest.yaml`** 존재·`manifestVersion`·`agent`/`config`의 `path`·`sha256` 대로 파일 존재·해시 일치를 검증한다. 그다음 **manifest의 `config.path`에 해당하는 YAML** 구조체 파싱, **에이전트 ELF**·바이너리 버전 키 검증(§12, `--version`→`agent --version` 폴백)을 수행한다. 검증·`clearStaging` 후 **`staging/<버전 키>/`** 에 표준 이름 **`BinaryName`** 실행 파일과 **manifest의 `config.path` basename**(예: `agent.local.yml`)을 두고, **요청 본문으로 받은 tar.gz 원본 전체**를 **`upload.bundle.tar.gz`** 로 저장한다(원격 재전송·manifest 확장 시 서버가 번들 레이아웃을 재하드코딩하지 않도록).  
   - **실행 파일 검증**: ELF 매직 + 스테이징 경로에서 바이너리 실행으로 버전 키 확인(각 시도 **5초** 타임아웃). **먼저 `<path> --version`**, 실패 시 **`<path> agent --version`** 순으로 시도한다(`maintenance/server.versionKeyFromAgentBinary`). 출력 한 줄이 **`"<BinaryName> "`**(`maintenance/appmeta.BinaryName`)로 시작하고, 뒤의 버전 키가 유효해야 하며 종료 코드 0.  
@@ -546,7 +546,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
     `systemd-run --unit=contrabass-mole-update --property=RemainAfterExit=yes /bin/bash <그 경로>/update.sh <적용할 버전 키>`  
   - 응답은 즉시 성공(백그라운드 적용). 에이전트는 root로 동작·sudo 없음.
 - **적용 (원격)**  
-  - **JSON** `{"version":"<키>","ip":"<원격 IP>","agent_variant":"…"(선택),"reuse_previous_config":true|false(선택)}`: 요청을 받은 서버가 **`resolveVersionDir`**로 로컬 **`staging/` 또는 `versions/`** 에서 해당 버전 디렉터리를 고른 뒤, **`reuse_previous_config`가 true**이면 원격 **`GET …/current-config`** 로 **그 호스트의 current config**를 읽어 스테이징 트리의 config 파일을 덮어쓰고 **`upload.bundle.tar.gz`를 제거**한 뒤(재전송 시 트리에서 tar.gz를 다시 빌드), (1) **`POST http://<원격>:<Server.HTTPPort>/api/v1/upload`** — **로컬 업로드와 동일한 API**이며, 해당 디렉터리에 **`upload.bundle.tar.gz`가 있으면 그 파일을 multipart `bundle`로 그대로 보내고**, 없으면(스테이징 삭제 후 `versions/`만 남은 경우·config 주입 후 등) **풀린 트리에서 tar.gz를 생성**해 보낸다. (2) **`POST .../apply-update`** with `{"version":"<키>","ip":"self","agent_variant":"…","reuse_previous_config":…}`. 원격 에이전트는 로컬과 동일하게 준비·§5.5.1 config 복사(백업)·`current` 아래 스크립트 실행을 수행한다. **`version`은 항상 버전 키 문자열**이다.  
+  - **JSON** `{"version":"<키>","ip":"<원격 IP>","agent_variant":"…"(선택),"reuse_previous_config":true|false(선택)}`: 요청을 받은 서버가 **`resolveVersionDir`**로 로컬 **`staging/` 또는 `versions/`** 에서 해당 버전 디렉터리를 고른 뒤, **`reuse_previous_config`가 true**이면 원격 **`GET …/current-config`** 로 **그 호스트의 current config**를 읽어 스테이징 트리의 config 파일을 덮어쓰고 **`upload.bundle.tar.gz`를 제거**한 뒤(재전송 시 트리에서 tar.gz를 다시 빌드), (1) **`POST http://<원격>:<Server.HTTPPort>/maintenance/api/v1/upload`** — **로컬 업로드와 동일한 API**이며, 해당 디렉터리에 **`upload.bundle.tar.gz`가 있으면 그 파일을 multipart `bundle`로 그대로 보내고**, 없으면(스테이징 삭제 후 `versions/`만 남은 경우·config 주입 후 등) **풀린 트리에서 tar.gz를 생성**해 보낸다. (2) **`POST .../apply-update`** with `{"version":"<키>","ip":"self","agent_variant":"…","reuse_previous_config":…}`. 원격 에이전트는 로컬과 동일하게 준비·§5.5.1 config 복사(백업)·`current` 아래 스크립트 실행을 수행한다. **`version`은 항상 버전 키 문자열**이다.  
   - **multipart 원격 적용**: 필드 **`ip`** + **`bundle`**(tar.gz) + **`agent_variant`**(선택) + **`reuse_previous_config`**(선택, 기본 true) — 로컬 스테이징 없이 원격에만 번들 업로드·적용. **`reuse_previous_config`가 true**이면 업로드 전에 원격 current config로 번들 내 config를 교체한 뒤 전송한다. 동일 **`MaxUploadBytes`** 상한.
 
 #### 5.5.3.1 원격 일괄 적용·롤백
@@ -582,17 +582,17 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 ### 5.6 설치된 버전(versions) API
 
 - **경로 기준**: `InstallPrefix`(설정, 비면 `DeployBase`) 아래 `versions/` 디렉터리 및 `current`·`previous` 심볼릭 링크를 사용한다. **최초 설치**는 §5.5.0.1 `contrabass-agent-install.sh`, **완전 제거**는 §5.5.0.2 `contrabass-agent-uninstall.sh`, 이후 목록·전환·업데이트는 동일 경로를 사용한다. `InstallPrefix`를 둔다.
-- **목록**: `GET {serverUrl}/api/v1/versions/list?ip=`  
+- **목록**: `GET {serverUrl}/maintenance/api/v1/versions/list?ip=`  
   - `ip` 비어 있거나 `"self"`: `{InstallPrefix}/versions/` 디렉터리 내 각 **버전 키** 이름의 하위 디렉터리(그 안에 **`appmeta.BinaryName` 실행 파일**이 있는 것만)를 나열하고, `current`·`previous` 심볼릭 링크가 가리키는 버전을 판별하여 `is_current`·`is_previous` 플래그와 함께 반환한다. 응답: `{ "status": "success", "data": { "versions": [ { "version", "is_current", "is_previous" }, ... ], "can_rollback": <bool> } }` — `version` 문자열은 디렉터리명과 동일한 **버전 키**이다. **`can_rollback`** 은 `versionsapi.CanRollbackFromEntries`(`previous` 존재且 `current`≠`previous`). 원격 프록시 응답에도 enrichment.  
   - **정렬 순서(표시용)**: **current** 대상을 맨 위 → **previous** 대상 → 그 외는 **버전 키 비교 규칙**(시맨틱 부분을 절 단위 정수로 비교한 뒤, 같으면 `-`(또는 레거시 `_`) 뒤 패치를 정수로 비교)에 따른 **내림차순**(더 “새” 버전이 위). 웹 UI에서 현재·이전·나머지 순으로 한눈에 볼 수 있다.  
   - `ip` 지정: 요청을 받은 서버가 **원격 호스트의 `Server.HTTPPort`(Gin)** 로 `GET .../versions/list` 를 호출한 뒤 응답을 그대로 클라이언트에 전달한다.
-- **삭제**: `POST {serverUrl}/api/v1/versions/remove`  
+- **삭제**: `POST {serverUrl}/maintenance/api/v1/versions/remove`  
   - Body: `{ "versions": [ "<버전>", ... ], "ip": "" | "self" | "<host_ip>" }`. `ip`가 비어 있거나 `"self"`이면 로컬에서 삭제. `ip` 지정 시 요청을 받은 서버가 **원격 `Server.HTTPPort`** 로 `POST .../versions/remove` (Body: `{ "versions": [...] }`)를 호출한 뒤 응답을 그대로 클라이언트에 전달한다. 로컬/원격 공통: `current`·`previous`가 가리키는 버전은 삭제하지 않고 제외 사유와 함께 응답에 포함한다.  
   - **버전 키 검증**: 삭제 대상 문자열은 **`ValidateVersionKeyPath`와 동일한 규칙**(디렉터리명으로 안전한 문자; 패치 구분 `-`(레거시 `_` 허용), 예 `0.4.4-9`)을 따른다. 구현상 업로드·적용 API와 같은 검증을 사용한다.  
   - **원격 `ip` 사용 시 주의**: 실제 삭제·검증은 **`ip`로 지정된 호스트에서 실행되는 에이전트**가 수행한다. 클라이언트가 붙은 머신(또는 Gin 프록시 앞단)만 최신으로 올리고 **원격 호스트는 구버전 바이너리**이면, 응답 메시지·검증 동작은 **원격 프로세스** 기준이 된다(예: 구버전에서 잘못된 문자 제한이 남아 있으면 그쪽 메시지가 그대로 돌아온다). 원격에서도 동일 동작을 기대하려면 **해당 호스트에 동일 빌드를 배포**한다.  
   - **프록시 선검증**: `ip`가 원격일 때 요청을 받은 서버는 원격으로 넘기기 전에 버전 키 형식을 검사하여, 잘못된 항목은 즉시 `fail`(HTTP 400)할 수 있다.
-- **이 버전으로 서비스(switch-current)**: `POST {serverUrl}/api/v1/versions/switch-current` — Body `{ "version": "<버전 키>", "ip": "" | "self" | "<host_ip>" }`. **스테이징 또는 `versions/`** 에 해당 키가 있으면 로컬에서는 **`apply-update`와 동일한 준비**(스테이징→`versions/` 반영, v2 시 `MaterializeCanonicalAgent`로 `contrabass-moleU` 준비) 뒤 내장 `update.sh`를 `systemd-run`으로 실행하여 그 버전을 **current**로 둔다. `ip`가 원격이면 요청 서버가 원격 **`Server.HTTPPort`** 로 동일 경로를 프록시한다. 웹 UI에서는 설치된 버전 블록에 **라벨「이 버전으로 서비스」**·**단일 선택(select)**·**「이 버전으로 적용」**을 두며, **select 옵션에는 이미 current인 버전(디렉터리)은 넣지 않는다**(불필요한 재적용 방지). **성공 응답 후**에는 로컬·원격 모두 **업데이트 적용과 동일하게** `/self` 또는 `host-info` 폴링 뒤 **업데이트 기록·config·설치된 버전·서비스 상태·update-status** 등 패널을 자동 갱신한다(롤백으로 버전이 되돌아간 경우에도 반영). **로컬 전환** 시 업데이트 기록은 §6.3과 같이 **호스트 폴링과 별도로** 2초 간격 자동 갱신한다. 선택 변경 시 **「버전 … 을(를) 선택했습니다.」** 형태의 짧은 안내 문구를 표시한다.
-- **롤백 (단일 호스트)** `POST {serverUrl}/api/v1/versions/rollback` — Body `{ "ip": "" | "self" | "<host_ip>" }`. 로컬(또는 원격 프록시)에서 embedded **`rollback.sh`** 실행: `previous` 심볼릭 링크가 가리키는 버전으로 `current` 교체·서비스 재시작. `previous` 없으면 `fail`. 롤백 후에는 `current`·`previous`가 **동일 버전**을 가리킬 수 있다(§5.5.3.1 일괄 롤백 `skipped` 판단 기준).
+- **이 버전으로 서비스(switch-current)**: `POST {serverUrl}/maintenance/api/v1/versions/switch-current` — Body `{ "version": "<버전 키>", "ip": "" | "self" | "<host_ip>" }`. **스테이징 또는 `versions/`** 에 해당 키가 있으면 로컬에서는 **`apply-update`와 동일한 준비**(스테이징→`versions/` 반영, v2 시 `MaterializeCanonicalAgent`로 `contrabass-moleU` 준비) 뒤 내장 `update.sh`를 `systemd-run`으로 실행하여 그 버전을 **current**로 둔다. `ip`가 원격이면 요청 서버가 원격 **`Server.HTTPPort`** 로 동일 경로를 프록시한다. 웹 UI에서는 설치된 버전 블록에 **라벨「이 버전으로 서비스」**·**단일 선택(select)**·**「이 버전으로 적용」**을 두며, **select 옵션에는 이미 current인 버전(디렉터리)은 넣지 않는다**(불필요한 재적용 방지). **성공 응답 후**에는 로컬·원격 모두 **업데이트 적용과 동일하게** `/self` 또는 `host-info` 폴링 뒤 **업데이트 기록·config·설치된 버전·서비스 상태·update-status** 등 패널을 자동 갱신한다(롤백으로 버전이 되돌아간 경우에도 반영). **로컬 전환** 시 업데이트 기록은 §6.3과 같이 **호스트 폴링과 별도로** 2초 간격 자동 갱신한다. 선택 변경 시 **「버전 … 을(를) 선택했습니다.」** 형태의 짧은 안내 문구를 표시한다.
+- **롤백 (단일 호스트)** `POST {serverUrl}/maintenance/api/v1/versions/rollback` — Body `{ "ip": "" | "self" | "<host_ip>" }`. 로컬(또는 원격 프록시)에서 embedded **`rollback.sh`** 실행: `previous` 심볼릭 링크가 가리키는 버전으로 `current` 교체·서비스 재시작. `previous` 없으면 `fail`. 롤백 후에는 `current`·`previous`가 **동일 버전**을 가리킬 수 있다(§5.5.3.1 일괄 롤백 `skipped` 판단 기준).
 - **일괄 롤백**: §5.5.3.1 `POST …/versions/rollback-all`.
 
 ---
@@ -619,7 +619,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **초기 화면**
   - **내 정보**: 현재 에이전트 인스턴스의 버전, **IP(또는 응답으로 사용하는 모든 IP `host_ips`)** , 호스트명, CPU UUID, CPU, MEMORY 등을 표시 (자기 정보 API 사용). 자기 정보 API는 각 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하여 Discovery 응답으로 사용하는 IP들을 모두 보여준다.
 - **Discovery 버튼**
-  - 클릭 시 **EventSource** 로 `GET /api/v1/discovery/stream` 에 연결하여 **실시간 Discovery**를 수행한다. **기존 발견된 호스트 목록은 비우지 않고** 유지하며, 진행 중에도 해당 카드들의 제어(시작/중지·업데이트 적용·상태 새로고침)가 가능하다. SSE로 호스트가 도착할 때 **같은 CPU UUID**가 있으면 해당 카드에 IP만 병합·갱신하고, 없으면 같은 IP 카드 갱신 또는 새 카드 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. **진행 중 상태 줄**에 남은 초·호스트 수를 표시한다(타임아웃은 `client-runtime.js`의 `discovery.timeoutSec`). **run 완료 후** 이번 UDP run에 응답하지 않은 **기존 원격 카드**에는 「**이번 Discovery 미응답**」 배지·펼친 카드 안내 배너를 표시하되 **카드는 제거하지 않는다**(`discoveryfail`·새 run 시작 직후에는 이전 run의 미응답 표시를 지우지 않음).
+  - 클릭 시 **EventSource** 로 `GET /maintenance/api/v1/discovery/stream` 에 연결하여 **실시간 Discovery**를 수행한다. **기존 발견된 호스트 목록은 비우지 않고** 유지하며, 진행 중에도 해당 카드들의 제어(시작/중지·업데이트 적용·상태 새로고침)가 가능하다. SSE로 호스트가 도착할 때 **같은 CPU UUID**가 있으면 해당 카드에 IP만 병합·갱신하고, 없으면 같은 IP 카드 갱신 또는 새 카드 추가한다. `event: done` 수신 시 스트림을 닫고 버튼을 복구한다. **진행 중 상태 줄**에 남은 초·호스트 수를 표시한다(타임아웃은 `client-runtime.js`의 `discovery.timeoutSec`). **run 완료 후** 이번 UDP run에 응답하지 않은 **기존 원격 카드**에는 「**이번 Discovery 미응답**」 배지·펼친 카드 안내 배너를 표시하되 **카드는 제거하지 않는다**(`discoveryfail`·새 run 시작 직후에는 이전 run의 미응답 표시를 지우지 않음).
 - **원격 일괄 작업**: 오른쪽 사이드바 **§6.6**.
 - **호스트 목록 구조 (아코디언·상태 점)**
   - 호스트(로컬·발견된 원격)는 **세로 목록**으로 표시한다. 기본은 **한 줄 요약**만 보이고, 해당 행을 클릭하면 그 호스트의 **상세 카드**가 펼쳐진다(아코디언). 여러 호스트를 동시에 펼쳐 둘 수 있다.
@@ -632,7 +632,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
   - 내 정보와 동일한 형태(카드/테이블 등)로 보여주어 일관된 UX를 유지한다.
 - **원격 적용 후**: 원격 에이전트 업데이트가 성공하면 **Discovery를 다시 수행하지 않고**, 해당 호스트 카드만 갱신한다.  
   - **카드 버전 즉시 갱신(낙관적 갱신)**: apply-update API 성공 시점에 이미 알고 있는 **적용 버전**으로 카드의 버전 표시(`data-host-version` 속성 및 버전 dd 텍스트)를 **즉시** 갱신한다. 이때 **오래된 `can_apply`로 버튼을 다시 켜지 않는다**.  
-  - **지연 후 host-info 및 패널 전체 현행화**: 약 5초 후부터 `GET /api/v1/host-info?ip=...`를 **2초 간격으로 최대 8회** 재시도한다. **성공 시** 카드 호스트 정보를 덮어쓴 뒤 **업데이트 기록(update-log)·agent.local.yml(current)·설치된 버전(versions/list)·서비스 상태(service-status)**·해당 IP **`GET …/update-status?ip=`** 및 로컬 **update-status**를 한꺼번에 다시 불러 **`can_apply`·variant 표시**를 서버와 일치시킨다. **재시도를 모두 소진해도** 가능한 API는 동일하게 호출한다. 적용 실패·완료 후에도 동일 IP에 대해 **`update-status?ip=`** 를 다시 조회한다. 그 후 업데이트 인디케이터를 숨긴다.
+  - **지연 후 host-info 및 패널 전체 현행화**: 약 5초 후부터 `GET /maintenance/api/v1/host-info?ip=...`를 **2초 간격으로 최대 8회** 재시도한다. **성공 시** 카드 호스트 정보를 덮어쓴 뒤 **업데이트 기록(update-log)·agent.local.yml(current)·설치된 버전(versions/list)·서비스 상태(service-status)**·해당 IP **`GET …/update-status?ip=`** 및 로컬 **update-status**를 한꺼번에 다시 불러 **`can_apply`·variant 표시**를 서버와 일치시킨다. **재시도를 모두 소진해도** 가능한 API는 동일하게 호출한다. 적용 실패·완료 후에도 동일 IP에 대해 **`update-status?ip=`** 를 다시 조회한다. 그 후 업데이트 인디케이터를 숨긴다.
 
 ### 6.1 systemctl status 표시 (내 정보·발견된 호스트 공통)
 
@@ -649,18 +649,18 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **발견된 호스트(원격) 카드**는 **로컬 카드와 동일한 레이아웃**을 사용한다. 오른쪽 컬럼에 업데이트 기록·agent.local.yml(current)·설치된 버전을 두고, 하단에 서비스 상태·「상태 새로고침」·「서비스 재시작」·「업데이트 적용」을 둔다. **시작**·**중지** 버튼은 노출하지 않는다(원격 시작/중지는 SSH로만 수행).
 - **원격 조작 가드**: **HTTP 헬스 연속 실패**(§6.5) 또는 **이번 Discovery 미응답** 표시가 있는 카드에서는 **「업데이트 적용」·「서비스 재시작」** 을 비활성화한다(스테이징·`can_apply`와 무관). 일괄 작업 버튼의 **도달 가능(reachable)** 판단에도 동일 규칙을 쓴다.
 - **원격 카드 열릴 때**: 해당 행을 펼치면(아코디언 확장 시) **업데이트 기록**·**agent.local.yml 불러오기**·**설치된 버전 목록**을 자동으로 해당 원격 호스트 API(`?ip=` 또는 body `ip`)로 요청하여 표시한다. 로컬 카드는 초기 로드 시 동일 데이터를 자동 표시한다.
-- **서비스 제어 API 동작**: `POST /api/v1/service-control` with `{ "ip": "<host_ip>", "action": "start"|"stop"|"restart" }`.  
+- **서비스 제어 API 동작**: `POST /maintenance/api/v1/service-control` with `{ "ip": "<host_ip>", "action": "start"|"stop"|"restart" }`.  
   - **로컬**(ip 없음/self): `systemctl start/stop/restart` (sudo 없음, root 실행).  
   - **원격 start/stop**: 요청을 받은 서버가 해당 원격 호스트로 **SSH** 접속하여 `systemctl start|stop` 실행. 설정 `SSHPort`(기본 22), `SSHUser`(기본 "root") 사용.  
   - **원격 restart**: SSH 없이 요청을 받은 서버가 **원격 에이전트 API**(`Server.HTTPPort`)로 `POST .../service-control` (Body `{ "ip": "self", "action": "restart" }`)를 호출. 원격 에이전트가 자기 서버에서 `systemctl restart` 실행.
-- **서비스 재시작 후 UI**: 재시작 요청 성공 시 또는 연결 끊김/terminated 등 재시작 진행 중으로 보이는 오류 시, 요약에 「재시작되었습니다. 잠시 후 상태를 불러옵니다.」 등 친절한 메시지를 표시하고, **몇 초 후 자동으로** (1) `GET /api/v1/self`(로컬) 또는 `GET /api/v1/host-info?ip=...`(원격)로 호스트 정보를 가져와 카드의 **버전·호스트명·IP 등**을 갱신하고, (2) `GET /api/v1/service-status`로 요약을 [정상 서비스 상태] 등으로 갱신한다. agent.local.yml의 version을 수정한 뒤 재시작한 경우에도 카드에 새 버전이 반영된다. 로컬·원격 동일. 사용자가 「상태 새로고침」을 누르지 않아도 된다.
-- (참고) **서비스 상태** 조회(GET /api/v1/service-status?ip=)는 로컬은 직접 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`)를 호출하는 방식으로 유지한다.
+- **서비스 재시작 후 UI**: 재시작 요청 성공 시 또는 연결 끊김/terminated 등 재시작 진행 중으로 보이는 오류 시, 요약에 「재시작되었습니다. 잠시 후 상태를 불러옵니다.」 등 친절한 메시지를 표시하고, **몇 초 후 자동으로** (1) `GET /maintenance/api/v1/self`(로컬) 또는 `GET /maintenance/api/v1/host-info?ip=...`(원격)로 호스트 정보를 가져와 카드의 **버전·호스트명·IP 등**을 갱신하고, (2) `GET /maintenance/api/v1/service-status`로 요약을 [정상 서비스 상태] 등으로 갱신한다. agent.local.yml의 version을 수정한 뒤 재시작한 경우에도 카드에 새 버전이 반영된다. 로컬·원격 동일. 사용자가 「상태 새로고침」을 누르지 않아도 된다.
+- (참고) **서비스 상태** 조회(GET /maintenance/api/v1/service-status?ip=)는 로컬은 직접 systemctl, 원격은 원격 에이전트 API(`Server.HTTPPort`)를 호출하는 방식으로 유지한다.
 
 ### 6.3 업데이트 (업로드·적용·로그)
 
-  - **업로드**: `maintenance/scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리에 대해 **`versionKeyFromAgentBinary`**(§5.5.3·§12)로 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + 버전 한 줄, §12)·**agent.local.yml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
+  - **업로드**: `maintenance/scripts/pack-agent-tarball.sh` 등으로 만든 **tar.gz 번들** 하나를 선택해 `POST /maintenance/api/v1/upload` (multipart: **`bundle`**). **버전 키**는 서버가 번들 내 바이너리에 대해 **`versionKeyFromAgentBinary`**(§5.5.3·§12)로 읽으며, 스테이징 디렉터리명으로 쓴다. 성공 시 메시지에 그 버전 키가 표시된다. 서버는 manifest·해시·**실행 파일 검증**(ELF + 버전 한 줄, §12)·**agent.local.yml 검증**을 수행하며, 실패 시 에러 메시지를 반환한다. 스테이징에는 **원본 번들 파일(`upload.bundle.tar.gz`)** 도 함께 저장되어(§5.5) 원격 적용 시 동일 바이트 재전송에 쓰인다.  
   - **config 변경**: 번들을 만들기 전에 로컬에서 `agent.local.yml`을 수정한 뒤 패킹 스크립트로 번들을 다시 생성한다(웹에서 개별 config 편집·업로드 흐름은 사용하지 않음).
-- **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, **「업데이트 적용」**(`POST /api/v1/apply-update`, Body `{ "version": "<버전 키>", "agent_variant": "compute"|"control", "reuse_previous_config": true|false }`). **로컬 스테이징에 번들이 있을 때만** 「업데이트 적용」 버튼 아래 **「이전버전의 환경설정 파일 재사용」** 체크박스를 표시하며 **기본값은 체크(재사용)** 이다. **`agent --apply-update`** 도 동일 기본(`-use-bundle-config`로 번들 config). 스테이징이 비면 체크박스를 숨긴다. 체크 해제 후 적용 시 **확인 대화상자**로 번들 config 사용 여부를 묻고, **취소** 시 `alert`로 재사용 체크 후 다시 적용하라고 안내한다(적용은 진행하지 않음). 활성 시 **초록색** 버튼 스타일. 성공 시 에이전트 재시작으로 HTTP가 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 이후 **두 갱신 루프를 병렬**로 돌린다(§6.3.1). (1) **호스트**: 약 **4초 후**부터 `GET /api/v1/self`를 **2초 간격·최대 15회** — 성공 시 카드 호스트 정보·config·versions·서비스 상태·update-status 현행화. (2) **업데이트 기록**: §6.3.1. `/self`가 먼저 돌아와도 **기록 폴링은 success/failed까지 유지**한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다.
+- **적용 (로컬)**: 버전이 스테이징 또는 이전 적용으로 존재할 때, **「업데이트 적용」**(`POST /maintenance/api/v1/apply-update`, Body `{ "version": "<버전 키>", "agent_variant": "compute"|"control", "reuse_previous_config": true|false }`). **로컬 스테이징에 번들이 있을 때만** 「업데이트 적용」 버튼 아래 **「이전버전의 환경설정 파일 재사용」** 체크박스를 표시하며 **기본값은 체크(재사용)** 이다. **`agent --apply-update`** 도 동일 기본(`-use-bundle-config`로 번들 config). 스테이징이 비면 체크박스를 숨긴다. 체크 해제 후 적용 시 **확인 대화상자**로 번들 config 사용 여부를 묻고, **취소** 시 `alert`로 재사용 체크 후 다시 적용하라고 안내한다(적용은 진행하지 않음). 활성 시 **초록색** 버튼 스타일. 성공 시 에이전트 재시작으로 HTTP가 끊길 수 있으므로 **전체 페이지 새로고침은 하지 않는다**. 이후 **두 갱신 루프를 병렬**로 돌린다(§6.3.1). (1) **호스트**: 약 **4초 후**부터 `GET /maintenance/api/v1/self`를 **2초 간격·최대 15회** — 성공 시 카드 호스트 정보·config·versions·서비스 상태·update-status 현행화. (2) **업데이트 기록**: §6.3.1. `/self`가 먼저 돌아와도 **기록 폴링은 success/failed까지 유지**한다. 폴링 실패 시 연결 오류 vs 응답 지연 메시지를 구분해 안내한다.
 - **적용 (원격)**  
   - **버튼 활성화**: 각 발견된 호스트 카드의 「업데이트 적용」은 **호스트별**로 활성/비활성을 판단한다. 브라우저는 **`GET …/update-status?ip=<해당 호스트 IP>`** 를 호출해 받은 **`can_apply`**·**`apply_version`**·**`remote_current_version`**(및 스테이징 목록)을 사용한다 — **로컬 스테이징**과 **그 호스트의 현재 버전**(원격 `GET …/self`)에 대해 서버가 **`StagingUpdateAvailable`**·**`AllowSameVersionUpdate`**(§5.5.4·§7.1)로 계산한 결과와 일치시킨다. **`can_apply`가 확정된 응답(`ok`)이 있으면**, 업로드 영역의 **파일 선택만으로는** 버튼을 켜지 않는다. `can_apply`가 false이고 원격이 스테이징과 동일 버전이면 툴팁에 동일 버전 재적용 안내를 표시한다. 단순히 **스테이징 최상위 버전 문자열과 카드 `data-host-version`만 비교**하지 않는다. 원격 비교 조회가 진행 중이면 버튼·variant를 비활성·숨김·짧은 안내로 둔다. 카드에는 `data-host-version`·`data-build-variant`에 버전 키·variant를 저장한다.  
   - **버튼 스타일**: 활성화 시 **초록색** 계열(로컬 적용 버튼과 동일)로 표시하여 적용 가능 상태를 직관적으로 구분한다.  
@@ -675,7 +675,7 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **업데이트 인디케이터**: 로컬·원격 카드 모두, 업데이트 적용이 진행 중일 때 카드 내 **서버 아이콘 아래**에 회전하는 로딩 인디케이터를 표시한다. **로컬**은 `/self` 폴링 성공(또는 폴링 종료) 후 숨긴다. **원격**은 host-info 폴링·패널 갱신 완료 후 숨긴다. 요청 실패 시 즉시 숨긴다.
 - **파일 선택 초기화**: 번들 파일 선택만 초기화. 스테이징/versions 에 올라간 버전은 유지.
 - **업로드된 버전 삭제**: 스테이징에서 해당 버전만 삭제. 삭제 성공 시 스테이징 표시·적용 버튼·**환경설정 재사용 체크박스**를 즉시 갱신한다.
-- **업데이트 기록(로그)**: 호스트 카드 오른쪽 컬럼 **「업데이트 기록 (최근 10건)」** 블록(로컬·원격 동일). 수동 갱신 버튼 문구는 **「로그 새로고침」**(설치된 버전 목록 블록의 **「목록 새로고침」** 과 구분). `GET /api/v1/update-log`(`?ip=` 원격)로 표시하며, 요청마다 쿼리 `&_=<타임스탬프>`·`fetch` `cache: 'no-store'` 로 캐시를 쓰지 않는다. API tail 10줄을 **역순 표시**(최신이 위). **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다. **일괄 작업** 요약 줄(`config push-all`·`service restart-all`·`apply-update-all`·`rollback-all finished …`)만 맨 아래에 있을 때는 **`recent_rollback` false** — 롤백 경고를 띄우지 않는다.
+- **업데이트 기록(로그)**: 호스트 카드 오른쪽 컬럼 **「업데이트 기록 (최근 10건)」** 블록(로컬·원격 동일). 수동 갱신 버튼 문구는 **「로그 새로고침」**(설치된 버전 목록 블록의 **「목록 새로고침」** 과 구분). `GET /maintenance/api/v1/update-log`(`?ip=` 원격)로 표시하며, 요청마다 쿼리 `&_=<타임스탬프>`·`fetch` `cache: 'no-store'` 로 캐시를 쓰지 않는다. API tail 10줄을 **역순 표시**(최신이 위). **업데이트 진행 중**(임시 유닛 `contrabass-mole-update.service` active)에는 서버가 `recent_rollback`을 false로 반환하므로 롤백 경고를 숨긴다. **일괄 작업** 요약 줄(`config push-all`·`service restart-all`·`apply-update-all`·`rollback-all finished …`)만 맨 아래에 있을 때는 **`recent_rollback` false** — 롤백 경고를 띄우지 않는다.
 
 #### 6.3.1 업데이트 기록 자동 갱신 (로컬·원격 적용·switch-current)
 
@@ -685,15 +685,15 @@ manifest v2 번들에는 control·compute 두 바이너리가 모두 포함된�
 - **호스트 폴링과 분리**: `/self`·host-info 폴링이 먼저 성공해도 기록 폴링은 위 완료 조건까지 계속한다.
 - **패널 일괄 갱신과의 조합**: 기록 폴링이 돌아가는 동안 `refreshAllPanelsAfterUpdate`는 **update-log 요청을 생략**하여, 호스트 복구 직후의 일괄 갱신이 **오래된 캐시 응답**으로 기록 영역을 덮어쓰지 않게 한다. 기록 폴링이 끝난 뒤에는 수동 「로그 새로고침」·다음 일괄 갱신으로 최종 내용을 맞출 수 있다.
 - **재시작 구간**: maintenance HTTP가 잠시 끊기면 해당 tick은 실패할 수 있으나, 에이전트 기동 후 다음 tick에서 `started`→`success` 순으로 반영된다.
-- **설치된 버전(versions)**: `GET /api/v1/versions/list` 로 목록을 가져오며, **서버 정렬 순서**(5.6)대로 표시한다. **current**·**previous**는 뱃지 및 삭제 비활성화. 목록은 2열·세로 우선으로 표시. 선택 버전만 `POST /api/v1/versions/remove` 로 삭제. **「이 버전으로 서비스」** 행의 select에는 **current에 해당하는 버전 키는 옵션에서 제외**한다(§5.6 switch-current).
+- **설치된 버전(versions)**: `GET /maintenance/api/v1/versions/list` 로 목록을 가져오며, **서버 정렬 순서**(5.6)대로 표시한다. **current**·**previous**는 뱃지 및 삭제 비활성화. 목록은 2열·세로 우선으로 표시. 선택 버전만 `POST /maintenance/api/v1/versions/remove` 로 삭제. **「이 버전으로 서비스」** 행의 select에는 **current에 해당하는 버전 키는 옵션에서 제외**한다(§5.6 switch-current).
 - **프론트엔드 구현 정리**: 동일 로직은 헬퍼로 묶는다(예: 업데이트 로그 응답 반영, 버전 목록 렌더, 적용 후 `/self` 또는 `host-info` 폴링). 사용하지 않는 함수(hostname으로 카드 찾기 등)는 제거한다.
 
 ### 6.4 상태 새로고침 (내 정보·발견된 호스트)
 
 - **내 정보** 카드와 **발견된 호스트** 카드 각각에 **「상태 새로고침」** 버튼을 둔다.
 - **동작 방식**(로컬·원격 동일): 카드 전체를 다시 그리지 않고, (1) 호스트 정보 API로 카드 내용만 갱신한 뒤 (2) systemctl status를 조회해 표시한다.  
-  - **내 정보**: `GET /api/v1/self`로 응답을 받아 기존 카드 DOM의 항목(버전, IP, 호스트명, CPU, 메모리 등)만 갱신하고, 이어서 `GET /api/v1/service-status`로 systemctl status를 갱신한다.  
-  - **발견된 호스트**: `GET /api/v1/host-info?ip=<해당 호스트 IP>`로 응답을 받아 기존 카드의 호스트 정보만 갱신하고, 적용 버튼 활성/비활성·툴팁을 갱신한 뒤, `GET /api/v1/service-status?ip=...`로 systemctl status를 갱신한다. host-info가 실패해도 service-status는 조회하여 상태 영역은 갱신한다.
+  - **내 정보**: `GET /maintenance/api/v1/self`로 응답을 받아 기존 카드 DOM의 항목(버전, IP, 호스트명, CPU, 메모리 등)만 갱신하고, 이어서 `GET /maintenance/api/v1/service-status`로 systemctl status를 갱신한다.  
+  - **발견된 호스트**: `GET /maintenance/api/v1/host-info?ip=<해당 호스트 IP>`로 응답을 받아 기존 카드의 호스트 정보만 갱신하고, 적용 버튼 활성/비활성·툴팁을 갱신한 뒤, `GET /maintenance/api/v1/service-status?ip=...`로 systemctl status를 갱신한다. host-info가 실패해도 service-status는 조회하여 상태 영역은 갱신한다.
 
 ### 6.5 원격 HTTP 헬스 모니터링 (Discovery로 발견된 호스트)
 
@@ -745,8 +745,11 @@ Maintenance:
   MaintenancePort: PORT
   DiscoveryServiceName: "Mole-Discovery"
   DiscoveryUDPPort: 9999
-  WebPrefix: "/web"
-  APIPrefix: "/api/v1"
+  # WebPrefix / APIPrefix — 생략 시 코드 기본값 사용(권장). cfg/agent.local.yml 참고.
+  # 생략 시: WebPrefix "/maintenance", APIPrefix "/maintenance/api/v1"
+  # fleet 전체(로컬+원격)가 동일해야 하며, 임의 변경 시 통신이 깨질 수 있어 예시 설정에서는 주석 처리.
+  #WebPrefix: "/maintenance"
+  #APIPrefix: "/maintenance/api/v1"
   RemoteHealth:
     IntervalSeconds: 10
     TimeoutSeconds: 2
@@ -765,8 +768,8 @@ Maintenance:
 | `Maintenance.MaintenanceListenAddress` | (선택) maintenance HTTP 바인딩 주소. 기본 `"127.0.0.1"`(외부 비노출). 필요 시 `"0.0.0.0"` | `"127.0.0.1"`, `"0.0.0.0"` |
 | `Maintenance.MaintenancePort` | HTTP 서비스 포트 | (예: `PORT`) |
 | `Server.HTTPPort` | (필수) 원격 호스트에 대해 API를 호출할 때 사용하는 **외부 노출 포트(Gin)**. maintenance가 loopback-only(`127.0.0.1`)인 경우 원격 호출은 반드시 이 포트로 간다. | `8888` |
-| `Maintenance.WebPrefix` | 프론트엔드 URL prefix | `"/web"` |
-| `Maintenance.APIPrefix` | 백엔드 API URL prefix | `"/api/v1"` |
+| `Maintenance.WebPrefix` | 프론트엔드 URL prefix. 생략 시 **`/maintenance`** (`agentcfg`·`ginproxy`). fleet 전체 동일 권장 — 예시 `cfg/agent.local.yml` 에서는 주석 처리 | `"/maintenance"` |
+| `Maintenance.APIPrefix` | 백엔드 API URL prefix. 생략 시 **`/maintenance/api/v1`**. 동일 권장·주석 처리 이유는 `WebPrefix` 와 같음 | `"/maintenance/api/v1"` |
 | `Maintenance.DiscoveryTimeoutSeconds` | Discovery 응답 대기 시간(초) | `10` |
 | `Maintenance.DiscoveryDeduplicate` | 동일 호스트 중복 제거 여부 | `true` |
 | `Maintenance.SystemctlServiceName` | (선택) 서비스 상태·제어 대상 유닛 이름 | `"contrabass-mole.service"` |
@@ -808,16 +811,16 @@ Maintenance:
 - **Pending**: 요청 전송 **전에** request_id → 수신 채널을 pending에 등록하여 빠른 응답이 버려지지 않도록 함. 타임아웃 시 반환 전 채널 drain.
 - **자기(self) 응답 처리**: 일괄·SSE 수집 시 기본은 **자기 응답을 포함**하고 JSON에 `"self": true`를 둔다(CPU UUID 일치 시). **HTTP 쿼리 `exclude_self`**(또는 `exclude_self=true` 등, §5.3)가 켜지면 **CPU UUID**로 자기 식별해 제외하고, CPU UUID가 없을 때만 IP+ServicePort로 폴백 제외. 응답의 `host_ip`는 요청자 기준 outbound IP로 채움.
 - Discovery 요청 수신 시 자신의 정보를 담은 DISCOVERY_RESPONSE를 **요청자 IP 및 요청 UDP 패킷의 소스 포트**로 unicast 전송(소스 포트가 0이면 discovery_udp_port로 폴백).
-- **자기 정보 API**: GET /api/v1/self — 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하고, `host_ip`는 그중 첫 번째. 버전, CPU UUID, CPU, 메모리 등 포함.
+- **자기 정보 API**: GET /maintenance/api/v1/self — 브로드캐스트 주소별 outbound IP를 `host_ips`로 반환하고, `host_ip`는 그중 첫 번째. 버전, CPU UUID, CPU, 메모리 등 포함.
 - **cpu_uuid(호스트 식별자) 확보 순서(Linux)**: `/sys/class/dmi/id/product_uuid`(DMI가 있으면 `dmidecode -s system-uuid`와 동일 값; sysfs만 읽어 **dmidecode 바이너리 불필요**) → `/etc/machine-id` → `/var/lib/dbus/machine-id`(보통 `/etc/machine-id`와 동일). `/proc/cpuinfo`의 `Serial`은 사용하지 않는다(서버에서 비어 있는 경우가 많고, DMI 없는 환경은 machine-id로 식별). VM 템플릿 복제 시 여러 대가 동일 machine-id를 가질 수 있으니 운영 시 주의.
-- **호스트 정보 API**: GET /api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
+- **호스트 정보 API**: GET /maintenance/api/v1/host-info?ip= — `ip` 없음/self면 /self와 동일. `ip` 지정 시 해당 IP로 Discovery 유니캐스트 요청을 보내 그 호스트의 DISCOVERY_RESPONSE를 반환. 타임아웃 시 fail.
 - **HTTP 헬스(JSON)**: GET {APIPrefix}/health — 최소 JSON 성공 응답(원격 모니터링·`remote-health-check` 프록시 대상).
 - **원격 헬스 프록시**: GET {APIPrefix}/remote-health-check?ip= — 로컬 에이전트가 원격 `Server.HTTPPort` + `{APIPrefix}/health` 로 HTTP GET(타임아웃 `Maintenance.RemoteHealth.TimeoutSeconds`).
 - **Discovery API**: `GET {APIPrefix}/discovery/stream` (SSE) — 웹 UI에서 사용; 시작 실패 시 `discoveryfail` 이벤트·로그 `discovery: ERROR: DoDiscoveryStream …`. `GET {APIPrefix}/discovery` (일괄) — 웹 UI 미사용; 실패 시 JSON fail·로그 `discovery: ERROR: DoDiscovery …`. 일괄·SSE 공통으로 **쿼리 `exclude_self`·`timeout`(§5.3)**, `DiscoveryRunOptions`, `includeInDiscoveryResults`·`effectiveTimeout` 사용. 일괄 `data`는 배열·없을 때 `[]`. **유니캐스트 Discovery**: `host-info` 등, `DoDiscoveryUnicast`; 응답은 **`request_id`로 요청과만 매칭**한다. **멀티홈 호스트**에서는 유니캐스트 목적지 IP와 DISCOVERY_RESPONSE의 `host_ip`(또는 UDP 출발지)가 다를 수 있으므로, **`host_ip` 문자열이 목적지와 일치하지 않아도** 동일 응답으로 처리한다. 실패 시 로그 `discovery: ERROR: DoDiscoveryUnicast …`. 유니캐스트 타임아웃은 설정을 따르되 **최대 5초**.
-- **서비스 상태 API**: GET /api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
-- **서비스 제어 API**: POST /api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행. **일괄 재시작**은 POST `/service-control/restart-all`(§5.4·§6.6). **일괄 적용·롤백**은 §5.5.3.1.
-- **업데이트 API**: 업로드는 `POST /api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리에 대해 §5.5.3과 동일한 **`--version`→`agent --version`** 폴백으로 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + 버전 한 줄, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 는 원격 IP 지정 시 해당 호스트로 프록시한다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
-- **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
+- **서비스 상태 API**: GET /maintenance/api/v1/service-status?ip= — 로컬(`ip` 없음/self)은 `systemctl status` (sudo 없음, root 실행). 원격은 요청자가 원격 **`Server.HTTPPort`** 로 GET service-status를 호출하고, 원격 에이전트가 자체 systemctl status 실행 후 응답을 반환.
+- **서비스 제어 API**: POST /maintenance/api/v1/service-control — body `{ "ip", "action": "start"|"stop"|"restart" }`. 로컬은 `systemctl start/stop/restart` (sudo 없음, root 실행). 원격 start/stop은 **SSH**(`SSHPort`, `SSHUser` 사용)로 `systemctl start|stop` 실행. 원격 **restart**는 SSH 없이 요청자를 받은 서버가 **원격 에이전트 API**로 POST service-control (ip: "self", action: "restart")를 호출하고, 원격 에이전트가 자기 서버에서 `systemctl restart` 실행. **일괄 재시작**은 POST `/service-control/restart-all`(§5.4·§6.6). **일괄 적용·롤백**은 §5.5.3.1.
+- **업데이트 API**: 업로드는 `POST /maintenance/api/v1/upload` 로 **스테이징** `DeployBase/staging/{버전 키}/` 에 **풀린 바이너리·config와 함께 원본 번들 `upload.bundle.tar.gz`** 를 저장한다(§5.5.1·5.5.3). **버전 키**는 업로드된 바이너리에 대해 §5.5.3과 동일한 **`--version`→`agent --version`** 폴백으로 읽으며, 스테이징·적용 API의 `version` 필드는 항상 이 키 문자열이다. **실행 파일 검증**(ELF + 버전 한 줄, §12)·**config 검증**(구조체 파싱 등) 후 400 가능. 로컬 적용 시 스테이징 전체를 `versions/`로 복사한 뒤 `upload.bundle.tar.gz`만 제거한다. 적용 시에는 **내장** `update.sh`/`rollback.sh` 를 `{DeployBase}/current/` 경로에 기록해 **`systemd-run`** 으로 `current/update.sh` 실행; 스크립트 종료 시 해당 두 파일은 스크립트가 삭제한다. **원격 적용(JSON)** 은 동일 **`POST .../upload`** 로 원격에 번들을 올린 뒤 apply-update(self); 스테이징에 원본 번들이 남아 있으면 그 바이트를 그대로 전송한다. `update-log`·`current-cfg` 는 원격 IP 지정 시 해당 호스트로 프록시한다. **`GET .../update-status`**: `ip` 없음/`self`는 로컬 `current` vs 로컬 스테이징; `ip=<원격>`은 원격 `GET .../self` 의 버전 vs **로컬 스테이징**(§5.5.4). update 실패 시 rollback 자동.
+- **설치된 버전 API**: `install_prefix`(비면 deploy_base) 기준. GET /maintenance/api/v1/versions/list?ip= — 로컬 목록은 **current → previous → 나머지 버전 키 내림차순**(시맨틱 수치 비교 후 패치 비교) 정렬. POST /maintenance/api/v1/versions/remove (body에 `ip` 선택) → 원격 프록시 동일. 버전 키 검증·원격 시 대상 호스트 바이너리 일치 요구는 §5.6. current/previous 가리키는 버전 키는 삭제하지 않음.
 - 정적 파일 서빙 (`/web` prefix).
 
 ---
@@ -832,13 +835,13 @@ Maintenance:
 - [ ] Discovery 자기 응답: 기본 **포함**(`"self": true`); 쿼리 **`exclude_self`** 시 CPU UUID(또는 IP+ServicePort 폴백)로 제외
 - [ ] Discovery 브로드캐스트: **3.1.1** (type=1, 브리지는 brif 슬레이브 존재, IPv4 brd; 이름 필터 없음); 송신 목록은 brd 문자열 중복 제거; fallback은 discovery_broadcast_address 또는 255.255.255.255; **`contrabass-moleU agent --nic-brd`**로 확인; 참고 셸 **`brd_for_bm.sh`**
 - [ ] Discovery 타임아웃(설정), 중복 제거(host_ip:service_port), 설정 파일 반영
-- [ ] Discovery 실시간: GET /api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, **event: discoveryfail** 시 서버 메시지 표시·**journalctl** 안내; 응답 오는 대로 화면 갱신; 기존 카드 매칭은 **cpu_uuid → IP** 순서만 사용(**hostname 미사용**, 동일 hostname 다른 호스트 병합 방지), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
+- [ ] Discovery 실시간: GET /maintenance/api/v1/discovery/stream (SSE), **웹 UI는 이 API만 사용**, EventSource, **event: discoveryfail** 시 서버 메시지 표시·**journalctl** 안내; 응답 오는 대로 화면 갱신; 기존 카드 매칭은 **cpu_uuid → IP** 순서만 사용(**hostname 미사용**, 동일 hostname 다른 호스트 병합 방지), event: done 후 스트림 종료(일괄 API 추가 호출 없음)
 - [ ] Discovery 일괄: `GET {APIPrefix}/discovery`, data 배열(빈 경우 []); 쿼리 `exclude_self`·`timeout`; **웹 UI 미호출**
 - [ ] Discovery SSE: `GET {APIPrefix}/discovery/stream`, 동일 쿼리 지원; 웹 UI는 쿼리 없이 기본만 사용
 - [ ] Gin 프록시(루트 main): **`<bin> -cfg <파일>`**(`IsServiceModeRootCfg`)일 때만 `router.Run`; maintenance는 고루틴 `os.Exit(Run)`; **`agent …` 전체**는 Gin 없음; JSON `Content-Type`은 **전역 미들웨어 금지**·`routerGroupJSON` 그룹만; 쿼리 유실 방지(`Form` 비우기·`RequestURI` 보조)
 - [ ] 웹: `client-runtime.js`로 `APIPrefix`·`RemoteHealth` 설정 주입 후 **`web/js/`** 모듈 순서 로드(`MolMaintenance`)
-- [ ] URL prefix: `WebPrefix`·`APIPrefix`, 설정에서 변경 가능
-- [ ] 진입 URL: /web/index.html, Discovery 버튼
+- [ ] URL prefix: `WebPrefix`·`APIPrefix` 기본 **`/maintenance`**, **`/maintenance/api/v1`** (`agentcfg`·`ginproxy`); fleet 동일·예시 YAML 주석 처리(§7)
+- [ ] 진입 URL: `{WebPrefix}/index.html`(기본 `/maintenance/index.html`), Discovery 버튼
 - [ ] 초기 화면: 내 정보 (버전, IP 또는 host_ips, CPU UUID, 호스트, CPU, MEMORY)
 - [ ] 호스트 목록: 아코디언(한 줄 요약 + 클릭 시 상세 카드 펼침), 상태 점(파랑=동작 중/빨강=중지/회색=미확인), 로컬은 맨 위·배경/테두리 색으로 구분, 로컬 IP는 Discovery 후 responded_from_ip 반영
 - [ ] 발견된 호스트: 서버 아이콘 + CPU UUID(맨 위), 버전, IP(복수 시 취합 표시), 응답한 IP(복수 시 취합), 호스트명, CPU, MEMORY; 병합 시 기존 카드 매칭은 cpu_uuid·IP만(hostname 미사용)
@@ -853,18 +856,18 @@ Maintenance:
 - [ ] 서비스 재시작 후: 성공 또는 terminated/연결 끊김 시 친절한 메시지 + 잠시 후 자동 호스트 정보(버전 등) 갱신 + 상태 새로고침(로컬·원격 동일)
 - [ ] 설정: DiscoveryServiceName, SystemctlServiceName, DeployBase, **InstallPrefix**(비면 DeployBase, versions·installer용), DiscoveryBroadcastAddress(fallback만), SSHPort(기본 22), SSHUser(기본 root), **MaxUploadBytes**(선택, 기본 `64<<20`, YAML 정수·`"M << N"` 문자열), **`Maintenance.RemoteHealth`**(선택, 원격 HTTP 헬스 폴링 간격·타임아웃·임계·지터); **버전 키는 빌드(`main.VersionKey`)·업로드 바이너리**(§12, `--version`→`agent --version` 폴백)
 - [ ] **CLI**: **`-cfg <파일>`** 또는 **`agent -cfg <파일>`** 로 HTTP 서버 + Discovery 기동(동일 서비스); 그 외 서브커맨드는 첫 인자 **`agent`** 필수; **`--host-info` / `--apply-update` / `--versions-list` / `--versions-switch`** 는 **`-apiprefix`**(기본 `/maintenance/api/v1`)·대상 Gin REST·**서비스 필수**(`clirest`); **`--apply-update -use-bundle-config`**(미지정 시 `reuse_previous_config: true`); `agent --nic-brd`; **`agent --discovery`**(UDP만); 번들·ELF 검증은 서버 `POST /upload` 시 **`--version` → `agent --version`** 폴백
-- [ ] 설치된 버전: GET /api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
+- [ ] 설치된 버전: GET /maintenance/api/v1/versions/list(정렬: current → previous → 시맨틱 내림차순), POST /maintenance/api/v1/versions/remove; current/previous 제외 삭제; 웹 UI 2열 세로 우선, 선택 삭제
 - [ ] **최초 설치**: `bin/ubuntu/contrabass-agent-install.sh` — root·manifest v2 tar.gz·`control|compute`·`agent --version` 버전 키·optional `sha256sum`·`versions/`+`current`+`staging/`+systemd
 - [ ] **완전 제거**: `bin/ubuntu/contrabass-agent-uninstall.sh` — root·인자 없음·service stop/disable·유닛 삭제·`DeployBase`·`/var/log/contrabass/mole` 삭제
 - [ ] 업데이트: DeployBase, **staging/**, **versions/(버전 키 디렉터리)**, **내장 update.sh/rollback.sh**(`maintenance/updatescripts` embed, `Makefile` 동기화·**strip**); 적용 시 **`current/update.sh`**; transient 유닛 **`contrabass-mole-update`**; **스테이징·비교·적용은 버전 키**; 실행 파일·config 검증; **`reuse_previous_config`**(적용 전 **`current` config** → `versions/<키>/`, 원격은 orchestrator가 current-config 주입+원격 apply); 웹 **환경설정 재사용** 체크박스(스테이징 있을 때만, 로컬 패널·원격 카드 각각); `update_history.log` **append**·**flock**(`update_history.log.lock` 잔존은 정상); **일괄** push·restart·apply·rollback 요약 append; 로컬·원격 적용·switch-current 후 **페이지 전체 새로고침 없이** host-info/`/self` 폴링과 **별도** update-log 폴링(2초·started→**마지막 줄** success/failed, tail 10·캐시 무효화·**역순 표시**); 원격 `update-log` 프록시 tail·`no-store` 정규화; 웹 **「로그 새로고침」** / **「목록 새로고침」** 라벨 구분; **GET /version** 헬스; **`recent_rollback`**(실제 update/rollback 실패만, bulk `failed=N` 제외)·update_in_progress
 - [ ] 프론트: 업데이트 영역 — 업로드(실행 파일+config, **config 편집 영역에서 수정 후 업로드 가능**), 서버에서 실행 파일·config 검증 실패 시 에러 메시지(항목/줄·필요 타입 안내) 표시; 적용(로컬/원격), 파일 선택 초기화, 업로드된 버전 삭제, **스테이징 버전 표시**, 로그 표시/새로고침; **업데이트 인디케이터**(카드 내, 서버 아이콘 아래)
 - [ ] Discovery: 진행 중 기존 목록 유지·제어 가능; **일괄 작업(§6.6)**·**미응답 배지**·진행 카운트다운; 원격 적용 후 Discovery 재수행 없이 카드·로그·config·versions·상태까지 현행화; DISCOVERY_REQUEST JSON **1300바이트 미만** 검증; `service` 필드는 **`DiscoveryServiceName`** 과 일치 시에만 응답
 - [ ] 원격 적용: 호스트별 **`GET …/update-status?ip=`** 의 **`can_apply`·`apply_version`** 으로 버튼·툴팁(스테이징 최신 문자열만과 카드 버전 문자열 비교에만 의존하지 않음), 클릭 시 서버가 원격 upload·apply-update API 호출; **적용 성공 시 적용 버전으로 카드 버전 즉시 갱신(낙관적 갱신)**, 지연 후 host-info·service-status로 전체 갱신
-- [ ] 호스트 정보 API: GET /api/v1/host-info?ip= (self=로컬, 지정=유니캐스트 Discovery)
+- [ ] 호스트 정보 API: GET /maintenance/api/v1/host-info?ip= (self=로컬, 지정=유니캐스트 Discovery)
 - [ ] Discovery 유니캐스트: DoDiscoveryUnicast(ip), 타임아웃 최대 5초; 멀티홈 시 `host_ip`≠목적지 IP여도 수락(request_id로 상관)
 - [ ] 상태 새로고침: 내 정보·원격 동일 방식 — 호스트 정보 API(GET /self 또는 GET /host-info?ip=)로 카드 내용만 갱신 후 GET /service-status로 systemctl 상태 갱신(카드 전체 재렌더링 없음)
 - [ ] 일반 API 응답: status + data
-- [ ] 자기 정보 API: GET /api/v1/self
+- [ ] 자기 정보 API: GET /maintenance/api/v1/self
 - [ ] 설정: YAML, 항목 7.1 반영
 - [ ] 버전: **`main.VersionKey`**(`Makefile`·`maintenance/scripts/build-version.sh`의 전체 describe, 또는 `VERSION_KEY=` 수동 주입)로 노출·업데이트 경로와 일치; 업로드·번들 검증은 바이너리 **`--version`→`agent --version`** 폴백(§12); 비교 시 `-g<해시>` 제거(§5.5.1)
 - [ ] 프론트: embed 정적 파일, Vanilla JS, EventSource로 Discovery 스트림 수신

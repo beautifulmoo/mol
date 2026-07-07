@@ -16,8 +16,8 @@ import (
 // to the local maintenance HTTP listener (MaintenancePort). It builds the httputil reverse
 // proxy from cfg and applies the same prefix/nesting rules as before (see PRD: Gin → maintenance).
 func RegisterMaintenanceProxy(engine *gin.Engine, cfg *agentcfg.Config) {
-	webPrefix := normalizeURLPathPrefix(cfg.WebPrefix, "/web")
-	apiPrefix := normalizeURLPathPrefix(cfg.APIPrefix, "/api/v1")
+	webPrefix := normalizeURLPathPrefix(cfg.WebPrefix, "/maintenance")
+	apiPrefix := normalizeURLPathPrefix(cfg.APIPrefix, "/maintenance/api/v1")
 	proxy := newMaintenanceWebProxy(cfg)
 	registerMaintenanceProxyRoutes(engine, webPrefix, apiPrefix, proxy)
 }

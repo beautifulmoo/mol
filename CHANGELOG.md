@@ -1,5 +1,14 @@
 # 변경 이력 (mol)
 
+## WebPrefix·APIPrefix 기본값 통일 (2026-07)
+
+| 항목 | 요약 |
+|------|------|
+| **기본값** | `WebPrefix` **`/maintenance`**, `APIPrefix` **`/maintenance/api/v1`** — `maintenance/agentcfg.Default()`·`ginproxy.RegisterMaintenanceProxy` fallback·`clirest.DefaultAPIPrefix` 동일 |
+| **예시 설정** | `cfg/agent.local.yml` 에서 `WebPrefix`·`APIPrefix` **의도적 주석 처리**(코드 기본값 사용). fleet 전체가 동일 prefix 를 써야 하므로 임의 변경 방지 |
+
+**문서**: **PRD.md** §4·§7·§11, **README.md**, **docs/REST_API.md**.
+
 ## Maintenance 리팩터·문서 현행화 (2026-05)
 
 서버·웹·CLI·REPL 정리(코드 감사 Large/Medium 항목 및 후속 스프린트).

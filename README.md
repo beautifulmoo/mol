@@ -133,23 +133,24 @@ contrabass-moleU agent --discovery --dest-port=9999 --src-port=9998 --timeout=10
 
 ## 접속
 
-- 웹 UI: http://localhost:<MaintenancePort>/web/index.html
-- API: http://localhost:<MaintenancePort>/api/v1/self, http://localhost:<MaintenancePort>/api/v1/discovery
+- **maintenance HTTP 직접**(기본 `127.0.0.1:8889`): 웹 UI `http://localhost:<MaintenancePort>/maintenance/index.html`, API 예 `…/maintenance/api/v1/self`
+- **Gin 프록시**(`<bin> -cfg …`, `Server.HTTPPort` 예 8888): `http://localhost:8888/maintenance/index.html`, API `…/maintenance/api/v1/…`
 
 ## 설정
 
 설정 파일 경로는 서비스 기동 시 **`-cfg <파일>`** 로 지정한다(예: `agent.local.yml`). 상세·전체 항목은 **[PRD.md](PRD.md)** §7.
 
 - 모든 설정은 최상위 `Maintenance:` 아래에 둔다.
+- **`WebPrefix`·`APIPrefix`** 는 생략 시 코드 기본값 **`/maintenance`**, **`/maintenance/api/v1`** (`agentcfg`·`ginproxy`). 로컬·모든 원격이 동일해야 하므로 예시 **`cfg/agent.local.yml`** 에서는 **의도적으로 주석 처리** — PRD §7.1 참고.
 
 ```yaml
-# 예시
+# 예시 (prefix 생략 — 권장)
 Maintenance:
   MaintenancePort: 8889
   DiscoveryServiceName: "Mole-Discovery"
   DiscoveryUDPPort: 9999
-  WebPrefix: "/web"
-  APIPrefix: "/api/v1"
+  #WebPrefix: "/maintenance"
+  #APIPrefix: "/maintenance/api/v1"
 ```
 
 - **버전 문자열**(로그·Discovery·`GET /version` 등)은 **config가 아니라 빌드 시 주입된 `main.VersionKey`** 를 쓴다(`make` → `maintenance/scripts/build-version.sh`).

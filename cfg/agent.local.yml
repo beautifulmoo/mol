@@ -18,8 +18,13 @@ Maintenance:
   DiscoveryUDPPort: 9999
   MaintenanceListenAddress: "127.0.0.1" # use "0.0.0.0" to expose maintenance port
   MaintenancePort: 8889
-  WebPrefix: "/maintenance"
-  APIPrefix: "/maintenance/api/v1"
+  # WebPrefix / APIPrefix — 의도적으로 주석 처리(코드 기본값 사용).
+  # 생략 시 기본값: WebPrefix "/maintenance", APIPrefix "/maintenance/api/v1"
+  # (maintenance/agentcfg, ginproxy.RegisterMaintenanceProxy).
+  # 로컬·모든 원격 호스트가 동일한 값을 쓰지 않으면 Gin 프록시·웹 UI·CLI(-apiprefix)·호스트 간 HTTP 가 깨질 수 있어
+  # 임의 변경을 막기 위해 여기서는 설정하지 않는다. 변경이 필요하면 전체 호스트를 한꺼번에 맞출 것.
+  #WebPrefix: "/maintenance"
+  #APIPrefix: "/maintenance/api/v1"
   DiscoveryTimeoutSeconds: 10
   DiscoveryDeduplicate: true
   # Version key is injected at build (Makefile → maintenance/scripts/build-version.sh → main.VersionKey), not from this file.

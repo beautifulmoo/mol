@@ -3,7 +3,7 @@
 **CLI(명령줄)** 는 **[CLI.md](./CLI.md)** 를, **대화형 REPL**은 **[REPL.md](./REPL.md)** (`contrabass-moleU agent`, 인자 없음)를 참고한다.
 
 `maintenance/server/server.go`의 `Handler()`에 등록된 엔드포인트를 정리한다. 핸들러 구현은 **`handlers_*.go`**(업로드·apply·discovery 등), 원격 HTTP는 **`remotehttp.go`**·**`remoteapply.go`**, bulk body 파싱은 **`bulkhosts.go`** 등으로 분리되어 있다.  
-**기본 URL**은 `http://<호스트>:<Maintenance.MaintenancePort>`이며, 경로 앞에는 설정값 **`Maintenance.APIPrefix`**(기본 `/api/v1`), **`Maintenance.WebPrefix`**(기본 `/web`)가 붙는다. 아래 표에서는 `{API}`, `{WEB}`로 표기한다.
+**기본 URL**은 `http://<호스트>:<Maintenance.MaintenancePort>`이며, 경로 앞에는 설정값 **`Maintenance.APIPrefix`**(기본 **`/maintenance/api/v1`**), **`Maintenance.WebPrefix`**(기본 **`/maintenance`**)가 붙는다. 생략 시 `maintenance/agentcfg`·`ginproxy.RegisterMaintenanceProxy` 가 동일 fallback 을 쓴다. 예시 `cfg/agent.local.yml` 은 fleet 일치를 위해 두 항목을 **주석 처리**해 코드 기본값만 사용한다. 아래 표에서는 `{API}`, `{WEB}`로 표기한다.
 
 ---
 
@@ -123,13 +123,13 @@ CLI는 각 명령 **내부**에서 UDP Discovery(기본값) 후 위 API를 호�
 ## curl 예제 (POST·업로드·업데이트)
 
 아래는 **maintenance HTTP에 직접** 붙는 경우(`Maintenance.MaintenancePort`, 예: `8889`)를 가정한다.  
-**`APIPrefix`가 `/api/v1`이 아니면** URL 경로만 바꾼다(예: `/maintenance/api/v1/upload`).  
+**`APIPrefix` 기본값은 `/maintenance/api/v1`** 이다. 다른 값을 쓰면 URL 경로만 바꾼다.  
 **Gin(예: 8888)으로만 노출**하는 경우에도 동일한 경로·바디를 쓰면 된다.
 
 ```bash
 # 공통: 베이스 URL (필요 시 호스트·포트만 변경)
 BASE=http://127.0.0.1:8889
-API=/api/v1
+API=/maintenance/api/v1
 ```
 
 ### 서비스 제어 `POST .../service-control`

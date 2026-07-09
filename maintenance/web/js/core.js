@@ -2,7 +2,7 @@
 (function (M) {
 'use strict';
 
-  var _api = (typeof window !== 'undefined' && window.__CONTRABASS_API_PREFIX__) || '/api/v1';
+  var _api = (typeof window !== 'undefined' && window.__CONTRABASS_API_PREFIX__) || '/maintenance/api/v1';
   if (typeof _api === 'string' && _api.length > 1 && _api.charAt(_api.length - 1) === '/') {
     _api = _api.slice(0, -1);
   }
